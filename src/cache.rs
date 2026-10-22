@@ -20,10 +20,9 @@ use crate::{
     class,
     error::{ErrorKind, ParseError, Result, WriteError},
     limits::Limits,
-    list,
     num::parse_u32_saturating,
     scan::control_kind,
-    text::{Word, is_token, parse_word},
+    text::{Word, is_token, parse_word, skip_ows, trim_ows},
     write::{Sink, reserve, write_decimal_u64},
 };
 
@@ -47,31 +46,81 @@ pub struct Directive<'a> {
     pub value: Option<Word<'a>>,
 }
 
-/// Parses one `token [ "=" ( token / quoted-string ) ]`.
-fn directive(e: &[u8]) -> Result<Directive<'_>> {
-    let n = e.iter().take_while(|&&b| class::is_tchar(b)).count();
+/// One directive at `v[i..]`: `token [ "=" ( token / quoted-string ) ]`.
+/// Returns it and the index after it.
+fn directive_at(v: &[u8], i: usize) -> Result<(Directive<'_>, usize)> {
+    let rest = v.get(i..).unwrap_or(&[]);
+    let n = rest.iter().take_while(|&&b| class::is_tchar(b)).count();
     if n == 0 {
-        return Err(bad(e, 0));
+        return Err(bad(v, i));
     }
-    let name = e.get(..n).unwrap_or(&[]);
-    match e.get(n) {
-        None => Ok(Directive { name, value: None }),
-        Some(b'=') => {
-            let rest = e.get(n + 1..).unwrap_or(&[]);
-            let (w, used) = parse_word(rest).map_err(|x| match x.kind() {
-                ErrorKind::Empty => bad(e, n + 1),
-                _ => x.shifted(n + 1),
-            })?;
-            if n + 1 + used != e.len() {
-                return Err(bad(e, n + 1 + used));
-            }
-            Ok(Directive {
-                name,
-                value: Some(w),
-            })
+    let name = rest.get(..n).unwrap_or(&[]);
+    if rest.get(n) != Some(&b'=') {
+        return Ok((Directive { name, value: None }, i + n));
+    }
+    let at = i + n + 1;
+    let (w, used) = parse_word(v.get(at..).unwrap_or(&[])).map_err(|x| match x.kind() {
+        ErrorKind::Empty => bad(v, at),
+        _ => x.shifted(at),
+    })?;
+    Ok((
+        Directive {
+            name,
+            value: Some(w),
+        },
+        at + used,
+    ))
+}
+
+/// Validates a `Cache-Control` value in one pass over `v` (OWS already
+/// trimmed), calling `f` for each directive; returns the count. Empty list
+/// elements are skipped up to `max_empty_elements`.
+fn walk<'a>(v: &'a [u8], limits: &Limits, mut f: impl FnMut(Directive<'a>)) -> Result<usize> {
+    let (mut i, mut count, mut empty) = (0usize, 0usize, 0usize);
+    loop {
+        while matches!(v.get(i), Some(b' ' | b'\t')) {
+            i += 1;
         }
-        Some(_) => Err(bad(e, n)),
+        match v.get(i) {
+            None => return Ok(count),
+            Some(b',') => {
+                empty += 1;
+                if empty > usize::from(limits.empty_elements) {
+                    return Err(ParseError::new(ErrorKind::TooManyEmptyElements, i));
+                }
+                i += 1;
+                continue;
+            }
+            Some(_) => {}
+        }
+        let (d, end) = directive_at(v, i)?;
+        count += 1;
+        if count > usize::from(limits.list_members) {
+            return Err(ParseError::new(ErrorKind::TooManyMembers, i));
+        }
+        f(d);
+        i = end;
+        while matches!(v.get(i), Some(b' ' | b'\t')) {
+            i += 1;
+        }
+        match v.get(i) {
+            None => return Ok(count),
+            Some(b',') => {}
+            Some(_) => return Err(bad(v, i)),
+        }
     }
+}
+
+/// Runs [`walk`] over a whole field value, offsets relative to it.
+fn walk_value<'a>(
+    value: &'a [u8],
+    limits: &Limits,
+    f: impl FnMut(Directive<'a>),
+) -> Result<(&'a [u8], usize)> {
+    let lead = skip_ows(value);
+    let v = trim_ows(value);
+    let count = walk(v, limits, f).map_err(|e| e.shifted(lead))?;
+    Ok((v, count))
 }
 
 fn bad(e: &[u8], at: usize) -> ParseError {
@@ -95,7 +144,9 @@ fn bad(e: &[u8], at: usize) -> ParseError {
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Directives<'a> {
-    list: list::List<'a>,
+    /// The validated value, OWS trimmed.
+    text: &'a [u8],
+    count: usize,
 }
 
 impl<'a> Directives<'a> {
@@ -112,7 +163,7 @@ impl<'a> Directives<'a> {
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     pub fn iter(&self) -> impl Iterator<Item = Directive<'a>> + use<'a> {
-        self.list.iter().filter_map(|e| directive(e).ok())
+        DirectiveIter { s: self.text, i: 0 }
     }
 
     /// The number of directives.
@@ -127,7 +178,7 @@ impl<'a> Directives<'a> {
     /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
-        self.list.len()
+        self.count
     }
 
     /// Whether there are no directives.
@@ -143,7 +194,29 @@ impl<'a> Directives<'a> {
     /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.list.is_empty()
+        self.count == 0
+    }
+}
+
+/// The directives of a validated [`Directives`].
+struct DirectiveIter<'a> {
+    s: &'a [u8],
+    i: usize,
+}
+
+impl<'a> Iterator for DirectiveIter<'a> {
+    type Item = Directive<'a>;
+
+    fn next(&mut self) -> Option<Directive<'a>> {
+        while matches!(self.s.get(self.i), Some(b' ' | b'\t' | b',')) {
+            self.i += 1;
+        }
+        if self.i >= self.s.len() {
+            return None;
+        }
+        let (d, end) = directive_at(self.s, self.i).ok()?;
+        self.i = end;
+        Some(d)
     }
 }
 
@@ -166,12 +239,8 @@ impl<'a> Directives<'a> {
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<Directives<'a>> {
-    let l = list::parse(value, limits)?;
-    for e in l.iter() {
-        let at = (e.as_ptr() as usize).saturating_sub(value.as_ptr() as usize);
-        directive(e).map(|_| ()).map_err(|x| x.shifted(at))?;
-    }
-    Ok(Directives { list: l })
+    let (text, count) = walk_value(value, limits, |_| {})?;
+    Ok(Directives { text, count })
 }
 
 /// The response directives (RFC 9111 section 5.2.2 and the extensions).
@@ -330,109 +399,118 @@ fn number(
     *slot = seconds(value, invalid);
 }
 
-fn response_from<'a>(directives: impl Iterator<Item = Directive<'a>>) -> ResponseDirectives {
-    let mut r = ResponseDirectives::default();
-    let mut seen = [false; 13];
-    for d in directives {
-        let n = d.name;
-        let is = |s: &[u8]| n.eq_ignore_ascii_case(s);
-        let (dup, inv) = (&mut r.duplicates, &mut r.invalid_values);
-        match () {
-            () if is(b"max-age") => number(&mut r.max_age, &mut seen[0], dup, d.value, inv),
-            () if is(b"s-maxage") => number(&mut r.s_maxage, &mut seen[1], dup, d.value, inv),
-            () if is(b"no-cache") => flag(&mut r.no_cache, &mut seen[2], dup, d.value, inv, true),
-            () if is(b"no-store") => flag(&mut r.no_store, &mut seen[3], dup, d.value, inv, false),
-            () if is(b"private") => flag(&mut r.private, &mut seen[4], dup, d.value, inv, true),
-            () if is(b"public") => flag(&mut r.public, &mut seen[5], dup, d.value, inv, false),
-            () if is(b"must-revalidate") => flag(
-                &mut r.must_revalidate,
-                &mut seen[6],
-                dup,
-                d.value,
-                inv,
-                false,
-            ),
-            () if is(b"proxy-revalidate") => flag(
-                &mut r.proxy_revalidate,
-                &mut seen[7],
-                dup,
-                d.value,
-                inv,
-                false,
-            ),
-            () if is(b"must-understand") => flag(
-                &mut r.must_understand,
-                &mut seen[8],
-                dup,
-                d.value,
-                inv,
-                false,
-            ),
-            () if is(b"no-transform") => {
-                flag(&mut r.no_transform, &mut seen[9], dup, d.value, inv, false)
-            }
-            () if is(b"immutable") => {
-                flag(&mut r.immutable, &mut seen[10], dup, d.value, inv, false)
-            }
-            () if is(b"stale-while-revalidate") => {
-                number(
-                    &mut r.stale_while_revalidate,
-                    &mut seen[11],
-                    dup,
-                    d.value,
-                    inv,
-                );
-            }
-            () if is(b"stale-if-error") => {
-                number(&mut r.stale_if_error, &mut seen[12], dup, d.value, inv)
-            }
-            () => r.unknown = r.unknown.saturating_add(1),
-        }
+/// The index of a response directive name, dispatched on length first.
+fn response_slot(n: &[u8]) -> Option<usize> {
+    let is = |s: &[u8]| n.eq_ignore_ascii_case(s);
+    match n.len() {
+        6 if is(b"public") => Some(5),
+        7 if is(b"max-age") => Some(0),
+        7 if is(b"private") => Some(4),
+        8 if is(b"s-maxage") => Some(1),
+        8 if is(b"no-cache") => Some(2),
+        8 if is(b"no-store") => Some(3),
+        9 if is(b"immutable") => Some(10),
+        12 if is(b"no-transform") => Some(9),
+        14 if is(b"stale-if-error") => Some(12),
+        15 if is(b"must-revalidate") => Some(6),
+        15 if is(b"must-understand") => Some(8),
+        16 if is(b"proxy-revalidate") => Some(7),
+        22 if is(b"stale-while-revalidate") => Some(11),
+        _ => None,
     }
-    r
 }
 
-fn request_from<'a>(directives: impl Iterator<Item = Directive<'a>>) -> RequestDirectives {
-    let mut r = RequestDirectives::default();
-    let mut seen = [false; 8];
-    for d in directives {
-        let n = d.name;
-        let is = |s: &[u8]| n.eq_ignore_ascii_case(s);
+/// Builds [`ResponseDirectives`] one directive at a time.
+#[derive(Default)]
+struct ResponseBuilder {
+    r: ResponseDirectives,
+    seen: [bool; 13],
+}
+
+impl ResponseBuilder {
+    fn push(&mut self, d: Directive<'_>) {
+        let r = &mut self.r;
+        let Some(slot) = response_slot(d.name) else {
+            r.unknown = r.unknown.saturating_add(1);
+            return;
+        };
+        let Some(seen) = self.seen.get_mut(slot) else {
+            return;
+        };
         let (dup, inv) = (&mut r.duplicates, &mut r.invalid_values);
-        match () {
-            () if is(b"max-age") => number(&mut r.max_age, &mut seen[0], dup, d.value, inv),
-            () if is(b"max-stale") => {
-                if seen[1] {
+        match slot {
+            0 => number(&mut r.max_age, seen, dup, d.value, inv),
+            1 => number(&mut r.s_maxage, seen, dup, d.value, inv),
+            2 => flag(&mut r.no_cache, seen, dup, d.value, inv, true),
+            3 => flag(&mut r.no_store, seen, dup, d.value, inv, false),
+            4 => flag(&mut r.private, seen, dup, d.value, inv, true),
+            5 => flag(&mut r.public, seen, dup, d.value, inv, false),
+            6 => flag(&mut r.must_revalidate, seen, dup, d.value, inv, false),
+            7 => flag(&mut r.proxy_revalidate, seen, dup, d.value, inv, false),
+            8 => flag(&mut r.must_understand, seen, dup, d.value, inv, false),
+            9 => flag(&mut r.no_transform, seen, dup, d.value, inv, false),
+            10 => flag(&mut r.immutable, seen, dup, d.value, inv, false),
+            11 => number(&mut r.stale_while_revalidate, seen, dup, d.value, inv),
+            _ => number(&mut r.stale_if_error, seen, dup, d.value, inv),
+        }
+    }
+}
+
+/// The index of a request directive name, dispatched on length first.
+fn request_slot(n: &[u8]) -> Option<usize> {
+    let is = |s: &[u8]| n.eq_ignore_ascii_case(s);
+    match n.len() {
+        7 if is(b"max-age") => Some(0),
+        8 if is(b"no-cache") => Some(3),
+        8 if is(b"no-store") => Some(4),
+        9 if is(b"max-stale") => Some(1),
+        9 if is(b"min-fresh") => Some(2),
+        12 if is(b"no-transform") => Some(5),
+        14 if is(b"only-if-cached") => Some(6),
+        14 if is(b"stale-if-error") => Some(7),
+        _ => None,
+    }
+}
+
+/// Builds [`RequestDirectives`] one directive at a time.
+#[derive(Default)]
+struct RequestBuilder {
+    r: RequestDirectives,
+    seen: [bool; 8],
+}
+
+impl RequestBuilder {
+    fn push(&mut self, d: Directive<'_>) {
+        let r = &mut self.r;
+        let Some(slot) = request_slot(d.name) else {
+            r.unknown = r.unknown.saturating_add(1);
+            return;
+        };
+        let Some(seen) = self.seen.get_mut(slot) else {
+            return;
+        };
+        let (dup, inv) = (&mut r.duplicates, &mut r.invalid_values);
+        match slot {
+            0 => number(&mut r.max_age, seen, dup, d.value, inv),
+            1 => {
+                if *seen {
                     *dup = true;
                 } else {
-                    seen[1] = true;
+                    *seen = true;
                     r.max_stale = Some(match d.value {
                         None => None,
                         v => seconds(v, inv),
                     });
                 }
             }
-            () if is(b"min-fresh") => number(&mut r.min_fresh, &mut seen[2], dup, d.value, inv),
-            () if is(b"no-cache") => flag(&mut r.no_cache, &mut seen[3], dup, d.value, inv, false),
-            () if is(b"no-store") => flag(&mut r.no_store, &mut seen[4], dup, d.value, inv, false),
-            () if is(b"no-transform") => {
-                flag(&mut r.no_transform, &mut seen[5], dup, d.value, inv, false)
-            }
-            () if is(b"only-if-cached") => flag(
-                &mut r.only_if_cached,
-                &mut seen[6],
-                dup,
-                d.value,
-                inv,
-                false,
-            ),
-            () if is(b"stale-if-error") => {
-                number(&mut r.stale_if_error, &mut seen[7], dup, d.value, inv)
-            }
-            () => r.unknown = r.unknown.saturating_add(1),
+            2 => number(&mut r.min_fresh, seen, dup, d.value, inv),
+            3 => flag(&mut r.no_cache, seen, dup, d.value, inv, false),
+            4 => flag(&mut r.no_store, seen, dup, d.value, inv, false),
+            5 => flag(&mut r.no_transform, seen, dup, d.value, inv, false),
+            6 => flag(&mut r.only_if_cached, seen, dup, d.value, inv, false),
+            _ => number(&mut r.stale_if_error, seen, dup, d.value, inv),
         }
     }
-    r
 }
 
 /// Reads a response `Cache-Control` value.
@@ -451,7 +529,9 @@ fn request_from<'a>(directives: impl Iterator<Item = Directive<'a>>) -> RequestD
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn response_cache_control(value: &[u8]) -> Result<ResponseDirectives> {
-    Ok(response_from(parse(value, &Limits::DEFAULT)?.iter()))
+    let mut b = ResponseBuilder::default();
+    let _ = walk_value(value, &Limits::DEFAULT, |d| b.push(d))?;
+    Ok(b.r)
 }
 
 /// Reads a request `Cache-Control` value.
@@ -469,7 +549,9 @@ pub fn response_cache_control(value: &[u8]) -> Result<ResponseDirectives> {
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn request_cache_control(value: &[u8]) -> Result<RequestDirectives> {
-    Ok(request_from(parse(value, &Limits::DEFAULT)?.iter()))
+    let mut b = RequestBuilder::default();
+    let _ = walk_value(value, &Limits::DEFAULT, |d| b.push(d))?;
+    Ok(b.r)
 }
 
 /// Reads several response `Cache-Control` field lines as one.
@@ -494,18 +576,11 @@ where
     I: IntoIterator<Item = &'a [u8]>,
     I::IntoIter: Clone,
 {
-    let lines = lines.into_iter();
-    for (n, line) in lines.clone().enumerate() {
-        parse(line, &Limits::DEFAULT)
-            .map(|_| ())
-            .map_err(|e| e.on_line(n))?;
+    let mut b = ResponseBuilder::default();
+    for (n, line) in lines.into_iter().enumerate() {
+        let _ = walk_value(line, &Limits::DEFAULT, |d| b.push(d)).map_err(|e| e.on_line(n))?;
     }
-    Ok(response_from(lines.flat_map(|l| {
-        list::parse(l, &Limits::DEFAULT)
-            .into_iter()
-            .flat_map(|x| x.iter())
-            .filter_map(|e| directive(e).ok())
-    })))
+    Ok(b.r)
 }
 
 /// Reads several request `Cache-Control` field lines as one.
@@ -530,18 +605,11 @@ where
     I: IntoIterator<Item = &'a [u8]>,
     I::IntoIter: Clone,
 {
-    let lines = lines.into_iter();
-    for (n, line) in lines.clone().enumerate() {
-        parse(line, &Limits::DEFAULT)
-            .map(|_| ())
-            .map_err(|e| e.on_line(n))?;
+    let mut b = RequestBuilder::default();
+    for (n, line) in lines.into_iter().enumerate() {
+        let _ = walk_value(line, &Limits::DEFAULT, |d| b.push(d)).map_err(|e| e.on_line(n))?;
     }
-    Ok(request_from(lines.flat_map(|l| {
-        list::parse(l, &Limits::DEFAULT)
-            .into_iter()
-            .flat_map(|x| x.iter())
-            .filter_map(|e| directive(e).ok())
-    })))
+    Ok(b.r)
 }
 
 /// Writes `Cache-Control` directives, separated by `, `.
