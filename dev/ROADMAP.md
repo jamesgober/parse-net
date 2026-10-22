@@ -44,7 +44,7 @@ Exit: every item below implemented with unit tests, property tests, and fuzz tar
 
 Unit tests, property tests, fuzz targets (each run 60 s clean in WSL, 1.3 to 13.7 million inputs), and counting-allocator tests cover every item above.
 
-## v0.4.0 - Extended (web layer and form-net)
+## v0.4.0 - Extended (web layer and form-net) (DONE, 2026-10-22)
 
 Exit: conformance suites pass (httpwg structured-field-tests in full; every tc2231 case with a recorded verdict); every new parser has a fuzz target that has run 1 hour clean.
 
@@ -63,7 +63,7 @@ Exit: conformance suites pass (httpwg structured-field-tests in full; every tc22
 - [x] tc2231: every case with a verdict, 66 agree and 21 in five recorded classes (D-054).
 - [x] Every new parser's fuzz target 1 hour clean (17 targets, including the `diff_sfv` oracle, D-056): 6.6 to 407 million inputs each in WSL Ubuntu, 2026-10-21.
 
-## v0.5.0 - Feature complete (smtp-net, links, challenges, owned forms)
+## v0.5.0 - Feature complete (smtp-net, links, challenges, owned forms) (DONE, 2026-10-22)
 
 Exit: every P0, P1, and P2 item exists; every public item has a doctest; `cargo tree -e normal` is empty for the default build.
 
