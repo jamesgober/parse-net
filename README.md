@@ -64,7 +64,7 @@ The list below is the plan for 1.0. What ships in the current version is under [
 - **Bounded work** - every limit checked before the work it governs; linear time on every input.
 - **Tested to the byte** - unit tests on every path, property tests, fuzz targets for every parser, RFC vectors and the httpwg Structured Field suite.
 
-> **Note on performance:** the target is at least 20% faster than the best Rust competitor for each comparable operation, at equal or stronger strictness. Numbers are published in `docs/PERFORMANCE.md` from `0.6.0`; until then they are targets, not measurements.
+> **Note on performance:** the target is at least 20% faster than the best Rust competitor for each comparable operation, at equal or stronger strictness. The measurements, the method, and the commands to reproduce them are in [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 
 ---
 
@@ -76,10 +76,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-parse-net = "0.6.0"
+parse-net = "0.6.1"
 
 # Optional features:
-parse-net = { version = "0.6.0", features = [
+parse-net = { version = "0.6.1", features = [
     "alloc",        # owned forms and Sink for Vec<u8>
     "std",          # SystemTime conversions and http_date() with the system clock
 ] }
@@ -166,7 +166,7 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 
 ## **Status: feature complete**
 
-**Current Version:** `0.6.0` - every planned field, for HTTP and for mail, benchmarked against the crates that do the same work.
+**Current Version:** `0.6.1` - every planned field, for HTTP and for mail, benchmarked against the crates that do the same work.
 **Target:** `1.0.0` stable, per the roadmap in [`dev/ROADMAP.md`](./dev/ROADMAP.md).
 
 **What's complete**:

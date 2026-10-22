@@ -411,7 +411,9 @@ fn walk<'a>(v: &'a [u8], limits: &Limits, mut f: impl FnMut(EntityTag<'a>)) -> R
         }
         match v.get(i) {
             None => break,
-            Some(b',') => {}
+            // The separator after a member is consumed here, so the next
+            // pass counts only commas with nothing before them as empty.
+            Some(b',') => i += 1,
             Some(&b) if crate::scan::is_control(b) => return err(crate::scan::control_kind(b), i),
             Some(_) if star => return err(ErrorKind::Malformed, i),
             Some(_) => return err(ErrorKind::InvalidEntityTag, i),
@@ -570,6 +572,43 @@ mod tests {
         assert!(!if_match(b"*", None).unwrap());
         assert!(if_match(b"\"a\", \"b\"", Some(&s)).unwrap());
         assert!(if_none_match(b"\"a", &s).is_err());
+    }
+
+    #[test]
+    fn test_condition_separators_are_not_empty_elements() {
+        // 0.6.0 counted the separator after each tag as an empty element, so
+        // a list of more than 16 tags was refused.
+        let l = Limits::DEFAULT;
+        let tags = |n: usize| {
+            (0..n)
+                .map(|i| std::format!("W/\"t{i}\""))
+                .collect::<std::vec::Vec<_>>()
+                .join(", ")
+        };
+        let count = |v: &str| match parse_condition(v.as_bytes(), &l) {
+            Ok(Condition::Tags(t)) => Ok(t.len()),
+            Ok(Condition::Any) => Ok(usize::MAX),
+            Err(e) => Err(e.kind()),
+        };
+        for n in [1, 16, 17, 100, 1024] {
+            assert_eq!(count(&tags(n)), Ok(n), "{n}");
+        }
+        assert_eq!(count(&tags(1025)), Err(ErrorKind::TooManyMembers));
+        let s = EntityTag::strong(b"t1023").unwrap();
+        assert!(if_none_match(tags(1024).as_bytes(), &s).unwrap());
+        assert!(if_match(tags(1024).replace("W/", "").as_bytes(), Some(&s)).unwrap());
+        // Empty elements are still counted, before, between, and after.
+        let empties = |n: usize| std::format!("\"a\",{}\"b\"", ", ".repeat(n));
+        assert_eq!(count(&empties(16)), Ok(2));
+        assert_eq!(count(&empties(17)), Err(ErrorKind::TooManyEmptyElements));
+        assert_eq!(count(&std::format!("{}\"a\"", ",".repeat(16))), Ok(1));
+        // After a tag the first comma is its separator; 16 more are empty.
+        assert_eq!(count(&std::format!("\"a\"{}", ",".repeat(17))), Ok(1));
+        assert_eq!(
+            count(&std::format!("\"a\"{}", ",".repeat(18))),
+            Err(ErrorKind::TooManyEmptyElements)
+        );
+        assert_eq!(count("\"a\",,\"b\","), Ok(2));
     }
 
     #[test]
