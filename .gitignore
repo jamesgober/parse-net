@@ -4,6 +4,7 @@
 
 # Rust / Cargo
 /target/
+/benches/target/
 **/*.rs.bk
 
 # Fuzzing (corpora live outside the repository)
