@@ -520,6 +520,20 @@ mod tests {
         assert_eq!(ps.raw(), b";; a=1 ;;b=\"x;y\";");
     }
 
+    #[test]
+    fn test_params_get_matches_whole_names_only() {
+        // Found by `test_iter_and_get_agree_with_checked_reads`: an empty
+        // parameter must not let `;a` match across the second `;`.
+        let (ps, _) = p(b";;a=\"\"").unwrap();
+        assert!(ps.get(";a").is_none());
+        assert!(ps.get("a").is_some_and(|v| v.eq_bytes(b"")));
+        let (ps, _) = p(b";a=b;c=d").unwrap();
+        for name in ["a=b", "a=b;c", "", ";", "=", "a;", " a"] {
+            assert!(ps.get(name).is_none(), "{name}");
+        }
+        assert!(ps.get("C").is_some_and(|v| v.eq_bytes(b"d")));
+    }
+
     /// The 0.6 walker, kept as the reference the slice-cursor walker is
     /// compared with (`test_parse_agrees_with_reference`).
     mod reference {
