@@ -127,19 +127,20 @@ proptest! {
         let pairs: Vec<(&str, &str)> = params.iter().map(|(n, v)| (n.as_str(), v.as_str())).collect();
         let mut buf = [0u8; 512];
         let mut out = SliceSink::new(&mut buf);
-        media::write(&t, &s, &pairs, &mut out).expect("valid input");
-        // Duplicate names are refused on parse, as they must be.
+        // Duplicate names are refused by the writer, since every parser
+        // refuses them; anything written parses back (writer-parser closure).
         let mut seen = std::collections::HashSet::new();
         let unique = params.iter().all(|(n, _)| seen.insert(n.to_ascii_lowercase()));
-        match pn::parse_media_type(out.written()) {
-            Ok(m) => {
+        match media::write(&t, &s, &pairs, &mut out) {
+            Ok(()) => {
                 prop_assert!(unique);
+                let m = pn::parse_media_type(out.written()).expect("written type parses");
                 prop_assert!(m.is(&t, &s));
                 for (n, v) in &params {
                     prop_assert!(m.param(n).expect("present").eq_bytes(v.as_bytes()));
                 }
             }
-            Err(e) => prop_assert!(!unique && e.kind() == pn::ErrorKind::DuplicateParameter),
+            Err(e) => prop_assert!(!unique && e == pn::WriteError::DuplicateName),
         }
     }
 

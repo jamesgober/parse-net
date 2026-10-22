@@ -29,7 +29,7 @@ use crate::{
     list,
     scan::control_kind,
     text::{Word, is_token, parse_word, skip_ows, trim_ows},
-    write::{CountSink, Sink, reserve, write_quoted, write_word},
+    write::{CountSink, Sink, reserve, unique_names, write_quoted, write_word},
 };
 
 /// Whether `s` is a `token68`: `1*( ALPHA / DIGIT / "-" / "." / "_" / "~" /
@@ -556,9 +556,11 @@ fn put_challenge(
 ///
 /// # Errors
 ///
-/// [`WriteError::NotToken`] for the scheme or a name; [`WriteError::Forbidden`]
-/// for a control byte in a value; [`WriteError::Full`] (nothing written when
-/// the sink reports its room).
+/// [`WriteError::NotToken`] for the scheme or a name;
+/// [`WriteError::DuplicateName`] for a name given twice (RFC 9110 section
+/// 11.2 allows each once); [`WriteError::Forbidden`] for a control byte in a
+/// value; [`WriteError::Full`] (nothing written when the sink reports its
+/// room).
 ///
 /// # Examples
 ///
@@ -578,6 +580,7 @@ pub fn write_challenge(
     if !is_token(scheme.as_bytes()) || params.iter().any(|(n, _)| !is_token(n.as_bytes())) {
         return Err(WriteError::NotToken);
     }
+    unique_names(params)?;
     let mut count = CountSink::new();
     put_challenge(scheme, params, &mut count)?;
     reserve(out, count.count())?;
@@ -790,6 +793,10 @@ mod tests {
         assert_eq!(
             write_challenge("Bad scheme", &[], &mut out),
             Err(WriteError::NotToken)
+        );
+        assert_eq!(
+            write_challenge("Basic", &[("realm", "a"), ("Realm", "b")], &mut out),
+            Err(WriteError::DuplicateName)
         );
         assert_eq!(
             write_challenge("Basic", &[("realm", "a\r\n")], &mut out),

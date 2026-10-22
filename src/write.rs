@@ -225,6 +225,18 @@ pub(crate) fn reserve(out: &impl Sink, len: usize) -> Result<(), WriteError> {
     }
 }
 
+/// Fails with `DuplicateName` when two parameter names are equal ignoring
+/// ASCII case: the output would be refused by every parser of the field.
+pub(crate) fn unique_names(params: &[(&str, &str)]) -> Result<(), WriteError> {
+    for (i, (a, _)) in params.iter().enumerate() {
+        let later = params.get(i + 1..).unwrap_or(&[]);
+        if later.iter().any(|(b, _)| a.eq_ignore_ascii_case(b)) {
+            return Err(WriteError::DuplicateName);
+        }
+    }
+    Ok(())
+}
+
 /// Writes `n` in decimal, with no sign and no padding.
 ///
 /// # Errors

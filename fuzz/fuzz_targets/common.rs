@@ -45,10 +45,29 @@ pub fn no_alloc<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// A fixed buffer for formatting without allocating.
+struct Stack {
+    buf: [u8; 256],
+    len: usize,
+}
+
+impl std::fmt::Write for Stack {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        let end = self.len + s.len();
+        self.buf.get_mut(self.len..end).ok_or(std::fmt::Error)?.copy_from_slice(s.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
 /// An error's text is the fixed message plus an offset: never input bytes.
+/// Formats on the stack, so it may run inside [`no_alloc`].
 #[allow(dead_code)]
 pub fn check_error(e: &parse_net::ParseError) {
-    let text = e.to_string();
-    assert!(text.starts_with(e.kind().message()));
-    assert!(text.bytes().all(|b| b.is_ascii_graphic() || b == b' '));
+    use std::fmt::Write;
+    let mut text = Stack { buf: [0; 256], len: 0 };
+    write!(text, "{e}").expect("an error message fits 256 bytes");
+    let text = &text.buf[..text.len];
+    assert!(text.starts_with(e.kind().message().as_bytes()));
+    assert!(text.iter().all(|&b| b.is_ascii_graphic() || b == b' '));
 }

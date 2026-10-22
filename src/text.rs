@@ -311,6 +311,12 @@ pub struct Quoted<'a> {
 }
 
 impl<'a> Quoted<'a> {
+    /// A view over content already validated by another grammar whose
+    /// escapes are `\x` pairs (RFC 9651 strings).
+    pub(crate) const fn from_raw(raw: &'a [u8], has_escapes: bool) -> Self {
+        Self { raw, has_escapes }
+    }
+
     /// The content between the quotes exactly as sent, quoted pairs included.
     #[must_use]
     pub const fn raw(&self) -> &'a [u8] {

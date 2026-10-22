@@ -31,7 +31,7 @@ use crate::{
     param::{self, Params},
     scan::control_kind,
     text::{Word, is_token, skip_ows, trim_ows},
-    write::{Sink, reserve, word_len, write_word},
+    write::{Sink, reserve, unique_names, word_len, write_word},
 };
 
 /// Parses a `Content-Type` style media type with the default [`Limits`].
@@ -278,7 +278,9 @@ impl<'a> MediaRange<'a> {
 /// # Errors
 ///
 /// [`WriteError::NotToken`] for a type, subtype, or name that is not a token
-/// (or is `*`); [`WriteError::Forbidden`] for a control byte in a value;
+/// (or is `*`); [`WriteError::DuplicateName`] for two parameters with the
+/// same name (ASCII case-insensitive), which parsers refuse;
+/// [`WriteError::Forbidden`] for a control byte in a value;
 /// [`WriteError::Full`]. Nothing is written on error when the sink reports
 /// its room.
 ///
@@ -303,6 +305,7 @@ pub fn write(
     if !is_token(t) || !is_token(s) || t == b"*" || s == b"*" {
         return Err(WriteError::NotToken);
     }
+    unique_names(params)?;
     let mut len = t.len().saturating_add(1).saturating_add(s.len());
     for (name, value) in params {
         if !is_token(name.as_bytes()) {
@@ -681,6 +684,10 @@ mod tests {
         assert_eq!(
             write("a", "b", &[("x", "1\r\n")], &mut out),
             Err(WriteError::Forbidden { at: 1 })
+        );
+        assert_eq!(
+            write("a", "b", &[("x", "1"), ("X", "2")], &mut out),
+            Err(WriteError::DuplicateName)
         );
         assert!(out.is_empty());
         write("a", "b", &[("x", "1 2"), ("y", "")], &mut out).unwrap();

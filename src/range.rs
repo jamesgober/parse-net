@@ -123,7 +123,8 @@ impl<'a> RangeHeader<'a> {
             .filter_map(|e| spec(e).ok())
     }
 
-    /// The number of range specs.
+    /// The number of members in the range set, whatever the unit (so it can
+    /// be nonzero when [`specs`](Self::specs) is empty).
     #[must_use]
     pub const fn len(&self) -> usize {
         self.set.len()

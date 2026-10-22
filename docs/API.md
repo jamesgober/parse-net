@@ -1,7 +1,7 @@
 # parse-net - API Reference
 
 > Reference for every public item in `parse-net`, with signatures, behaviour, the errors each item can return, and examples.
-> **Current release: `0.3.0`.** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
+> **Current release: `0.4.0`.** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
 
 <sub>Copyright &copy; 2026 <strong>James Gober</strong>.</sub>
 
@@ -305,6 +305,7 @@ pub enum WriteError {
     OutOfRange,
     NotToken,
     InvalidSequence,
+    DuplicateName,                                              // 0.4 (D-052)
 }
 impl From<Full> for WriteError {}
 impl core::fmt::Display for WriteError {}
@@ -320,6 +321,7 @@ Why a writer refused.
 | `OutOfRange` | a number outside the format's range (a `Content-Range` end below its start, a Structured Field integer above 15 digits) | fix the value |
 | `NotToken` | a position that requires a token got something else (a parameter name, a media type) | fix the name |
 | `InvalidSequence` | a structured writer (`sfv::Writer`, `cache::Writer`) was called out of order: a parameter before any item, `finish` with an inner list still open | a bug in the calling code |
+| `DuplicateName` | two parameters with the same name (ASCII case-insensitive) where the grammar allows each once (`media::write`, `auth::write_challenge`), so every parser would refuse the output | drop or merge the repeat |
 
 `ERR-4` (P0, Tier 1, 0.3): `Display` and `core::error::Error` for both error types, implemented without `std` (stable since Rust 1.81). The text is fixed plus the offset; no input bytes.
 
@@ -951,7 +953,7 @@ RFC 9110 section 8.3.1: `media-type = type "/" subtype parameters`; type, subtyp
 | MED-6 | `suffix`, `is_json`, `is_form_urlencoded`, `is_multipart_form_data` | P1, 1, 0.3 | `suffix` is the part after the last `+` of the subtype (`json` of `ld+json`); `is_json` is `application/json` or any `+json` suffix | none |
 | MED-7 | `media::parse_range`, `MediaRange` | P1, 2, 0.4 | `*/*`, `type/*`, or a media type; the first `q` parameter ends the media-type parameters (`params()`), and it and every parameter after it are `accept-ext`, ignored for matching | `Wildcard` for `*/subtype`; `InvalidQValue`; MED-1 errors |
 | MED-8 | `MediaRange::matches`, `specificity` | P1, 2, 0.4 | a range matches an offer when type and subtype match (or are `*`) and every range parameter is present in the offer with an equal value (case-sensitive except `charset`); specificity 4 (with parameters), 3 (exact), 2 (`type/*`), 1 (`*/*`) | none |
-| MED-9 | `media::write` | P0, 2, 0.3 | `type/subtype` then `; name=value` for each pair, values through `write_word` | `NotToken`, `Forbidden`, `Full` |
+| MED-9 | `media::write` | P0, 2, 0.3 | `type/subtype` then `; name=value` for each pair, values through `write_word`; a name given twice is refused (0.4, D-052), so the output always parses | `NotToken`, `DuplicateName`, `Forbidden`, `Full` |
 | MED-10 | `write_canonical` | P1, 2, 0.3 | lowercase type, subtype, and parameter names; values as given; `; ` between parameters | `Full` |
 | MED-11 | `OwnedMediaType` | P2, 2, 0.5 | `alloc`; see [Owned forms](#owned-forms) | none |
 | MED-12 | `Boundary` | P0, 3, 0.3 | validated, unquoted bytes | none |
@@ -1457,7 +1459,7 @@ use parse_net as pn;
 let cd = pn::parse_content_disposition(
     b"attachment; filename=\"EURO rates.txt\"; filename*=utf-8''%e2%82%ac%20rates.txt")?;
 assert_eq!(cd.kind(), pn::DispositionType::Attachment);
-let mut buf = [0u8; 64];
+let mut buf = [0u8; 96];
 assert_eq!(cd.filename().expect("present").decode_into(&mut buf)?, "\u{20ac} rates.txt");
 
 let part = pn::parse_content_disposition(b"form-data; name=\"avatar\"; filename=\"../me.png\"")?;
@@ -1638,7 +1640,10 @@ pub mod forwarded {
     pub struct Element<'a> { pub for_: Option<Node<'a>>, pub by: Option<Node<'a>>,
                              pub host: Option<HostPort<'a>>, pub proto: Option<Proto> }
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub enum Node<'a> { Addr(IpAddr, Option<u16>), Unknown(Option<u16>), Obfuscated(&'a [u8], Option<&'a [u8]>) }
+    pub enum Node<'a> { Addr(IpAddr, Option<NodePort<'a>>), Unknown(Option<NodePort<'a>>),
+                        Obfuscated(&'a [u8], Option<NodePort<'a>>) }                       // D-047
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+    pub enum NodePort<'a> { Number(u16), Obfuscated(&'a [u8]) }
     #[non_exhaustive] #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub enum Proto { Http, Https }
 
@@ -1712,8 +1717,18 @@ impl<'a> Credentials<'a> {
 impl core::fmt::Debug for Credentials<'_> {}                // scheme only
 
 #[derive(Clone, Copy)]
-pub enum AuthPayload<'a> { None, Token68(&'a [u8]), Params(Params<'a>) }
+pub enum AuthPayload<'a> { None, Token68(&'a [u8]), Params(AuthParams<'a>) }  // D-048
 impl core::fmt::Debug for AuthPayload<'_> {}                // redacted
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AuthParams<'a> { /* comma-separated auth-params, validated */ }
+impl<'a> AuthParams<'a> {
+    pub fn iter(&self) -> impl Iterator<Item = (&'a [u8], Word<'a>)>;
+    pub fn get(&self, name: &str) -> Option<Word<'a>>;      // case-insensitive name
+    pub const fn len(&self) -> usize;
+    pub const fn is_empty(&self) -> bool;
+}
+impl core::fmt::Debug for AuthParams<'_> {}                 // names only
 
 #[derive(Clone, Copy, Debug)]
 pub struct Challenge<'a> { /* scheme, payload */ }
@@ -1734,7 +1749,7 @@ RFC 9110 section 11: `credentials = auth-scheme [ 1*SP ( token68 / #auth-param )
 | ATH-3 | `basic_decode_into` | P2, 1, 0.5 | `encode-lib`: decodes into `out` and splits at the first `:` (RFC 7617 section 2) into user and password; a decoded control byte is refused | `ControlInDecoded`, `InvalidBase64`, `BufferTooSmall` |
 | ATH-4 | `parse_credentials`, `Credentials`, `AuthPayload` | P1, 2, 0.4 | one credential per field; parameter names unique ([T21](../dev/PLAN.md#9-threats)); BWS around `=` accepted; `Debug` prints the scheme only: credentials are secrets | `NotToken`, `DuplicateParameter`, `TrailingData`, PRM errors |
 | ATH-5 | `parse_challenges`, `Challenge` | P1, 2, 0.5 | the one-pass algorithm in [PLAN 7.10](../dev/PLAN.md#710-www-authenticate), which resolves where one challenge ends and the next begins; a token68 ends at `,` or the end, trailing `=` included | `DuplicateParameter` (a name twice in one challenge), `NotToken`, `ExpectedSeparator`, LST errors |
-| ATH-6 | `write_challenge` | P1, 2, 0.4 | `Bearer realm="api", error="invalid_token"`; `realm` always quoted (RFC 9110 section 11.5); other values through `write_word` | `NotToken`, `Forbidden`, `Full` |
+| ATH-6 | `write_challenge` | P1, 2, 0.4 | `Bearer realm="api", error="invalid_token"`; `realm` always quoted (RFC 9110 section 11.5); other values through `write_word`; a name given twice is refused (D-052) | `NotToken`, `DuplicateName`, `Forbidden`, `Full` |
 | ATH-7 | `write_challenge_token68` | P2, 2, 0.5 | `Negotiate <token68>` | `Forbidden` for a byte outside token68, `Full` |
 
 ```rust
@@ -1946,7 +1961,7 @@ pub mod sfv {
         pub fn visit_dictionary<'a, V: Visitor<'a>>(&self, v: &'a [u8], visitor: &mut V) -> Result<(), ParseError>;
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub enum BareItem<'a> {
         Integer(i64), Decimal(Decimal), String(SfString<'a>), Token(&'a str),
         ByteSeq(ByteSeq<'a>), Boolean(bool), Date(i64), DisplayString(DisplayString<'a>),
@@ -1958,19 +1973,24 @@ pub mod sfv {
         pub const fn thousandths(self) -> i64;
     }
 
+    // Every view below also derives Hash; List and Dictionary also PartialEq and Eq (D-055).
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct Item<'a> { pub bare: BareItem<'a>, pub params: SfParams<'a> }
+    impl<'a> Item<'a> { pub const fn new(bare: BareItem<'a>) -> Item<'a>; }   // no parameters; for index slots
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Member<'a> { Item(Item<'a>), InnerList(InnerList<'a>) }
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct InnerList<'a> { /* items text, count, params */ }   // iter() -> Item, len(), params()
+    pub struct InnerList<'a> { /* items text, count, params */ }   // iter() -> InnerIter (Item), len(), is_empty(), params()
 
-    #[derive(Clone, Copy, Debug)] pub struct List<'a> { /* text, count */ }        // iter() -> Member, len()
-    #[derive(Clone, Copy, Debug)] pub struct Dictionary<'a> { /* text, count */ }  // iter() -> (&str, Member), len()
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct SfParams<'a> { /* text, count */ } // iter() -> (&str, BareItem)
+    #[derive(Clone, Copy, Debug)] pub struct List<'a> { /* text, count */ }        // iter() -> ListIter (Member), len(), is_empty()
+    #[derive(Clone, Copy, Debug)] pub struct Dictionary<'a> { /* text, count */ }  // iter() -> DictIter ((&str, Member)), len(), is_empty()
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct SfParams<'a> { /* text, count */ } // iter() -> ParamIter ((&str, BareItem))
     #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct SfString<'a> { /* raw */ }
     #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct ByteSeq<'a> { /* raw base64 */ }
     #[derive(Clone, Copy, Debug, PartialEq, Eq)] pub struct DisplayString<'a> { /* raw */ }
+    #[derive(Clone, Copy, Debug)] pub struct ListLines<'a> { /* lines, count */ }        // iter() -> Member, len(), is_empty()
+    #[derive(Clone, Copy, Debug)] pub struct DictionaryLines<'a> { /* lines, count */ }  // iter() -> (&str, Member), get(key), len(), is_empty()
+    pub struct ParamIter<'a>;  pub struct InnerIter<'a>;  pub struct ListIter<'a>;  pub struct DictIter<'a>;   // Clone, Debug, Iterator
 
     impl<'a> Dictionary<'a> {
         pub fn get(&self, key: &str) -> Option<Member<'a>>;

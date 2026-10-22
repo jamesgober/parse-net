@@ -14,6 +14,7 @@ libfuzzer-sys = "0.4"
 # never reach parse-net's own dependency tree.
 httpdate = "1"
 mime = "0.3"
+sfv = "0.16"
 
 [dependencies.parse-net]
 path = ".."
@@ -92,3 +93,105 @@ path = "fuzz_targets/diff_media_type.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "media_range"
+path = "fuzz_targets/media_range.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "accept_negotiate"
+path = "fuzz_targets/accept_negotiate.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "etag_condition"
+path = "fuzz_targets/etag_condition.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "range"
+path = "fuzz_targets/range.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "content_range"
+path = "fuzz_targets/content_range.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "ext_value"
+path = "fuzz_targets/ext_value.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "content_disposition"
+path = "fuzz_targets/content_disposition.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "cache_control"
+path = "fuzz_targets/cache_control.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "forwarded"
+path = "fuzz_targets/forwarded.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "xff"
+path = "fuzz_targets/xff.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "authorization"
+path = "fuzz_targets/authorization.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "www_authenticate"
+path = "fuzz_targets/www_authenticate.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "origin"
+path = "fuzz_targets/origin.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sfv_item"
+path = "fuzz_targets/sfv_item.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sfv_list"
+path = "fuzz_targets/sfv_list.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sfv_dictionary"
+path = "fuzz_targets/sfv_dictionary.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "diff_sfv"
+path = "fuzz_targets/diff_sfv.rs"
+test = false
+doc = false

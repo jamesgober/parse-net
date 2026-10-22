@@ -73,7 +73,8 @@
 //!
 //! ## Status
 //!
-//! The core, `0.3.0`. The public API is written down in `docs/API.md`, the
+//! Extended, `0.4.0`: the core plus the web layer. The public API is written
+//! down in `docs/API.md`, each field's grammar in `docs/GRAMMAR.md`, the
 //! design in `dev/PLAN.md`, and the milestone schedule in `dev/ROADMAP.md`
 //! (all in the [repository](https://github.com/jamesgober/parse-net)).
 
@@ -125,6 +126,7 @@ pub mod param;
 pub mod pct;
 pub mod range;
 pub mod scan;
+pub mod sfv;
 pub mod text;
 mod utf8;
 pub mod write;

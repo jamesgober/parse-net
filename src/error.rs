@@ -388,6 +388,10 @@ pub enum WriteError {
     /// A structured writer was called out of order, such as a parameter
     /// before any item. A bug in the calling code.
     InvalidSequence,
+    /// Two parameters with the same name (ASCII case-insensitive) where the
+    /// grammar allows each name once, so every parser would refuse the
+    /// output.
+    DuplicateName,
 }
 
 impl WriteError {
@@ -416,6 +420,7 @@ impl fmt::Display for WriteError {
             Self::OutOfRange => f.write_str("value out of range"),
             Self::NotToken => f.write_str("not a token"),
             Self::InvalidSequence => f.write_str("writer called out of order"),
+            Self::DuplicateName => f.write_str("duplicate parameter name"),
         }
     }
 }
@@ -525,6 +530,10 @@ mod tests {
         assert_eq!(
             WriteError::InvalidSequence.to_string(),
             "writer called out of order"
+        );
+        assert_eq!(
+            WriteError::DuplicateName.to_string(),
+            "duplicate parameter name"
         );
     }
 }

@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "parse-net"
-version = "0.3.0"
+version = "0.4.0"
 
 # Minimum Supported Rust Version (MSRV)
 # 1.85: edition 2024. `core::net` addresses need 1.77, `core::error::Error`
@@ -35,7 +35,7 @@ documentation = "https://docs.rs/parse-net"
 authors = ["James Gober <me@jamesgober.com>"]
 
 # The fuzz crate stays in the repository; it is not part of the package.
-exclude = ["/fuzz/"]
+exclude = ["/fuzz/", "/tests/sfv/", "/tests/sfv_conformance.rs"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -77,6 +77,9 @@ encode-lib = []
 [dev-dependencies]
 # Property tests only; never a runtime dependency.
 proptest = { version = "1", default-features = false, features = ["std"] }
+# Reads the vendored RFC 9651 conformance suite (tests/sfv); never a runtime
+# dependency.
+serde_json = "1"
 
 
 # RELEASE PROFILE

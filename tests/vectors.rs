@@ -128,3 +128,48 @@ fn test_vectors_list() {
         assert_eq!(got, expected, "input {:?}", String::from_utf8_lossy(&input));
     }
 }
+
+/// Escapes as the vector files do: `\t`, and `\xNN` for `\` and every byte
+/// outside printable ASCII.
+fn escape(v: &[u8]) -> String {
+    v.iter()
+        .map(|&b| match b {
+            b'\t' => "\\t".to_string(),
+            b'\\' => "\\x5c".to_string(),
+            0x20..=0x7e => char::from(b).to_string(),
+            _ => format!("\\x{b:02x}"),
+        })
+        .collect()
+}
+
+#[test]
+fn test_vectors_content_disposition_tc2231() {
+    let all = cases("content_disposition.txt");
+    // Every tc2231 case, each with a recorded verdict.
+    assert_eq!(all.len(), 87);
+    for (expected, input) in all {
+        let got = match pn::parse_content_disposition(&input) {
+            Ok(d) => {
+                let kind = match d.kind() {
+                    pn::DispositionType::Inline => "inline".to_string(),
+                    pn::DispositionType::Attachment => "attachment".to_string(),
+                    pn::DispositionType::FormData => "form-data".to_string(),
+                    pn::DispositionType::Other(o) => {
+                        String::from_utf8_lossy(o).to_ascii_lowercase()
+                    }
+                    _ => "unknown".to_string(),
+                };
+                let mut buf = [0u8; 512];
+                match d.filename() {
+                    None => kind,
+                    Some(f) => match f.decode_into(&mut buf) {
+                        Ok(s) => format!("{kind};filename={}", escape(s.as_bytes())),
+                        Err(e) => format!("{kind};filename={}", kind_name(e.kind())),
+                    },
+                }
+            }
+            Err(e) => kind_name(e.kind()),
+        };
+        assert_eq!(got, expected, "input {:?}", String::from_utf8_lossy(&input));
+    }
+}
