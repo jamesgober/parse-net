@@ -11,7 +11,9 @@ fn bytewise(v: &[u8]) -> bool {
 
 fn bench(c: &mut Criterion) {
     let mut g = c.benchmark_group("check_field_value/64 bytes");
-    g.bench_function("parse-net", |b| b.iter(|| parse_net::scan::check_field_value(black_box(VALUE)).is_ok()));
+    g.bench_function("parse-net", |b| {
+        b.iter(|| parse_net::scan::check_field_value(black_box(VALUE)).is_ok())
+    });
     g.bench_function("bytewise", |b| b.iter(|| bytewise(black_box(VALUE))));
     g.finish();
 }

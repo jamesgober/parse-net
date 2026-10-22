@@ -12,7 +12,11 @@ fn bench(c: &mut Criterion) {
     g.bench_function("parse-net", |b| {
         b.iter(|| {
             let d = parse_net::parse_content_disposition(black_box(VALUE)).expect("valid");
-            d.filename().expect("a name").decode_into(&mut buf).expect("decodes").len()
+            d.filename()
+                .expect("a name")
+                .decode_into(&mut buf)
+                .expect("decodes")
+                .len()
         })
     });
     g.bench_function("content_disposition", |b| {

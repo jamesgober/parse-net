@@ -153,6 +153,30 @@ proptest! {
     }
 
     #[test]
+    fn test_xff_ipv4_agrees_with_core(
+        text in prop_oneof![
+            "[0-9.]{0,20}",
+            (0u16..1000, 0u16..1000, 0u16..300, 0u16..300, any::<bool>())
+                .prop_map(|(a, b, c, d, zero)| if zero { format!("{a}.0{b}.{c}.{d}") } else { format!("{a}.{b}.{c}.{d}") }),
+        ],
+        port in prop::option::of(any::<u16>()),
+    ) {
+        // The chain parser's own IPv4 reader must accept exactly what
+        // `core::net::Ipv4Addr` accepts.
+        let line = match port {
+            Some(p) => format!("{text}:{p}"),
+            None => text.clone(),
+        };
+        let lines = [line.as_bytes()];
+        let ours = forwarded::parse_x_forwarded_for(&lines, &Limits::DEFAULT)
+            .ok()
+            .and_then(|c| c.iter().next())
+            .map(|(a, _)| a);
+        let core = text.parse::<core::net::Ipv4Addr>().ok().map(IpAddr::V4);
+        prop_assert_eq!(ours, core, "{}", line);
+    }
+
+    #[test]
     fn test_entity_tag_write_round_trip(opaque in "[!#-~]{0,24}", weak in any::<bool>()) {
         let t = if weak { EntityTag::weak(opaque.as_bytes()) } else { EntityTag::strong(opaque.as_bytes()) };
         let t = t.expect("etagc only");

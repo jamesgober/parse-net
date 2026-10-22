@@ -15,7 +15,9 @@ fn bench(c: &mut Criterion) {
     });
     g.bench_function("sfv", |b| {
         b.iter(|| {
-            let l = sfv::Parser::new(black_box(LIST)).parse::<sfv::List>().expect("valid");
+            let l = sfv::Parser::new(black_box(LIST))
+                .parse::<sfv::List>()
+                .expect("valid");
             l.len()
         })
     });
@@ -30,7 +32,9 @@ fn bench(c: &mut Criterion) {
     });
     g.bench_function("sfv", |b| {
         b.iter(|| {
-            let d = sfv::Parser::new(black_box(DICT)).parse::<sfv::Dictionary>().expect("valid");
+            let d = sfv::Parser::new(black_box(DICT))
+                .parse::<sfv::Dictionary>()
+                .expect("valid");
             d.get("u").is_some()
         })
     });

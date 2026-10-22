@@ -51,10 +51,17 @@ fn with_mime(accept: &str, offers: &[&str]) -> Option<usize> {
 
 fn bench(c: &mut Criterion) {
     let text = std::str::from_utf8(ACCEPT).expect("ASCII");
-    assert_eq!(parse_net::best_media(Some(ACCEPT), &OFFERS), with_mime(text, &OFFERS));
+    assert_eq!(
+        parse_net::best_media(Some(ACCEPT), &OFFERS),
+        with_mime(text, &OFFERS)
+    );
     let mut g = c.benchmark_group("best_media/chrome-accept, 3 offers");
-    g.bench_function("parse-net", |b| b.iter(|| parse_net::best_media(Some(black_box(ACCEPT)), black_box(&OFFERS))));
-    g.bench_function("mime + loop", |b| b.iter(|| with_mime(black_box(text), black_box(&OFFERS))));
+    g.bench_function("parse-net", |b| {
+        b.iter(|| parse_net::best_media(Some(black_box(ACCEPT)), black_box(&OFFERS)))
+    });
+    g.bench_function("mime + loop", |b| {
+        b.iter(|| with_mime(black_box(text), black_box(&OFFERS)))
+    });
     g.finish();
 }
 
