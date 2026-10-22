@@ -67,7 +67,13 @@ pub fn check_error(e: &parse_net::ParseError) {
     use std::fmt::Write;
     let mut text = Stack { buf: [0; 256], len: 0 };
     write!(text, "{e}").expect("an error message fits 256 bytes");
-    let text = &text.buf[..text.len];
-    assert!(text.starts_with(e.kind().message().as_bytes()));
-    assert!(text.iter().all(|&b| b.is_ascii_graphic() || b == b' '));
+    // Exactly the kind's message and the position: nothing from the input.
+    let mut want = Stack { buf: [0; 256], len: 0 };
+    if e.line() == 0 {
+        write!(want, "{} at offset {}", e.kind().message(), e.offset())
+    } else {
+        write!(want, "{} at offset {} of field line {}", e.kind().message(), e.offset(), e.line())
+    }
+    .expect("fits");
+    assert_eq!(&text.buf[..text.len], &want.buf[..want.len]);
 }

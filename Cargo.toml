@@ -27,7 +27,6 @@ keywords = ["http", "parser", "header", "rfc9110", "no-std"]
 categories = ["parser-implementations", "network-programming", "web-programming", "no-std::no-alloc"]
 
 # Links
-homepage      = "https://github.com/jamesgober/parse-net"
 repository    = "https://github.com/jamesgober/parse-net"
 documentation = "https://docs.rs/parse-net"
 

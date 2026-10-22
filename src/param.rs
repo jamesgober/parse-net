@@ -48,6 +48,21 @@ pub struct Param<'a> {
 /// never by reading the parameters again (D-072). Without it, the check for
 /// a repeat reads every earlier parameter, values included, and a field of
 /// many parameters costs the square of its length.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{param, DuplicatePolicy, ErrorKind, Limits};
+///
+/// let many: String = (0..65).map(|i| format!(";p{i}=v")).collect::<Vec<_>>().concat();
+/// let wide = Limits::DEFAULT.max_params(1000);
+/// assert_eq!(param::parse(many.as_bytes(), &wide).unwrap_err().kind(), ErrorKind::TooManyMembers);
+/// // `First` and `Last` do not look for repeats, so `max_params` applies.
+/// let last = wide.duplicate_params(DuplicatePolicy::Last);
+/// assert_eq!(param::parse(many.as_bytes(), &last)?.0.len(), 65);
+/// assert_eq!(param::MAX_CHECKED_PARAMS, 64);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 pub const MAX_CHECKED_PARAMS: usize = 64;
 
 /// The names already seen in one parameter list, for the repeat check: their

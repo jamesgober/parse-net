@@ -59,6 +59,16 @@ fuzz_target!(|data: &[u8]| {
     let mut a = [0u8; 65536];
     let mut b = [0u8; 65536];
     common::no_alloc(|| {
+        for e in [
+            sfv::parse_list(data).err(),
+            sfv::parse_item(data).err(),
+            sfv::parse_dictionary(data).err(),
+        ]
+        .iter()
+        .flatten()
+        {
+            common::check_error(e);
+        }
         if let Some(first) = list_text(data, &mut a) {
             let members = sfv::parse_list(first).expect("canonical text parses").len();
             assert_eq!(members, sfv::parse_list(data).map(|l| l.len()).unwrap_or(0));
