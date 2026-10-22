@@ -1,0 +1,13 @@
+# RFC 9110 section 5.6.1.2 list examples. Format: expected<TAB>input.
+# expected is the elements joined by | (empty for none), or err:<ErrorKind>.
+foo|bar	foo,bar
+foo|bar	foo ,bar,
+foo|bar|charlie	foo , ,bar,charlie
+	
+	,
+	,   ,
+a="x,y"|b	a="x,y", b
+(c,d) e|f	(c,d) e, f
+err:UnterminatedQuote	a, "b
+err:UnbalancedComment	a, (b
+err:LineFeed	a\x0ab

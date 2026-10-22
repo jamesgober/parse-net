@@ -13,33 +13,69 @@
 //!
 //! ## Tier 1
 //!
-//! The convention in every example is `use parse_net as pn;`:
+//! The convention in every example is `use parse_net as pn;`. One plain call
+//! per field:
 //!
-//! ```
+//! ```rust
 //! use parse_net as pn;
 //!
-//! assert!(!pn::VERSION.is_empty());
+//! // Media types: one strict view, no copy.
+//! let mt = pn::parse_media_type(b"text/html; charset=UTF-8")?;
+//! assert!(mt.essence_is("text/html"));
+//! assert!(mt.charset().is_some_and(|c| c.eq_ignore_ascii_case(b"utf-8")));
+//!
+//! // Lists: commas inside quoted strings and comments do not split.
+//! let codings: Vec<&[u8]> = pn::list(b"gzip, deflate;q=0.5, x=\"a,b\"")?.iter().collect();
+//! assert_eq!(codings, [&b"gzip"[..], b"deflate;q=0.5", b"x=\"a,b\""]);
+//!
+//! // HTTP-date: all three formats in, IMF-fixdate out.
+//! let now = 1_792_540_800; // the caller's clock, Unix seconds
+//! let d = pn::http_date_at(b"Sunday, 06-Nov-94 08:49:37 GMT", now)?;
+//! assert_eq!(&d.format(), b"Sun, 06 Nov 1994 08:49:37 GMT");
+//!
+//! // Host: real IPv4 and IPv6 validation, ports up to 65535.
+//! let hp = pn::parse_host_port(b"[2001:db8::1]:8443")?;
+//! assert_eq!(hp.port, Some(8443));
+//! assert!(pn::parse_host_port(b"127.1").is_err()); // read as IPv4 by browsers: refused
+//!
+//! // Writers cannot emit CR, LF, or NUL.
+//! let mut buf = [0u8; 64];
+//! let mut out = pn::SliceSink::new(&mut buf);
+//! pn::media::write("text", "plain", &[("charset", "utf-8")], &mut out)?;
+//! assert_eq!(out.written(), b"text/plain; charset=utf-8");
+//! assert!(pn::write::write_field_value(b"x\r\nSet-Cookie: y", &mut out).is_err());
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! The Tier 1 functions arrive from `0.3.0` on, one plain call per field:
+//! Errors carry a kind and an offset, never input bytes:
+//!
+//! ```rust
+//! use parse_net as pn;
+//!
+//! let err = pn::parse_media_type(b"text/ html").unwrap_err();
+//! assert_eq!(err.kind(), pn::ErrorKind::InvalidMediaType);
+//! assert_eq!(err.to_string(), "invalid media type at offset 5");
+//! ```
+//!
+//! The rest of Tier 1 arrives with `0.4.0` and `0.5.0` (see the
+//! [roadmap](https://github.com/jamesgober/parse-net/blob/main/dev/ROADMAP.md)):
 //!
 //! ```text
-//! pn::parse_media_type(b"text/html; charset=UTF-8")?   // MediaType view
-//! pn::best_media(accept, &["text/html", "application/json"])  // Option<usize>
-//! pn::http_date_at(b"Sun, 06 Nov 1994 08:49:37 GMT", now)?    // HttpDate
-//! pn::if_none_match(if_none_match, &current_etag)?     // bool: answer 304
-//! pn::byte_ranges(range, file_len, &mut buf)?           // RangeOutcome
-//! pn::parse_content_disposition(value)?.filename()      // prefers filename*
-//! pn::sfv::parse_item(b"same-origin")?                  // Sec-Fetch-Site
-//! pn::parse_host_port(b"example.com:8443")?             // HostPort
+//! pn::best_media(accept, &["text/html", "application/json"])    // Option<usize>
+//! pn::if_none_match(if_none_match, &current_etag)?              // bool: answer 304
+//! pn::byte_ranges(range, file_len, &mut buf)?                   // RangeOutcome
+//! pn::parse_content_disposition(value)?.filename()              // prefers filename*
+//! pn::response_cache_control(value)?                            // ResponseDirectives
+//! pn::client_address(peer, pn::ForwardedSource::XForwardedFor(&lines), &trusted, 16)?
+//! pn::sfv::parse_item(b"same-origin")?                          // Sec-Fetch-Site
+//! pn::bearer(authorization)?                                    // Option<&[u8]>
 //! ```
 //!
 //! ## Status
 //!
-//! Design lock. The public API is written down in `docs/API.md`, the design
-//! in `dev/PLAN.md`, and the milestone schedule in `dev/ROADMAP.md` (all in
-//! the [repository](https://github.com/jamesgober/parse-net)); the core ships
-//! in `0.3.0`.
+//! The core, `0.3.0`. The public API is written down in `docs/API.md`, the
+//! design in `dev/PLAN.md`, and the milestone schedule in `dev/ROADMAP.md`
+//! (all in the [repository](https://github.com/jamesgober/parse-net)).
 
 #![doc(html_root_url = "https://docs.rs/parse-net")]
 #![no_std]
@@ -68,6 +104,33 @@ extern crate std;
 
 #[cfg(feature = "alloc")]
 extern crate alloc;
+
+pub mod class;
+pub mod date;
+mod error;
+pub mod host;
+mod limits;
+pub mod list;
+pub mod media;
+pub mod num;
+pub mod param;
+pub mod pct;
+pub mod scan;
+pub mod text;
+mod utf8;
+pub mod write;
+
+#[cfg(feature = "std")]
+pub use date::http_date;
+pub use date::{Civil, DateFormat, HttpDate, http_date_at};
+pub use error::{ErrorKind, Full, ParseError, WriteError};
+pub use host::{Host, HostPort, parse_host_port};
+pub use limits::{DuplicatePolicy, Limits};
+pub use list::{List, list};
+pub use media::{Boundary, MediaType, parse_media_type};
+pub use param::{Param, Params};
+pub use text::{Comment, Quoted, Word};
+pub use write::{CountSink, Sink, SliceSink};
 
 /// Crate version string, populated by Cargo at build time.
 ///

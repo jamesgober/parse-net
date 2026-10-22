@@ -1,7 +1,7 @@
 # parse-net - API Reference
 
 > Reference for every public item in `parse-net`, with signatures, behaviour, the errors each item can return, and examples.
-> **Status: design lock (`0.2.0`).** This document is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
+> **Current release: `0.3.0`.** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
 
 <sub>Copyright &copy; 2026 <strong>James Gober</strong>.</sub>
 
@@ -195,10 +195,10 @@ impl core::error::Error for ParseError {}
 Why a value was refused, and where. Eight bytes, `Copy`, and it never contains input bytes, so it is safe to log.
 
 - `kind()`: what was refused (see [`ErrorKind`](#errorkind)).
-- `offset()`: the byte offset of the first byte that could not be accepted, relative to the start of the value passed in. For combined field lines it is relative to the start of the line named by `line()`. Offsets above 2^24 saturate at 2^24 - 1 when a line index is present, and at `u32::MAX` otherwise.
-- `line()`: the zero-based index of the field line that failed when several lines were parsed as one field; `0` otherwise. Line indexes above 255 saturate at 255.
+- `offset()`: the byte offset of the first byte that could not be accepted, relative to the start of the value passed in. For combined field lines it is relative to the start of the line named by `line()`. Offsets above `u32::MAX` saturate.
+- `line()`: the zero-based index of the field line that failed when several lines were parsed as one field; `0` otherwise. Line indexes above 255 saturate at 255. (The kind, the line index, and the offset fit in 8 bytes: one byte each for the kind and the line, four for the offset.)
 - `new(kind, offset)`: builds an error, for callers that implement [`sfv::Visitor`](#structured-field-values-sfv) or wrap parse-net. Offsets above `u32::MAX` saturate.
-- `Display` writes the kind's fixed message and the offset, for example `invalid byte in token at offset 4`. No input byte is ever formatted, in `Display` or `Debug`.
+- `Display` writes the kind's fixed message and the offset, for example `invalid byte at offset 4` (and `of field line 2` when a line index is present). No input byte is ever formatted, in `Display` or `Debug`.
 
 ```rust
 use parse_net as pn;
@@ -224,6 +224,8 @@ impl ErrorKind {
     pub const fn message(self) -> &'static str;
 }
 ```
+
+Every parser reports a control byte the same way, whatever it was parsing: `BareCr` for CR, `LineFeed` for LF, `Nul` for NUL, `Control` for any other C0 control or DEL ([D-037](../dev/PLAN.md#16-decision-log)); `InvalidByte` is for printable bytes in the wrong place.
 
 Every variant names what was refused. Unless the row says otherwise, the caller's response is the same: treat the field as malformed. For a request field that means refusing the request (HTTP 400) or ignoring the field where its RFC allows that; for a field a server produced, it means a bug in the producer.
 
@@ -517,7 +519,7 @@ pub mod num {
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
 | NUM-1 | `parse_u64` | P0, 3, 0.3 | `1*DIGIT` into `u64`; no sign, no space, no trimming; leading zeros allowed | `Empty`; `InvalidNumber` at the first non-digit; `NumberOverflow` at the digit that overflows |
-| NUM-2 | `parse_u32_saturating` | P1, 3, 0.4 | the delta-seconds rule (RFC 9111 section 1.2.2): any number of digits; values above 2147483648 give 2147483648 | `Empty`, `InvalidNumber` |
+| NUM-2 | `parse_u32_saturating` | P1, 3, 0.3 (planned 0.4) | the delta-seconds rule (RFC 9111 section 1.2.2): any number of digits; values above 2147483648 give 2147483648 | `Empty`, `InvalidNumber` |
 
 ```rust
 use parse_net::{num, ErrorKind};
@@ -664,7 +666,7 @@ pub mod text {
 | TXT-2 | `is_ows`, `trim_ows`, `skip_ows` | P0, 3, 0.3 | SP and HTAB only. VT, FF, NBSP, and every other byte are never stripped and later fail validation ([T6](../dev/PLAN.md#9-threats)); `<[u8]>::trim_ascii` is deliberately not used. `skip_ows` returns the count of leading SP and HTAB | none |
 | TXT-3 | `parse_token` | P0, 3, 0.3 | the longest token prefix of `s` and its length (the rest is the caller's) | `Empty` when `s` does not start with a `tchar` |
 | TXT-4 | BWS | P0, 3, 0.3 | "bad whitespace" (OWS a sender must not generate) is accepted where RFC 9110 allows it (`auth-param`, `Link` parameters) and never written | none |
-| TXT-5 | `parse_quoted` | P0, 3, 0.3 | `s[0]` must be `"`; scans `qdtext` and `quoted-pair` to the closing `"`; returns the view and the length including both quotes | `InvalidByte` (offset 0) when `s` does not start with `"`; `InvalidByte` for a byte that is not `qdtext`; `InvalidQuotedPair` when the byte after `\` is not `HTAB / SP / VCHAR / obs-text`; `UnterminatedQuote` at the end of input |
+| TXT-5 | `parse_quoted` | P0, 3, 0.3 | `s[0]` must be `"`; scans `qdtext` and `quoted-pair` to the closing `"`; returns the view and the length including both quotes | `InvalidByte` (offset 0) when `s` does not start with `"`; a control kind for a control byte (the only bytes besides `"` and `\` that are not `qdtext`); `InvalidQuotedPair` when the byte after `\` is not `HTAB / SP / VCHAR / obs-text`; `UnterminatedQuote` at the end of input |
 | TXT-11 | `parse_word` | P0, 3, 0.3 | a quoted string when `s` starts with `"`, a token otherwise | as TXT-3 and TXT-5 |
 | TXT-13 | `parse_comment` | P1, 3, 0.4 | `s[0]` must be `(`; `ctext`, `quoted-pair`, and nested comments, counted, never recursed; returns the view and the length including the outer parentheses | `InvalidByte`, `InvalidQuotedPair`, `UnbalancedComment` (no closing `)`), `CommentTooDeep` (nesting beyond `max_comment_depth`, at the `(` that exceeded it) |
 
@@ -676,7 +678,7 @@ assert_eq!(text::trim_ows(b" \t gzip \t"), b"gzip");
 assert_eq!(text::trim_ows(b"\x0bgzip"), b"\x0bgzip");              // VT is not whitespace here
 assert_eq!(text::parse_token(b"charset=utf-8")?, (&b"charset"[..], 7));
 let (q, used) = text::parse_quoted(b"\"a \\\"b\\\" c\"; x")?;
-assert_eq!(used, 12);
+assert_eq!(used, 11);
 assert_eq!(q.raw(), b"a \\\"b\\\" c");
 # Ok::<(), parse_net::ParseError>(())
 ```
@@ -815,7 +817,7 @@ The RFC 9110 section 5.6.1 `#rule`: comma-separated elements. An element is yiel
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
 | LST-1 | `list`, `list::parse`, `List`, `Elements` | P0, 1, 0.3 | validates the whole value: every byte per SCN-3; quoted strings terminated with valid quoted pairs; comments balanced within `max_comment_depth`. A comma ends an element only outside quoted strings and comments ([T3](../dev/PLAN.md#9-threats)). Empty elements (`a, , b`, a leading or trailing comma) are skipped up to `max_empty_elements` (RFC 9110 section 5.6.1.2) | SCN-3 kinds; `UnterminatedQuote`, `InvalidQuotedPair`, `UnbalancedComment`, `CommentTooDeep`; `TooManyEmptyElements` at the comma that exceeded the budget; `TooManyMembers` at the element beyond `max_list_members` |
-| LST-2 | `list::for_each` | P1, 3, 0.3 | validates and calls `f` for each element in one pass (no second scan); returns the element count. On error, `f` has seen the elements before the failure | as LST-1 |
+| LST-2 | `list::for_each` | P1, 3, 0.3 | validates and calls `f` for each element in one pass (no second scan); returns the element count. On error, `f` has seen the elements before the failure. The fastest way to read a list whose elements are visited once | as LST-1 |
 | LST-3 | `list::combined`, `CombinedList` | P0, 2, 0.3 | several field lines of one name as one list, as if joined by `", "` (RFC 9110 section 5.3), without joining; an empty line adds nothing; an element never spans two lines, so a quote open at the end of a line is `UnterminatedQuote`. The empty-element and member budgets count across all lines | as LST-1, with `line()` set |
 | LST-4 | `list::contains_token` | P0, 1, 0.3 | whether any element of any line equals `token` ASCII case-insensitively (`Connection: keep-alive, Upgrade`); a line that fails to parse counts as not containing it (fail closed) | none |
 
@@ -841,7 +843,7 @@ Edge cases tested: empty value (zero elements); `,`; `, ,`; `a,`; `,a`; `a,,b`; 
 
 ## Parameters: `param`
 
-`PRM-1` to `PRM-6` | 0.3 (PRM-4 0.4)
+`PRM-1` to `PRM-6` | 0.3 (the `First` and `Last` policies of PRM-4 already work in 0.3)
 
 ```rust
 pub mod param {
@@ -1095,7 +1097,7 @@ impl HttpDate {
     pub fn civil(self) -> Civil;
     #[cfg(feature = "std")] pub fn now() -> HttpDate;
     #[cfg(feature = "std")] pub fn from_system_time(t: std::time::SystemTime) -> Result<HttpDate, ParseError>;
-    #[cfg(feature = "std")] pub fn to_system_time(self) -> std::time::SystemTime;
+    #[cfg(feature = "std")] pub fn to_system_time(self) -> Option<std::time::SystemTime>;
 }
 
 pub fn http_date_at(value: &[u8], now: i64) -> Result<HttpDate, ParseError>;             // Tier 1, no_std
@@ -1119,13 +1121,13 @@ RFC 9110 section 5.6.7. A point in time with one-second resolution, from year 1 
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
 | DAT-1 | `from_unix`, `unix`, `MIN`, `MAX` | P0, 1, 0.3 | seconds since the Unix epoch, negative for dates before 1970 | `OutOfRange` outside years 1 to 9999 |
-| DAT-2 | `http_date_at`, `parse_at`, `parse_at_with` | P0, 1, 0.3 | all three formats: IMF-fixdate (`Sun, 06 Nov 1994 08:49:37 GMT`), RFC 850 (`Sunday, 06-Nov-94 08:49:37 GMT`), asctime (`Sun Nov  6 08:49:37 1994`). Names are case-sensitive (HTTP-date is case-sensitive). The weekday must agree with the date. Only `GMT` is accepted as the zone. The RFC 850 two-digit year is resolved against `now` (Unix seconds) by the RFC 9110 rule: a date more than 50 years in the future is taken as the most recent past year with the same last two digits ([D-005](../dev/PLAN.md#16-decision-log)). Second `60` is refused unless `Limits::allow_leap_second` (then read as 59) | `InvalidDate` (no format matches, a day beyond the month, `29 Feb` in a non-leap year, hour 24, minute or second 60); `WeekdayMismatch`; `TrailingData` |
+| DAT-2 | `http_date_at`, `parse_at`, `parse_at_with` | P0, 1, 0.3 | all three formats: IMF-fixdate (`Sun, 06 Nov 1994 08:49:37 GMT`), RFC 850 (`Sunday, 06-Nov-94 08:49:37 GMT`), asctime (`Sun Nov  6 08:49:37 1994`). Names are case-sensitive (HTTP-date is case-sensitive). The weekday must agree with the date. Only `GMT` is accepted as the zone. The RFC 850 two-digit year is resolved against `now` (Unix seconds) by the RFC 9110 rule: a date more than 50 years in the future is taken as the most recent past year with the same last two digits ([D-005](../dev/PLAN.md#16-decision-log)); a date 50 years or more in the past moves forward a century, so the year always lands in the hundred years around `now` ([D-039](../dev/PLAN.md#16-decision-log)). Second `60` is refused unless `Limits::allow_leap_second` (then read as 59) | `InvalidDate` (no format matches, a day beyond the month, `29 Feb` in a non-leap year, hour 24, minute or second 60); `WeekdayMismatch`; `TrailingData` |
 | DAT-3 | `http_date` | P1, 1, 0.3 | `std`: `parse_at` with `now` from `SystemTime::now()` | as DAT-2 |
 | DAT-4 | `parse_imf_fixdate` | P0, 3, 0.3 | exactly the 29-byte IMF-fixdate, the only format senders may generate; parsed by position with no searching; needs no clock | as DAT-2 |
 | DAT-5 | `parse_detailed` | P2, 3, 0.3 | also reports the format seen (a sender still using RFC 850 is a signal) | as DAT-2 |
 | DAT-6 | `format`, `write_to` | P0, 1, 0.3 | IMF-fixdate (moved from http-net `blocking.rs`, now over the full year range) | `write_to`: `Full` |
 | DAT-7 | `civil`, `Civil` | P1, 2, 0.3 | broken-down UTC time | none |
-| DAT-8 | `now`, `from_system_time`, `to_system_time` | P1, 1, 0.3 | `std`; times before 1970 supported; sub-second parts truncated toward the past | `OutOfRange` |
+| DAT-8 | `now`, `from_system_time`, `to_system_time` | P1, 1, 0.3 | `std`; times before 1970 supported; sub-second parts truncated toward the past; `to_system_time` is `None` when the platform's clock type cannot hold the date (Windows cannot go before 1601, [D-038](../dev/PLAN.md#16-decision-log)); `now` clamps to the supported range | `OutOfRange` |
 | DAT-10 | `DateFormat` | P2, 3, 0.3 | | |
 
 ```rust
@@ -1779,6 +1781,7 @@ impl<'a> Host<'a> {
 
 pub mod host {
     pub fn parse_host(value: &[u8]) -> Result<Host<'_>, ParseError>;            // no port
+    pub fn parse_uri_host_port(value: &[u8]) -> Result<HostPort<'_>, ParseError>; // no OWS stripped
 }
 ```
 
@@ -1787,9 +1790,10 @@ RFC 9110 section 7.2 citing RFC 3986 section 3.2.2: `Host = uri-host [ ":" port 
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
 | HST-1 | `parse_host_port`, `HostPort`, `Host`, `host::parse_host` | P0, 1, 0.3 | reg-name (`unreserved / pct-encoded / sub-delims`, each `%` followed by two hex digits); IPv4 dotted decimal with no leading zeros; `[IPv6]` in every RFC 4291 text form, validated by the RFC 3986 `IPv6address` grammar; `[vX.…]` IPvFuture; port `*DIGIT` up to 65535; an empty port (`a:`) is accepted with `empty_port = true` and `port = None`; an empty value is `Ok` with an empty `Name` (RFC 9112 section 3.2: the target has no authority) and the caller decides. A name is returned as sent: case and a trailing dot are kept (callers normalize) | `InvalidHost` (userinfo: any `@`, checked first, so `a.com:80@b.com` is refused as a host and not as a port; a byte outside the reg-name class; `:80` with no host, an unbracketed IPv6); `InvalidAddress` (a malformed IP literal, `[zz]`, `[::1`); `InvalidPort` (non-digits, above 65535); `InvalidPercentEncoding` |
+| HST-1b | `host::parse_uri_host_port` | P0, 3, 0.3 | the same grammar with nothing stripped, for an authority-form or absolute-form request target, a URL authority, or any context that is not a field value: whitespace is refused like any other byte outside the grammar. Stripping there would accept `CONNECT  example.com:443` (two spaces), which the request-line grammar refuses ([D-044](../dev/PLAN.md#16-decision-log)) | as HST-1 |
 | HST-2 | `Host::eq_ignore_ascii_case` | P0, 2, 0.3 | names compare ASCII case-insensitively; IP literals compare by value (`[::1]` equals `[0:0::1]`) | none |
 | HST-3 | `Host::write_to`, `HostPort::write_to` | P1, 2, 0.3 | names as given, IPv6 bracketed in its RFC 5952 form, a port after `:` | `Full` |
-| HST-4 | all-digit names | P0, 1, 0.3 | a name made only of digits and dots that is not a valid IPv4 address (`1.2.3`, `256.1.1.1`, `01.2.3.4`, `127.1`) is refused, not read as a name: WHATWG and RFC 3986 disagree on such hosts, and refusing removes the differential ([T15](../dev/PLAN.md#9-threats)) | `InvalidAddress` |
+| HST-4 | numeric names | P0, 1, 0.3 | a name made only of digits and dots, or whose last label is a number in the WHATWG sense (decimal digits, or `0x` and hex digits), must be a canonical IPv4 address; anything else (`1.2.3`, `256.1.1.1`, `01.2.3.4`, `127.1`, `0x7f.0.0.1`, `example.123`, `1.2.3.4.`) is refused, not read as a name: WHATWG reads such hosts as IPv4 and RFC 3986 as names, and refusing removes the differential ([T15](../dev/PLAN.md#9-threats), [D-040](../dev/PLAN.md#16-decision-log)) | `InvalidAddress` |
 
 `[::ffff:127.0.0.1]` is returned as `V6` (callers see exactly what was sent).
 
@@ -1858,7 +1862,7 @@ Edge cases tested: `null`, `Null` (refused), `https://a.com`, `https://a.com:443
 
 ## Percent-encoding: `pct`
 
-`PCT-1` to `PCT-6` | P0 (PCT-4, PCT-6 P1) | 0.3 (PCT-4 0.4)
+`PCT-1` to `PCT-6` | P0 (PCT-4, PCT-6 P1) | 0.3
 
 ```rust
 pub mod pct {
@@ -1881,7 +1885,7 @@ pub mod pct {
     pub fn decoded_len(input: &[u8]) -> Result<usize, ParseError>;
     pub fn decode_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b [u8], ParseError>;
     pub fn decode_utf8_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b str, ParseError>;
-    pub fn decode_lower_only_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b [u8], ParseError>;  // 0.4
+    pub fn decode_lower_only_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b [u8], ParseError>;
     pub fn encoded_len(input: &[u8], set: &EncodeSet) -> usize;
     pub fn encode(input: &[u8], set: &EncodeSet, case: HexCase, out: &mut impl Sink) -> Result<(), WriteError>;
 }
@@ -1894,7 +1898,7 @@ The primitive parse-net's own grammars need (RFC 8187 values, RFC 9651 Display S
 | PCT-1 | `validate`, `validate_with` | P0, 3, 0.3 | every `%` is followed by two hex digits (either case); `validate_with` also requires every other byte to be in `allowed` (`validate_with(input, Class::URI_TARGET)` replaces http-net's `is_target_chars`) | `InvalidPercentEncoding` at the `%`; `InvalidByte` |
 | PCT-2 | `decode_into`, `decoded_len` | P0, 3, 0.3 | `%XX` decoded (either case), every other byte copied; `decoded_len` validates and counts | `InvalidPercentEncoding`; `BufferTooSmall` (nothing written) |
 | PCT-3 | `decode_utf8_into` | P0, 3, 0.3 | as `decode_into`, then the decoded bytes must be UTF-8 | `InvalidUtf8`, as PCT-2 |
-| PCT-4 | `decode_lower_only_into` | P1, 3, 0.4 | uppercase hex is refused (RFC 9651 section 4.2.10) | `InvalidPercentEncoding`, `BufferTooSmall` |
+| PCT-4 | `decode_lower_only_into` | P1, 3, 0.3 (planned 0.4) | uppercase hex is refused (RFC 9651 section 4.2.10) | `InvalidPercentEncoding`, `BufferTooSmall` |
 | PCT-5 | `encode`, `encoded_len`, `EncodeSet`, `HexCase` | P0, 3, 0.3 | every byte in the set, and every byte above 0x7F whatever the set says, is written as `%XX`; others as they are | `Full` |
 | PCT-6 | named sets | P1, 3, 0.3 | only the sets parse-net's grammars use | none |
 

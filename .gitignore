@@ -23,3 +23,6 @@ Desktop.ini
 
 # Libraries do not commit the lockfile
 Cargo.lock
+
+# A temporary test written by the local gate from the docs/API.md examples
+/tests/zz_api_examples.rs

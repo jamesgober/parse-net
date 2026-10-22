@@ -10,6 +10,11 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
+# Oracles for the differential targets only (dev/PLAN.md section 15). They
+# never reach parse-net's own dependency tree.
+httpdate = "1"
+mime = "0.3"
+
 [dependencies.parse-net]
 path = ".."
 features = ["alloc"]
@@ -18,12 +23,72 @@ features = ["alloc"]
 [workspace]
 members = ["."]
 
-# Fuzz targets are added with the parsers they cover, from 0.3.0 on
-# (dev/PLAN.md section 11.4). Each target is a `[[bin]]` entry here:
-#
-# [[bin]]
-# name = "list"
-# path = "fuzz_targets/list.rs"
-# test = false
-# doc = false
-# bench = false
+[[bin]]
+name = "text_quoted"
+path = "fuzz_targets/text_quoted.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "text_comment"
+path = "fuzz_targets/text_comment.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "list"
+path = "fuzz_targets/list.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "params"
+path = "fuzz_targets/params.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "media_type"
+path = "fuzz_targets/media_type.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http_date"
+path = "fuzz_targets/http_date.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "host"
+path = "fuzz_targets/host.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pct_decode"
+path = "fuzz_targets/pct_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "diff_http_date"
+path = "fuzz_targets/diff_http_date.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "diff_media_type"
+path = "fuzz_targets/diff_media_type.rs"
+test = false
+doc = false
+bench = false

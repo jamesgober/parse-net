@@ -1,0 +1,21 @@
+# RFC 3986 section 3.2.2 hosts and ports. Format: expected<TAB>input.
+# expected is name:<bytes>, v4:<addr>, v6:<addr>, future:<text>, then |<port> or |empty; or err:<ErrorKind>.
+name:	
+name:example.com	example.com
+name:example.com|8443	example.com:8443
+name:example.com|empty	example.com:
+v4:192.0.2.1|80	192.0.2.1:80
+v6:::1	[::1]
+v6:2001:db8::1|443	[2001:DB8:0:0:0:0:0:1]:443
+v6:::ffff:192.0.2.1	[::ffff:192.0.2.1]
+future:v1.fe80::a	[v1.fe80::a]
+name:%41.example	%41.example
+err:InvalidHost	user@example.com
+err:InvalidHost	::1
+err:InvalidAddress	[::1
+err:InvalidAddress	1.2.3
+err:InvalidAddress	01.2.3.4
+err:InvalidAddress	256.0.0.1
+err:InvalidAddress	127.1
+err:InvalidPort	example.com:65536
+err:InvalidPort	example.com:8x

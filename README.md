@@ -41,7 +41,7 @@
 
 ## Features
 
-The list below is the plan for 1.0. What ships in the current version is under [Status](#status-design-lock).
+The list below is the plan for 1.0. What ships in the current version is under [Status](#status-core).
 
 ### **Field grammar**
 - **Byte classes** - every ABNF class (`tchar`, `qdtext`, `ctext`, `etagc`, `attr-char`, MIME `token`, RFC 3986, Structured Field keys and tokens) in one 1 KiB table, one load and one mask per byte.
@@ -76,10 +76,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-parse-net = "0.2.0"
+parse-net = "0.3.0"
 
 # Optional features:
-parse-net = { version = "0.2.0", features = [
+parse-net = { version = "0.3.0", features = [
     "alloc",        # owned forms and Sink for Vec<u8>
     "std",          # SystemTime conversions and http_date() with the system clock
 ] }
@@ -101,20 +101,55 @@ The convention is `use parse_net as pn;`.
 ```rust
 use parse_net as pn;
 
-println!("parse-net {}", pn::VERSION);
+// Media types: one strict view, no copy.
+let mt = pn::parse_media_type(b"text/html; charset=UTF-8")?;
+assert!(mt.essence_is("text/html"));
+assert!(mt.charset().is_some_and(|c| c.eq_ignore_ascii_case(b"utf-8")));
+
+// Lists: commas inside quoted strings and comments do not split.
+let codings: Vec<&[u8]> = pn::list(b"gzip, deflate;q=0.5, x=\"a,b\"")?.iter().collect();
+assert_eq!(codings, [&b"gzip"[..], b"deflate;q=0.5", b"x=\"a,b\""]);
+
+// HTTP-date: all three formats in, IMF-fixdate out.
+let now = 1_792_540_800; // the caller's clock, Unix seconds
+let d = pn::http_date_at(b"Sunday, 06-Nov-94 08:49:37 GMT", now)?;
+assert_eq!(&d.format(), b"Sun, 06 Nov 1994 08:49:37 GMT");
+
+// Host: real IPv4 and IPv6 validation, ports up to 65535.
+let hp = pn::parse_host_port(b"[2001:db8::1]:8443")?;
+assert_eq!(hp.port, Some(8443));
+assert!(pn::parse_host_port(b"127.1").is_err()); // read as IPv4 by browsers: refused
+
+// Writers cannot emit CR, LF, or NUL.
+let mut buf = [0u8; 64];
+let mut out = pn::SliceSink::new(&mut buf);
+pn::media::write("text", "plain", &[("charset", "utf-8")], &mut out)?;
+assert_eq!(out.written(), b"text/plain; charset=utf-8");
+assert!(pn::write::write_field_value(b"x\r\nSet-Cookie: y", &mut out).is_err());
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-The Tier 1 functions arrive from `0.3.0`, one plain call per field:
+Errors carry a kind and an offset, never input bytes:
+
+```rust
+use parse_net as pn;
+
+let err = pn::parse_media_type(b"text/ html").unwrap_err();
+assert_eq!(err.kind(), pn::ErrorKind::InvalidMediaType);
+assert_eq!(err.to_string(), "invalid media type at offset 5");
+```
+
+The rest of Tier 1 arrives with `0.4.0` and `0.5.0` (see the [roadmap](./dev/ROADMAP.md)):
 
 ```text
-pn::parse_media_type(b"text/html; charset=UTF-8")?           // MediaType view
 pn::best_media(accept, &["text/html", "application/json"])    // Option<usize>
-pn::http_date_at(b"Sun, 06 Nov 1994 08:49:37 GMT", now)?      // HttpDate
 pn::if_none_match(if_none_match, &current_etag)?              // bool: answer 304
 pn::byte_ranges(range, file_len, &mut buf)?                   // RangeOutcome
 pn::parse_content_disposition(value)?.filename()              // prefers filename*
+pn::response_cache_control(value)?                            // ResponseDirectives
+pn::client_address(peer, pn::ForwardedSource::XForwardedFor(&lines), &trusted, 16)?
 pn::sfv::parse_item(b"same-origin")?                          // Sec-Fetch-Site
-pn::parse_host_port(b"example.com:8443")?                     // HostPort
+pn::bearer(authorization)?                                    // Option<&[u8]>
 ```
 
 ---
@@ -129,27 +164,35 @@ pn::parse_host_port(b"example.com:8443")?                     // HostPort
 
 ---
 
-## **Status: design lock**
+## **Status: core**
 
-**Current Version:** `0.2.0` - the public API locked in [`docs/API.md`](./docs/API.md). No parsing code yet.
+**Current Version:** `0.3.0` - the core that http-net, ws-net, and cookie-net need.
 **Target:** `1.0.0` stable, per the roadmap in [`dev/ROADMAP.md`](./dev/ROADMAP.md).
 
 **What's complete**:
-- **Manifest and crate root** - edition 2024, MSRV 1.85, zero dependencies, `no_std`, `forbid(unsafe_code)`, `VERSION`.
-- **CI** - Linux, macOS, and Windows on stable and 1.85; a bare-metal `thumbv7em-none-eabi` build; a zero-dependency check; package, audit, and deny.
-- **Plan** - [`dev/PLAN.md`](./dev/PLAN.md): scope, requirements, design, threats, performance targets, testing, and the decision log.
-- **API** - [`docs/API.md`](./docs/API.md): every public item through 1.0 with its signature, behaviour, errors, examples, and edge cases, and one coverage checklist per consumer (http-net, ws-net, cookie-net, form-net, smtp-net).
+- **Errors and limits** - `ParseError` (8 bytes: kind and offset, never input bytes), `ErrorKind`, `WriteError`, `Limits` with RFC-sourced defaults, `DuplicatePolicy`.
+- **Byte classes and scanning** - every ABNF class in one 1 KiB table; SWAR byte search and field-value validation, eight bytes per step.
+- **Writers** - `Sink`, `SliceSink`, `CountSink`, `Vec<u8>` (with `alloc`); tokens, quoted strings, words, parameters, field values, numbers; nothing half-written after an error.
+- **Lexical forms** - tokens, OWS, quoted strings (zero-copy, buffer-free comparison), words, comments (nested, counted, never recursed).
+- **Lists and parameters** - quote- and comment-aware lists, several field lines as one list without copying, parameters that refuse duplicates by default.
+- **Media types** - parsing, RFC 2046 boundaries, `charset`, suffixes, writing, canonical form.
+- **HTTP-date** - all three formats, the RFC 9110 50-year rule with an explicit clock, IMF-fixdate formatting, years 1 to 9999, the calendar functions; `SystemTime` conversions with `std`.
+- **Host** - reg-names, IPv4, IPv6, IPvFuture, ports; numeric names that browsers read as IPv4 refused.
+- **Percent-encoding** - validation, decoding into a caller buffer (UTF-8 checked, lowercase-only for Structured Fields), encoding with named sets.
+- **Proof** - unit tests on every path, property tests (no panic, round trips, SWAR equals bytewise, combined lines), counting-allocator tests for every parse and write, RFC vectors, ten fuzz targets including two differential oracles against `httpdate` and `mime`.
 
 **What's planned next**:
-- `0.3.0` ships the core http-net, ws-net, and cookie-net need: errors, limits, byte classes, scanning, writers, tokens, quoted strings, lists, parameters, media types, HTTP dates, `Host`, and percent-encoding.
+- `0.4.0`: negotiation, entity tags, ranges, RFC 8187 and `Content-Disposition`, `Cache-Control`, `Forwarded`, `Authorization`, `Origin`, Structured Field parsing.
+- `0.5.0`: `Link`, challenges, Structured Field writing, the email lexical layer, owned forms.
 
-**Note on API stability**: nothing is public yet beyond `VERSION`. The API was locked at `0.2.0`; names and signatures change only with a recorded decision until `1.0.0` freezes them, with the contract recorded in `docs/STABILITY-1.0.md`.
+**Note on API stability**: the API was locked at `0.2.0` ([`docs/API.md`](./docs/API.md)); names and signatures change only with a recorded decision until `1.0.0` freezes them, with the contract recorded in `docs/STABILITY-1.0.md`.
 
 ---
 
 ## **Documentation & Resources**
 
 - **[API Reference](docs/API.md)** - every public item with examples
+- **[Migration](docs/MIGRATION.md)** - moving http-net and ws-net onto parse-net
 - **[Plan](dev/PLAN.md)** - design, threats, and decisions
 - **[Roadmap](dev/ROADMAP.md)** - versions and exit criteria
 - **[Changelog](CHANGELOG.md)** - every change

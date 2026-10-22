@@ -1,0 +1,21 @@
+# RFC 9110 section 8.3.1: media types. Format: expected<TAB>input.
+# expected is type/subtype;name=value (lowercase essence, values unescaped), or err:<ErrorKind>.
+# The four RFC 9110 section 8.3.1 examples are equivalent.
+text/html;charset=utf-8	text/html;charset=utf-8
+text/html;charset=UTF-8	text/html;charset=UTF-8
+text/html;charset=utf-8	Text/HTML;Charset="utf-8"
+text/html;charset=utf-8	text/html; charset="utf-8"
+application/ld+json	application/ld+json
+multipart/form-data;boundary=----x y	multipart/form-data; boundary="----x y"
+text/plain	  text/plain  
+text/plain	text/plain;
+err:Wildcard	*/*
+err:Wildcard	text/*
+err:InvalidMediaType	text/ html
+err:InvalidMediaType	text /html
+err:InvalidMediaType	text
+err:InvalidMediaType	/html
+err:DuplicateParameter	text/html; charset=a; CHARSET=b
+err:InvalidByte	text/html; charset =a
+err:MissingValue	text/html; charset
+err:BareCr	text/html\x0d
