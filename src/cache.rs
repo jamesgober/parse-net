@@ -17,12 +17,11 @@
 //! ```
 
 use crate::{
-    class,
     error::{ErrorKind, ParseError, Result, WriteError},
     limits::Limits,
     num::parse_u32_saturating,
     scan::control_kind,
-    text::{Word, is_token, parse_word, skip_ows, trim_ows},
+    text::{Word, is_token, parse_word, skip_ows, token_len, trim_ows},
     write::{Sink, reserve, write_decimal_u64},
 };
 
@@ -58,10 +57,7 @@ fn skip_ws(mut s: &[u8]) -> &[u8] {
 /// One directive at the front of `s`: `token [ "=" ( token / quoted-string ) ]`.
 /// Returns it and what follows; error offsets are relative to `s`.
 fn directive(s: &[u8]) -> Result<(Directive<'_>, &[u8])> {
-    let n = s
-        .iter()
-        .position(|&b| !class::is_tchar(b))
-        .unwrap_or(s.len());
+    let n = token_len(s);
     if n == 0 {
         return Err(bad(s, 0));
     }

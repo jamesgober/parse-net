@@ -19,7 +19,7 @@ use crate::{
     error::{ErrorKind, Result, err},
     limits::{DuplicatePolicy, Limits},
     scan::control_kind,
-    text::{Word, is_ows, parse_word, skip_ows},
+    text::{Word, is_ows, parse_quoted, token_len, validated_word},
 };
 
 /// One parameter: a name and a value.
@@ -83,100 +83,85 @@ fn name_bit(name: &[u8]) -> u64 {
 /// ```
 pub fn parse<'a>(s: &'a [u8], limits: &Limits) -> Result<(Params<'a>, usize)> {
     let policy = limits.duplicate_params;
-    let mut count: usize = 0;
-    let mut used = 0usize;
-    let mut seen: u64 = 0;
-    loop {
-        let ows = skip_ows(s.get(used..).unwrap_or(&[]));
-        let semi = used + ows;
-        if s.get(semi) != Some(&b';') {
-            break;
-        }
-        let mut i = semi + 1;
-        i += skip_ows(s.get(i..).unwrap_or(&[]));
-        match s.get(i) {
-            None | Some(b';') => {
-                used = i;
-                continue;
-            }
-            Some(&b) if !class::is_tchar(b) => {
+    let max = usize::from(limits.params);
+    // The cursor is a shrinking slice; an offset is computed only for an
+    // error or the result. `done` follows the last complete parameter.
+    let at = |rest: &[u8]| s.len() - rest.len();
+    let (mut done, mut count, mut seen) = (s, 0usize, 0u64);
+    while let [b';', after @ ..] = skip_ws(done) {
+        let r = skip_ws(after);
+        let n = token_len(r);
+        if n == 0 {
+            match r.first() {
+                None | Some(b';') => {
+                    done = r;
+                    continue;
+                }
                 // OWS after an empty parameter followed by a list separator
-                // or the end belongs to the caller.
-                if b == b',' {
-                    used = semi + 1;
+                // belongs to the caller.
+                Some(b',') => {
+                    done = after;
                     break;
                 }
-                return err(
-                    if crate::scan::is_control(b) {
+                Some(&b) => {
+                    let kind = if crate::scan::is_control(b) {
                         control_kind(b)
                     } else {
                         ErrorKind::NotToken
-                    },
-                    i,
-                );
-            }
-            Some(_) => {}
-        }
-        let name_start = i;
-        let name_len = s
-            .get(i..)
-            .unwrap_or(&[])
-            .iter()
-            .take_while(|&&b| class::is_tchar(b))
-            .count();
-        let name = s.get(name_start..name_start + name_len).unwrap_or(&[]);
-        i += name_len;
-        match s.get(i) {
-            Some(b'=') => i += 1,
-            Some(&b) if is_ows(b) => {
-                let after = i + skip_ows(s.get(i..).unwrap_or(&[]));
-                if s.get(after) == Some(&b'=') {
-                    return err(ErrorKind::InvalidByte, i);
+                    };
+                    return err(kind, at(r));
                 }
-                return err(ErrorKind::MissingValue, i);
             }
-            Some(b'"') => return err(ErrorKind::MissingValue, i),
-            Some(&b) if b != b';' && b != b',' && class::is_field_text(b) => {
-                return err(ErrorKind::NotToken, i);
+        }
+        let name_at = at(r);
+        let (name, r) = r.split_at(n);
+        let value = match r {
+            [b'=', value @ ..] => value,
+            [b, ..] if is_ows(*b) => {
+                let kind = if skip_ws(r).first() == Some(&b'=') {
+                    ErrorKind::InvalidByte
+                } else {
+                    ErrorKind::MissingValue
+                };
+                return err(kind, at(r));
             }
-            Some(&b) if !class::is_field_text(b) => return err(control_kind(b), i),
-            _ => return err(ErrorKind::MissingValue, i),
-        }
-        let value_start = i;
-        match s.get(i) {
-            Some(&b) if is_ows(b) => return err(ErrorKind::InvalidByte, i),
-            None | Some(b';' | b',') => return err(ErrorKind::MissingValue, i),
-            _ => {}
-        }
-        let rest = s.get(i..).unwrap_or(&[]);
-        let (_, n) = parse_word(rest).map_err(|e| match e.kind() {
-            ErrorKind::Empty => crate::error::ParseError::new(
-                control_or_invalid(rest.first().copied().unwrap_or(0)),
-                value_start,
-            ),
-            _ => e.shifted(value_start),
-        })?;
-        i += n;
+            [b'"', ..] => return err(ErrorKind::MissingValue, at(r)),
+            [b, ..] if *b != b';' && *b != b',' && class::is_field_text(*b) => {
+                return err(ErrorKind::NotToken, at(r));
+            }
+            [b, ..] if !class::is_field_text(*b) => return err(control_kind(*b), at(r)),
+            _ => return err(ErrorKind::MissingValue, at(r)),
+        };
+        let used = match value {
+            [b, ..] if is_ows(*b) => return err(ErrorKind::InvalidByte, at(value)),
+            [] | [b';' | b',', ..] => return err(ErrorKind::MissingValue, at(value)),
+            [b'"', ..] => parse_quoted(value).map_err(|e| e.shifted(at(value)))?.1,
+            [b, ..] => match token_len(value) {
+                0 => return err(control_or_invalid(*b), at(value)),
+                n => n,
+            },
+        };
         count += 1;
-        if count > usize::from(limits.params) {
-            return err(ErrorKind::TooManyMembers, name_start);
+        if count > max {
+            return err(ErrorKind::TooManyMembers, name_at);
         }
         if policy == DuplicatePolicy::Refuse {
             let bit = name_bit(name);
             if seen & bit != 0 {
                 let earlier = Params {
-                    text: s.get(..used).unwrap_or(&[]),
+                    text: s.get(..at(done)).unwrap_or(&[]),
                     count: 0,
                     policy,
                 };
                 if earlier.iter().any(|p| p.name.eq_ignore_ascii_case(name)) {
-                    return err(ErrorKind::DuplicateParameter, name_start);
+                    return err(ErrorKind::DuplicateParameter, name_at);
                 }
             }
             seen |= bit;
         }
-        used = i;
+        done = value.get(used..).unwrap_or(&[]);
     }
+    let used = at(done);
     Ok((
         Params {
             text: s.get(..used).unwrap_or(&[]),
@@ -185,6 +170,21 @@ pub fn parse<'a>(s: &'a [u8], limits: &Limits) -> Result<(Params<'a>, usize)> {
         },
         used,
     ))
+}
+
+/// Skips SP and HTAB.
+#[inline]
+fn skip_ws(s: &[u8]) -> &[u8] {
+    match s {
+        [b' ' | b'\t', ..] => {
+            let n = s
+                .iter()
+                .position(|&b| b != b' ' && b != b'\t')
+                .unwrap_or(s.len());
+            s.get(n..).unwrap_or(&[])
+        }
+        _ => s,
+    }
 }
 
 #[inline]
@@ -252,16 +252,43 @@ impl<'a> Params<'a> {
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Word<'a>> {
         let name = name.as_bytes();
-        // An exact compare first: names are usually sent in the case asked for.
-        let mut matches = self
-            .iter()
-            .filter(|p| p.name == name || p.name.eq_ignore_ascii_case(name));
-        let found = if self.policy == DuplicatePolicy::Last {
-            matches.last()
-        } else {
-            matches.next()
-        };
-        found.map(|p| p.value)
+        let last = self.policy == DuplicatePolicy::Last;
+        let mut found = None;
+        // Validated text: OWS ";" OWS [ name "=" word ] ... When `tail` starts
+        // with a token byte it starts a parameter name, which ends at its
+        // first `=`; so `name` followed by `=` there is that whole name when
+        // `name` holds no `=`. (An empty parameter starts `tail` with `;`.)
+        // No other byte is checked again.
+        let mut rest = self.text;
+        while let [b';', after @ ..] = skip_ws(rest) {
+            let tail = skip_ws(after);
+            let value = match tail.split_at_checked(name.len()) {
+                // An exact compare first: names are usually sent in the case
+                // asked for.
+                Some((head, [b'=', value @ ..]))
+                    if (head == name || head.eq_ignore_ascii_case(name))
+                        && head.first().is_some_and(|&b| class::is_tchar(b))
+                        && !name.contains(&b'=') =>
+                {
+                    let (word, used) = validated_word(value);
+                    if !last {
+                        return Some(word);
+                    }
+                    found = Some(word);
+                    rest = value.get(used..).unwrap_or(&[]);
+                    continue;
+                }
+                _ => match token_len(tail) {
+                    0 => {
+                        rest = tail;
+                        continue;
+                    }
+                    n => tail.get(n + 1..).unwrap_or(&[]),
+                },
+            };
+            rest = value.get(validated_word(value).1..).unwrap_or(&[]);
+        }
+        found
     }
 
     /// The parameters before the first one named `name` (ASCII
@@ -373,23 +400,18 @@ impl<'a> Iterator for ParamIter<'a> {
     fn next(&mut self) -> Option<Param<'a>> {
         loop {
             // Validated text: OWS ";" OWS [ name "=" word ] ...
-            let s = self.rest;
-            let semi = s.iter().position(|&b| b == b';')?;
-            let after = semi + 1;
-            let start = after + skip_ows(s.get(after..).unwrap_or(&[]));
-            let tail = s.get(start..).unwrap_or(&[]);
-            let name_len = tail.iter().take_while(|&&b| class::is_tchar(b)).count();
-            if name_len == 0 {
-                self.rest = tail;
-                continue;
-            }
-            let name = tail.get(..name_len).unwrap_or(&[]);
-            let value_text = tail.get(name_len + 1..).unwrap_or(&[]);
-            let Ok((value, n)) = parse_word(value_text) else {
+            let [b';', after @ ..] = skip_ws(self.rest) else {
                 self.rest = &[];
                 return None;
             };
-            self.rest = value_text.get(n..).unwrap_or(&[]);
+            let tail = skip_ws(after);
+            let n = token_len(tail);
+            let Some((name, [_, value_text @ ..])) = (n > 0).then(|| tail.split_at(n)) else {
+                self.rest = tail;
+                continue;
+            };
+            let (value, used) = validated_word(value_text);
+            self.rest = value_text.get(used..).unwrap_or(&[]);
             return Some(Param { name, value });
         }
     }
@@ -397,7 +419,9 @@ impl<'a> Iterator for ParamIter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use std::{format, vec::Vec};
+    use std::{format, string::String, vec, vec::Vec};
+
+    use proptest::prelude::{Just, Strategy, prop, prop_assert_eq, prop_oneof};
 
     use super::*;
 
@@ -494,5 +518,199 @@ mod tests {
         assert_eq!(names(&ps), [&b"a"[..], b"b"]);
         assert!(ps.get("b").unwrap().eq_bytes(b"x;y"));
         assert_eq!(ps.raw(), b";; a=1 ;;b=\"x;y\";");
+    }
+
+    /// The 0.6 walker, kept as the reference the slice-cursor walker is
+    /// compared with (`test_parse_agrees_with_reference`).
+    mod reference {
+        use super::super::*;
+        use crate::text::{parse_word, skip_ows};
+
+        pub(super) fn parse<'a>(s: &'a [u8], limits: &Limits) -> Result<(Params<'a>, usize)> {
+            let policy = limits.duplicate_params;
+            let mut count: usize = 0;
+            let mut used = 0usize;
+            let mut seen: u64 = 0;
+            loop {
+                let ows = skip_ows(s.get(used..).unwrap_or(&[]));
+                let semi = used + ows;
+                if s.get(semi) != Some(&b';') {
+                    break;
+                }
+                let mut i = semi + 1;
+                i += skip_ows(s.get(i..).unwrap_or(&[]));
+                match s.get(i) {
+                    None | Some(b';') => {
+                        used = i;
+                        continue;
+                    }
+                    Some(&b) if !class::is_tchar(b) => {
+                        // OWS after an empty parameter followed by a list separator
+                        // or the end belongs to the caller.
+                        if b == b',' {
+                            used = semi + 1;
+                            break;
+                        }
+                        return err(
+                            if crate::scan::is_control(b) {
+                                control_kind(b)
+                            } else {
+                                ErrorKind::NotToken
+                            },
+                            i,
+                        );
+                    }
+                    Some(_) => {}
+                }
+                let name_start = i;
+                let name_len = s
+                    .get(i..)
+                    .unwrap_or(&[])
+                    .iter()
+                    .take_while(|&&b| class::is_tchar(b))
+                    .count();
+                let name = s.get(name_start..name_start + name_len).unwrap_or(&[]);
+                i += name_len;
+                match s.get(i) {
+                    Some(b'=') => i += 1,
+                    Some(&b) if is_ows(b) => {
+                        let after = i + skip_ows(s.get(i..).unwrap_or(&[]));
+                        if s.get(after) == Some(&b'=') {
+                            return err(ErrorKind::InvalidByte, i);
+                        }
+                        return err(ErrorKind::MissingValue, i);
+                    }
+                    Some(b'"') => return err(ErrorKind::MissingValue, i),
+                    Some(&b) if b != b';' && b != b',' && class::is_field_text(b) => {
+                        return err(ErrorKind::NotToken, i);
+                    }
+                    Some(&b) if !class::is_field_text(b) => return err(control_kind(b), i),
+                    _ => return err(ErrorKind::MissingValue, i),
+                }
+                let value_start = i;
+                match s.get(i) {
+                    Some(&b) if is_ows(b) => return err(ErrorKind::InvalidByte, i),
+                    None | Some(b';' | b',') => return err(ErrorKind::MissingValue, i),
+                    _ => {}
+                }
+                let rest = s.get(i..).unwrap_or(&[]);
+                let (_, n) = parse_word(rest).map_err(|e| match e.kind() {
+                    ErrorKind::Empty => crate::error::ParseError::new(
+                        control_or_invalid(rest.first().copied().unwrap_or(0)),
+                        value_start,
+                    ),
+                    _ => e.shifted(value_start),
+                })?;
+                i += n;
+                count += 1;
+                if count > usize::from(limits.params) {
+                    return err(ErrorKind::TooManyMembers, name_start);
+                }
+                if policy == DuplicatePolicy::Refuse {
+                    let bit = name_bit(name);
+                    if seen & bit != 0 {
+                        let earlier = Params {
+                            text: s.get(..used).unwrap_or(&[]),
+                            count: 0,
+                            policy,
+                        };
+                        if earlier.iter().any(|p| p.name.eq_ignore_ascii_case(name)) {
+                            return err(ErrorKind::DuplicateParameter, name_start);
+                        }
+                    }
+                    seen |= bit;
+                }
+                used = i;
+            }
+            Ok((
+                Params {
+                    text: s.get(..used).unwrap_or(&[]),
+                    count: u32::try_from(count).unwrap_or(u32::MAX),
+                    policy,
+                },
+                used,
+            ))
+        }
+    }
+
+    /// Parameter text built from the pieces the grammar turns on.
+    fn param_text() -> impl Strategy<Value = Vec<u8>> {
+        let piece = prop_oneof![
+            Just(b";".to_vec()),
+            Just(b" ".to_vec()),
+            Just(b"\t".to_vec()),
+            Just(b"=".to_vec()),
+            Just(b",".to_vec()),
+            Just(b"\"a\\\"b;c=d\"".to_vec()),
+            Just(b"\"\\".to_vec()),
+            Just(b"\r".to_vec()),
+            Just(b"\x7f".to_vec()),
+            "[a-cA-C]{1,3}".prop_map(String::into_bytes),
+            "[0-9]{1,3}".prop_map(String::into_bytes),
+            "[(){}@/]".prop_map(String::into_bytes),
+            "; ?[a-cA-C]{1,2}=[0-9a-c]{1,2}".prop_map(String::into_bytes),
+            "; ?[a-c]=\"[a-c;,= ]{0,3}\"".prop_map(String::into_bytes),
+        ];
+        prop::collection::vec(piece, 0..16).prop_map(|v| v.concat())
+    }
+
+    fn outcome(
+        r: Result<(Params<'_>, usize)>,
+    ) -> core::result::Result<(Vec<u8>, usize, usize), (ErrorKind, usize)> {
+        r.map(|(p, used)| (p.raw().to_vec(), p.len(), used))
+            .map_err(|e| (e.kind(), e.offset()))
+    }
+
+    /// Re-reads validated text with the checked public word parser.
+    fn reference_iter(raw: &[u8]) -> Vec<Param<'_>> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        loop {
+            i += crate::text::skip_ows(raw.get(i..).unwrap_or(&[]));
+            if raw.get(i) != Some(&b';') {
+                return out;
+            }
+            i += 1;
+            i += crate::text::skip_ows(raw.get(i..).unwrap_or(&[]));
+            let Ok((name, n)) = crate::text::parse_token(raw.get(i..).unwrap_or(&[])) else {
+                continue;
+            };
+            i += n + 1;
+            let (value, n) = crate::text::parse_word(raw.get(i..).unwrap_or(&[])).unwrap();
+            i += n;
+            out.push(Param { name, value });
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(4096))]
+
+        #[test]
+        fn test_parse_agrees_with_reference(v in param_text()) {
+            for policy in [DuplicatePolicy::Refuse, DuplicatePolicy::First, DuplicatePolicy::Last] {
+                let limits = Limits::DEFAULT.duplicate_params(policy);
+                prop_assert_eq!(outcome(parse(&v, &limits)), outcome(reference::parse(&v, &limits)));
+            }
+        }
+
+        #[test]
+        fn test_iter_and_get_agree_with_checked_reads(v in param_text(), name in "[a-cA-C=; \"]{0,4}") {
+            for policy in [DuplicatePolicy::Refuse, DuplicatePolicy::First, DuplicatePolicy::Last] {
+                let limits = Limits::DEFAULT.duplicate_params(policy);
+                let Ok((p, _)) = parse(&v, &limits) else { continue };
+                let all: Vec<Param<'_>> = p.iter().collect();
+                prop_assert_eq!(&all, &reference_iter(p.raw()));
+                prop_assert_eq!(all.len(), p.len());
+                let mut matching = all.iter().filter(|x| x.name.eq_ignore_ascii_case(name.as_bytes()));
+                let expected = if policy == DuplicatePolicy::Last { matching.next_back() } else { matching.next() };
+                prop_assert_eq!(p.get(&name), expected.map(|x| x.value));
+                for x in &all {
+                    let n = core::str::from_utf8(x.name).unwrap();
+                    let mut same = all.iter().filter(|y| y.name.eq_ignore_ascii_case(x.name));
+                    let expected = if policy == DuplicatePolicy::Last { same.next_back() } else { same.next() };
+                    prop_assert_eq!(p.get(n), expected.map(|y| y.value));
+                }
+            }
+        }
     }
 }

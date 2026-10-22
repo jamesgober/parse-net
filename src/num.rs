@@ -65,6 +65,19 @@ pub fn parse_u32_saturating(digits: &[u8]) -> Result<u32> {
     if digits.is_empty() {
         return err(ErrorKind::Empty, 0);
     }
+    // Nine digits cannot overflow a u32 (999,999,999 < 2^32), so the usual
+    // lengths take a loop without saturating steps.
+    if digits.len() <= 9 {
+        let mut n: u32 = 0;
+        for (i, &b) in digits.iter().enumerate() {
+            let d = b.wrapping_sub(b'0');
+            if d > 9 {
+                return err(ErrorKind::InvalidNumber, i);
+            }
+            n = n * 10 + u32::from(d);
+        }
+        return Ok(n.min(DELTA_SECONDS_MAX));
+    }
     let mut n: u32 = 0;
     for (i, &b) in digits.iter().enumerate() {
         if !b.is_ascii_digit() {
@@ -116,5 +129,46 @@ mod tests {
             parse_u32_saturating(b"6s").unwrap_err().kind(),
             ErrorKind::InvalidNumber
         );
+    }
+
+    /// The definition the fast path must agree with: exact value, clamped.
+    fn reference_u32(d: &[u8]) -> Result<u32> {
+        if d.is_empty() {
+            return err(ErrorKind::Empty, 0);
+        }
+        let mut n: u128 = 0;
+        for (i, &b) in d.iter().enumerate() {
+            if !b.is_ascii_digit() {
+                return err(ErrorKind::InvalidNumber, i);
+            }
+            n = (n * 10 + u128::from(b - b'0')).min(u128::from(u32::MAX) + 1);
+        }
+        Ok(u32::try_from(n.min(u128::from(DELTA_SECONDS_MAX))).unwrap_or(DELTA_SECONDS_MAX))
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(8192))]
+
+        #[test]
+        fn test_parse_u32_saturating_agrees_with_reference(d in "[0-9]{0,22}|[0-9]{0,10}[^0-9][0-9]{0,4}") {
+            proptest::prop_assert_eq!(parse_u32_saturating(d.as_bytes()), reference_u32(d.as_bytes()));
+        }
+    }
+
+    #[test]
+    fn test_parse_u32_saturating_length_boundaries() {
+        assert_eq!(parse_u32_saturating(b"999999999"), Ok(999_999_999));
+        assert_eq!(parse_u32_saturating(b"000000000"), Ok(0));
+        assert_eq!(parse_u32_saturating(b"2147483647"), Ok(2_147_483_647));
+        assert_eq!(parse_u32_saturating(b"2147483648"), Ok(DELTA_SECONDS_MAX));
+        assert_eq!(parse_u32_saturating(b"2147483649"), Ok(DELTA_SECONDS_MAX));
+        assert_eq!(
+            parse_u32_saturating(b"99999999999999999999"),
+            Ok(DELTA_SECONDS_MAX)
+        );
+        let e = parse_u32_saturating(b"12345678/").unwrap_err();
+        assert_eq!((e.kind(), e.offset()), (ErrorKind::InvalidNumber, 8));
+        let e = parse_u32_saturating(b"1234567890:").unwrap_err();
+        assert_eq!((e.kind(), e.offset()), (ErrorKind::InvalidNumber, 10));
     }
 }
