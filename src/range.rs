@@ -650,26 +650,23 @@ mod tests {
         );
     }
 
+    /// `bytes=0-1,10-11,...` with `n` ranges.
+    fn many(n: u64) -> std::vec::Vec<u8> {
+        use std::fmt::Write as _;
+        let mut text = std::string::String::from("bytes=");
+        for i in 0..n {
+            let _ = write!(text, "{}-{},", i * 10, i * 10 + 1);
+        }
+        text.into_bytes()
+    }
+
     #[test]
     fn test_range_17_ranges_ignored() {
-        let mut sixteen = b"bytes=".to_vec();
-        sixteen.extend(
-            (0..16)
-                .map(|i| std::format!("{}-{},", i * 10, i * 10 + 1))
-                .collect::<std::string::String>()
-                .into_bytes(),
-        );
         assert_eq!(
-            resolve_str(&sixteen, 1000, false).0,
+            resolve_str(&many(16), 1000, false).0,
             RangeOutcome::Ranges(16)
         );
-        let seventeen: std::vec::Vec<u8> = (0..17)
-            .map(|i| std::format!("{}-{},", i * 10, i * 10 + 1))
-            .collect::<std::string::String>()
-            .into_bytes();
-        let mut v = b"bytes=".to_vec();
-        v.extend(seventeen);
-        assert_eq!(resolve_str(&v, 1000, false).0, RangeOutcome::Ignore);
+        assert_eq!(resolve_str(&many(17), 1000, false).0, RangeOutcome::Ignore);
     }
 
     #[test]

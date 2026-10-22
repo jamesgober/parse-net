@@ -187,11 +187,11 @@ impl<'a> ExtValue<'a> {
 
 /// Decodes `bytes` in `charset` into `out`, refusing controls, after a first
 /// pass that validates and sizes the output so nothing is written on error.
-pub(crate) fn decode_checked<'b>(
+pub(crate) fn decode_checked(
     bytes: impl Iterator<Item = u8> + Clone,
     charset: Charset,
-    out: &'b mut [u8],
-) -> Result<&'b str> {
+    out: &mut [u8],
+) -> Result<&str> {
     let len = decoded_text_len(bytes.clone(), charset)?;
     let Some(dst) = out.get_mut(..len) else {
         return err(ErrorKind::BufferTooSmall, 0);

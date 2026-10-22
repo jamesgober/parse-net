@@ -105,6 +105,7 @@ extern crate std;
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+pub mod cache;
 pub mod class;
 pub mod date;
 pub mod disposition;
@@ -125,6 +126,9 @@ pub mod text;
 mod utf8;
 pub mod write;
 
+pub use cache::{
+    Directive, RequestDirectives, ResponseDirectives, request_cache_control, response_cache_control,
+};
 #[cfg(feature = "std")]
 pub use date::http_date;
 pub use date::{Civil, DateFormat, HttpDate, http_date_at};
