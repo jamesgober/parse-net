@@ -89,8 +89,50 @@ fn split_lines(parts: &[String], cuts: &[bool]) -> Vec<String> {
     lines
 }
 
+/// The 0.5 reading of an entity-tag list: the general list walker, then a
+/// parse of each element.
+fn condition_by_list(v: &[u8]) -> Option<Vec<Vec<u8>>> {
+    let l = pn::list::parse(v, &Limits::DEFAULT).ok()?;
+    if l.iter().any(|e| e == b"*") {
+        return (l.len() == 1).then(|| vec![b"*".to_vec()]);
+    }
+    l.iter()
+        .map(|e| EntityTag::parse(e).ok().map(|t| t.opaque().to_vec()))
+        .collect()
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(2048))]
+
+    #[test]
+    fn test_condition_agrees_with_list_reading(
+        elements in prop::collection::vec(prop_oneof![
+            4 => "(W/)?\"[a-c]{0,3}\"",
+            1 => Just(String::new()),
+            1 => Just(String::from("*")),
+            1 => "[a-c\" ]{1,3}",
+        ], 0..48),
+        separators in prop::collection::vec("[ \t]{0,2},[ \t]{0,2}", 48),
+        tagged_only in any::<bool>(),
+    ) {
+        // Mostly well-formed lists, long enough to pass the empty-element
+        // limit, with a few broken elements mixed in.
+        let mut v = Vec::new();
+        for (k, e) in elements.iter().enumerate() {
+            if tagged_only && (e == "*" || !e.ends_with('"')) && !e.is_empty() {
+                continue;
+            }
+            if k > 0 {
+                v.extend_from_slice(separators[k].as_bytes());
+            }
+            v.extend_from_slice(e.as_bytes());
+        }
+        let ours = etag::parse_condition(&v, &Limits::DEFAULT).ok().map(|c| match c {
+            etag::Condition::Any => vec![b"*".to_vec()],
+            etag::Condition::Tags(t) => t.iter().map(|t| t.opaque().to_vec()).collect(),
+        });
+        prop_assert_eq!(ours, condition_by_list(&v), "{:?}", String::from_utf8_lossy(&v));
+    }
 
     #[test]
     fn test_web_parsers_never_panic(v in bytes(), g in grammar_bytes()) {

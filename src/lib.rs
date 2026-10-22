@@ -73,7 +73,7 @@
 //!
 //! ## Status
 //!
-//! Optimised, `0.6.0`: every planned field, measured against the Rust crates
+//! Optimised, `0.6.1`: every planned field, measured against the Rust crates
 //! that do the same work (`docs/PERFORMANCE.md`). The public API is written
 //! down in `docs/API.md`, each field's grammar in `docs/GRAMMAR.md`, the
 //! design in `dev/PLAN.md`, and the milestone schedule in `dev/ROADMAP.md`

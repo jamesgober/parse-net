@@ -13,6 +13,19 @@
 
 ---
 
+## [0.6.1] - 2026-10-22
+
+### Fixed
+
+- `parse_condition`, `if_none_match`, and `if_match` counted the comma after
+  each entity tag as an empty list element, so a list of more than 16 tags
+  was refused with `TooManyEmptyElements`. The one-pass walker of 0.6.0 left
+  the separator for its next pass to read. A unit test now reads lists of 17,
+  100, and 1024 tags, and a property test compares the walker with the
+  general list walker on long lists.
+
+---
+
 ## [0.6.0] - 2026-10-22
 
 Optimisation: every operation measured against the Rust crates that do the
@@ -278,7 +291,8 @@ The scaffold and the plan. No parsing code yet.
   (0.1 to 1.0 with exit criteria).
 - `fuzz/` crate skeleton; targets arrive with the parsers they cover.
 
-[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/jamesgober/parse-net/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jamesgober/parse-net/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jamesgober/parse-net/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jamesgober/parse-net/compare/v0.3.0...v0.4.0
