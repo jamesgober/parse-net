@@ -218,6 +218,28 @@ impl<'a> Params<'a> {
         found.map(|p| p.value)
     }
 
+    /// The parameters before the first one named `name` (ASCII
+    /// case-insensitive), and that parameter; all of them and `None` when no
+    /// parameter has the name. Used to split media-type parameters from
+    /// `q` and the `accept-ext` after it.
+    pub(crate) fn split_at_name(&self, name: &[u8]) -> (Params<'a>, Option<Param<'a>>) {
+        for (index, p) in self.iter().enumerate() {
+            if p.name.eq_ignore_ascii_case(name) {
+                // `p.name` points into `self.text`; the distance is its offset.
+                let off = (p.name.as_ptr() as usize).saturating_sub(self.text.as_ptr() as usize);
+                let head = self.text.get(..off).unwrap_or(&[]);
+                let semi = head.iter().rposition(|&b| b == b';').unwrap_or(0);
+                let before = Params {
+                    text: self.text.get(..semi).unwrap_or(&[]),
+                    count: u32::try_from(index).unwrap_or(u32::MAX),
+                    policy: self.policy,
+                };
+                return (before, Some(p));
+            }
+        }
+        (*self, None)
+    }
+
     /// The number of parameters.
     #[must_use]
     pub const fn len(&self) -> usize {

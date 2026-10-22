@@ -107,14 +107,19 @@ extern crate alloc;
 
 pub mod class;
 pub mod date;
+pub mod disposition;
 mod error;
+pub mod etag;
+pub mod ext_value;
 pub mod host;
 mod limits;
 pub mod list;
 pub mod media;
+pub mod negotiate;
 pub mod num;
 pub mod param;
 pub mod pct;
+pub mod range;
 pub mod scan;
 pub mod text;
 mod utf8;
@@ -123,12 +128,21 @@ pub mod write;
 #[cfg(feature = "std")]
 pub use date::http_date;
 pub use date::{Civil, DateFormat, HttpDate, http_date_at};
+pub use disposition::{
+    ContentDisposition, DispositionType, Filename, parse_content_disposition, write_attachment,
+};
 pub use error::{ErrorKind, Full, ParseError, WriteError};
+pub use etag::{Condition, EntityTag, TagList, if_match, if_none_match, parse_condition};
+pub use ext_value::{Charset, ExtValue, write_ext_value};
 pub use host::{Host, HostPort, parse_host_port};
 pub use limits::{DuplicatePolicy, Limits};
 pub use list::{List, list};
-pub use media::{Boundary, MediaType, parse_media_type};
+pub use media::{Boundary, MediaRange, MediaType, parse_media_type};
+pub use negotiate::{QValue, best_charset, best_encoding, best_language, best_media};
 pub use param::{Param, Params};
+pub use range::{
+    ByteRange, ContentRange, IfRange, RangeHeader, RangeOutcome, RangeSpec, byte_ranges,
+};
 pub use text::{Comment, Quoted, Word};
 pub use write::{CountSink, Sink, SliceSink};
 

@@ -27,6 +27,7 @@ use crate::{
     class,
     error::{ErrorKind, ParseError, Result, WriteError, err},
     limits::Limits,
+    negotiate::QValue,
     param::{self, Params},
     scan::control_kind,
     text::{Word, is_token, skip_ows, trim_ows},
@@ -130,6 +131,145 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<MediaType<'a>> {
         subtype,
         params,
     })
+}
+
+/// Parses a media range, as in one member of `Accept`: `*/*`, `type/*`, or a
+/// media type, with an optional weight.
+///
+/// The first parameter named `q` (ASCII case-insensitive) is the weight; it
+/// and every parameter after it are `accept-ext` and take no part in
+/// matching (RFC 9110 section 12.5.1). A range without `q` has weight 1.
+///
+/// # Errors
+///
+/// [`ErrorKind::Wildcard`] for `*/subtype`; [`ErrorKind::InvalidQValue`];
+/// the errors of [`parse`].
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{media, Limits};
+///
+/// let r = media::parse_range(b"text/*;q=0.5", &Limits::DEFAULT)?;
+/// assert_eq!((r.specificity(), r.weight().thousandths()), (2, 500));
+/// let html = parse_net::parse_media_type(b"text/html")?;
+/// assert!(r.matches(&html));
+/// assert!(media::parse_range(b"*/html", &Limits::DEFAULT).is_err());
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
+pub fn parse_range<'a>(value: &'a [u8], limits: &Limits) -> Result<MediaRange<'a>> {
+    let lead = skip_ows(value);
+    let trimmed = trim_ows(value);
+    let (type_, subtype, used) = essence(trimmed, lead)?;
+    if type_ == b"*" && subtype != b"*" {
+        return err(ErrorKind::Wildcard, lead + type_.len() + 1);
+    }
+    let rest = trimmed.get(used..).unwrap_or(&[]);
+    let (all, n) = param::parse(rest, limits).map_err(|e| e.shifted(lead + used))?;
+    let end = used + n;
+    if end < trimmed.len() {
+        let at = end + skip_ows(trimmed.get(end..).unwrap_or(&[]));
+        return Err(bad_byte(trimmed, at).shifted(lead));
+    }
+    let (params, q) = all.split_at_name(b"q");
+    let weight = match q {
+        None => QValue::ONE,
+        Some(p) => match p.value {
+            Word::Token(t) => QValue::parse(t).map_err(|e| {
+                let at = (t.as_ptr() as usize).saturating_sub(value.as_ptr() as usize);
+                ParseError::new(e.kind(), at)
+            })?,
+            Word::Quoted(_) => {
+                let at = (p.name.as_ptr() as usize).saturating_sub(value.as_ptr() as usize);
+                return err(ErrorKind::InvalidQValue, at);
+            }
+        },
+    };
+    Ok(MediaRange {
+        type_,
+        subtype,
+        params,
+        weight,
+    })
+}
+
+/// A validated media range from `Accept`.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{media, Limits};
+///
+/// let r = media::parse_range(b"text/html;level=1;q=0.7;ext=x", &Limits::DEFAULT)?;
+/// assert_eq!(r.params().len(), 1);              // `level` only: `q` ends the media-type parameters
+/// assert_eq!(r.weight().thousandths(), 700);
+/// assert_eq!(r.specificity(), 4);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct MediaRange<'a> {
+    type_: &'a [u8],
+    subtype: &'a [u8],
+    params: Params<'a>,
+    weight: QValue,
+}
+
+impl<'a> MediaRange<'a> {
+    /// The type, or `*`.
+    #[must_use]
+    pub const fn type_(&self) -> &'a [u8] {
+        self.type_
+    }
+
+    /// The subtype, or `*`.
+    #[must_use]
+    pub const fn subtype(&self) -> &'a [u8] {
+        self.subtype
+    }
+
+    /// Whether this range matches `offer`: the type and subtype match (or
+    /// are `*`), and every parameter of the range is present in the offer
+    /// with an equal value (case-sensitive, except `charset`).
+    #[must_use]
+    pub fn matches(&self, offer: &MediaType<'_>) -> bool {
+        let type_ok = self.type_ == b"*" || self.type_.eq_ignore_ascii_case(offer.type_());
+        let sub_ok = self.subtype == b"*" || self.subtype.eq_ignore_ascii_case(offer.subtype());
+        type_ok
+            && sub_ok
+            && self.params.iter().all(|p| {
+                let charset = p.name.eq_ignore_ascii_case(b"charset");
+                offer.params().iter().any(|o| {
+                    o.name.eq_ignore_ascii_case(p.name) && p.value.same_value(&o.value, charset)
+                })
+            })
+    }
+
+    /// How specific the range is: 4 for a type with parameters, 3 for an
+    /// exact type, 2 for `type/*`, 1 for `*/*`.
+    #[must_use]
+    pub const fn specificity(&self) -> u8 {
+        if matches!(self.type_, [b'*']) {
+            1
+        } else if matches!(self.subtype, [b'*']) {
+            2
+        } else if self.params.is_empty() {
+            3
+        } else {
+            4
+        }
+    }
+
+    /// The weight (`q`), 1 when absent.
+    #[must_use]
+    pub const fn weight(&self) -> QValue {
+        self.weight
+    }
+
+    /// The media-type parameters: those before `q`.
+    #[must_use]
+    pub const fn params(&self) -> Params<'a> {
+        self.params
+    }
 }
 
 /// Writes `type/subtype` and then `; name=value` for each pair, values as a

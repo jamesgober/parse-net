@@ -516,6 +516,33 @@ impl<'a> Word<'a> {
         }
     }
 
+    /// Whether two words have equal unescaped values, optionally ignoring
+    /// ASCII case (RFC 9110 section 5.6.6: the token and quoted forms of the
+    /// same value are equal).
+    pub(crate) fn same_value(&self, other: &Word<'_>, ignore_case: bool) -> bool {
+        match other {
+            Word::Token(t) if ignore_case => self.eq_ignore_ascii_case(t),
+            Word::Token(t) => self.eq_bytes(t),
+            Word::Quoted(q) => {
+                let mut theirs = q.bytes();
+                let eq = |a: u8, b: u8| {
+                    if ignore_case {
+                        a.eq_ignore_ascii_case(&b)
+                    } else {
+                        a == b
+                    }
+                };
+                let all = match self {
+                    Word::Token(t) => t.iter().all(|&a| theirs.next().is_some_and(|b| eq(a, b))),
+                    Word::Quoted(mine) => mine
+                        .bytes()
+                        .all(|a| theirs.next().is_some_and(|b| eq(a, b))),
+                };
+                all && theirs.next().is_none()
+            }
+        }
+    }
+
     /// Whether the unescaped value is empty (only a quoted string can be).
     #[must_use]
     pub fn is_empty(&self) -> bool {
