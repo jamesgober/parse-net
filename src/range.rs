@@ -26,7 +26,6 @@ use crate::{
     error::{ErrorKind, Result, WriteError, err},
     etag::EntityTag,
     limits::Limits,
-    list,
     num::parse_u64,
     text::{skip_ows, trim_ows},
     write::{CountSink, Sink, reserve, write_decimal_u64},
@@ -151,7 +150,9 @@ pub enum RangeOutcome {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RangeHeader<'a> {
     unit: &'a [u8],
-    set: list::List<'a>,
+    /// The validated range set.
+    set: &'a [u8],
+    count: usize,
 }
 
 impl<'a> RangeHeader<'a> {
@@ -198,11 +199,8 @@ impl<'a> RangeHeader<'a> {
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     pub fn specs(&self) -> impl Iterator<Item = RangeSpec> + use<'a> {
-        let bytes = self.is_bytes();
-        self.set
-            .iter()
-            .filter(move |_| bytes)
-            .filter_map(|e| spec(e).ok())
+        let set = if self.is_bytes() { self.set } else { &[] };
+        Elements { s: set }.filter_map(|e| spec(e).ok())
     }
 
     /// The number of members in the range set, whatever the unit (so it can
@@ -219,7 +217,7 @@ impl<'a> RangeHeader<'a> {
     /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
-        self.set.len()
+        self.count
     }
 
     /// Whether the set is empty (never true for a parsed value).
@@ -234,11 +232,35 @@ impl<'a> RangeHeader<'a> {
     /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.set.is_empty()
+        self.count == 0
     }
 }
 
 /// Parses one `int-range / suffix-range`.
+/// The members of a range set: the text between commas, OWS trimmed, empty
+/// members skipped. The set is validated before it is walked.
+struct Elements<'a> {
+    s: &'a [u8],
+}
+
+impl<'a> Iterator for Elements<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        loop {
+            if self.s.is_empty() {
+                return None;
+            }
+            let end = crate::scan::find_byte(b',', self.s).unwrap_or(self.s.len());
+            let e = trim_ows(self.s.get(..end).unwrap_or(&[]));
+            self.s = self.s.get(end + 1..).unwrap_or(&[]);
+            if !e.is_empty() {
+                return Some(e);
+            }
+        }
+    }
+}
+
 fn spec(e: &[u8]) -> Result<RangeSpec> {
     let Some(dash) = e.iter().position(|&b| b == b'-') else {
         return err(ErrorKind::InvalidRange, e.len());
@@ -303,20 +325,47 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<RangeHeader<'a>> {
     if set_text.first().is_some_and(|&b| crate::text::is_ows(b)) {
         return err(ErrorKind::InvalidRange, lead + set_at);
     }
-    let set = list::parse(set_text, limits).map_err(|e| e.shifted(lead + set_at))?;
-    if set.is_empty() {
+    // One pass over the set: each member is found by its comma, trimmed,
+    // and checked; empty members are skipped up to the limit.
+    let bytes = unit.eq_ignore_ascii_case(b"bytes");
+    let (mut i, mut count, mut empty) = (0usize, 0usize, 0usize);
+    while i < set_text.len() {
+        let rest = set_text.get(i..).unwrap_or(&[]);
+        let end = crate::scan::find_byte(b',', rest).unwrap_or(rest.len());
+        let raw = rest.get(..end).unwrap_or(&[]);
+        let e = trim_ows(raw);
+        let at = lead + set_at + i + skip_ows(raw);
+        if e.is_empty() {
+            empty += 1;
+            if empty > usize::from(limits.empty_elements) {
+                return err(ErrorKind::TooManyEmptyElements, at);
+            }
+        } else {
+            count += 1;
+            if count > usize::from(limits.list_members) {
+                return err(ErrorKind::TooManyMembers, at);
+            }
+            if bytes {
+                spec(e).map(|_| ()).map_err(|x| x.shifted(at))?;
+            } else if let Some(j) = e.iter().position(|&b| !class::is_vchar(b)) {
+                return Err(match e.get(j) {
+                    Some(&b) if crate::scan::is_control(b) => {
+                        crate::ParseError::new(crate::scan::control_kind(b), at + j)
+                    }
+                    _ => crate::ParseError::new(ErrorKind::InvalidRange, at + j),
+                });
+            }
+        }
+        i += end + 1;
+    }
+    if count == 0 {
         return err(ErrorKind::InvalidRange, lead + set_at);
     }
-    let bytes = unit.eq_ignore_ascii_case(b"bytes");
-    for e in set.iter() {
-        let at = lead + (e.as_ptr() as usize).saturating_sub(v.as_ptr() as usize);
-        if bytes {
-            spec(e).map(|_| ()).map_err(|x| x.shifted(at))?;
-        } else if let Some(i) = e.iter().position(|&b| b == b',' || !class::is_vchar(b)) {
-            return err(ErrorKind::InvalidRange, at + i);
-        }
-    }
-    Ok(RangeHeader { unit, set })
+    Ok(RangeHeader {
+        unit,
+        set: set_text,
+        count,
+    })
 }
 
 /// Resolves a parsed `Range` against a representation of `length` bytes.

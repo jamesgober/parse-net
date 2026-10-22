@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "parse-net"
-version = "0.5.0"
+version = "0.6.0"
 
 # Minimum Supported Rust Version (MSRV)
 # 1.85: edition 2024. `core::net` addresses need 1.77, `core::error::Error`
@@ -35,7 +35,9 @@ documentation = "https://docs.rs/parse-net"
 authors = ["James Gober <me@jamesgober.com>"]
 
 # The fuzz crate stays in the repository; it is not part of the package.
-exclude = ["/fuzz/", "/tests/sfv/", "/tests/sfv_conformance.rs"]
+exclude = ["/fuzz/", "/benches/", "/tests/sfv/", "/tests/sfv_conformance.rs"]
+# The benchmarks are their own crate in benches/ (D-066).
+autobenches = false
 
 [package.metadata.docs.rs]
 all-features = true

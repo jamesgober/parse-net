@@ -249,13 +249,38 @@ fn node_port(s: &[u8]) -> Option<NodePort<'_>> {
 
 /// An IP literal: dotted-decimal IPv4 (no leading zeros) or IPv6.
 fn ip(text: &[u8], v6: bool) -> Option<IpAddr> {
-    let t = core::str::from_utf8(text).ok()?;
     if v6 {
+        let t = core::str::from_utf8(text).ok()?;
         Ipv6Addr::from_str(t).ok().map(IpAddr::V6)
     } else {
-        // `core` refuses leading zeros, so `01.2.3.4` cannot pass.
-        Ipv4Addr::from_str(t).ok().map(IpAddr::V4)
+        ipv4(text).map(IpAddr::V4)
     }
+}
+
+/// Dotted-decimal IPv4 with `core`'s rules: four parts of one to three
+/// digits, each at most 255, no leading zeros (so `01.2.3.4` cannot pass).
+/// One pass over the bytes, with no UTF-8 check.
+fn ipv4(text: &[u8]) -> Option<Ipv4Addr> {
+    let mut octets = [0u8; 4];
+    let mut parts = text.split(|&b| b == b'.');
+    for o in &mut octets {
+        let part = parts.next()?;
+        if part.is_empty() || part.len() > 3 || (part.len() > 1 && part.first() == Some(&b'0')) {
+            return None;
+        }
+        let mut n: u16 = 0;
+        for &b in part {
+            if !b.is_ascii_digit() {
+                return None;
+            }
+            n = n * 10 + u16::from(b - b'0');
+        }
+        *o = u8::try_from(n).ok()?;
+    }
+    if parts.next().is_some() {
+        return None;
+    }
+    Some(Ipv4Addr::from(octets))
 }
 
 /// Parses a node value (already unquoted).
@@ -525,12 +550,13 @@ fn xff_member(m: &[u8]) -> Option<(IpAddr, Option<u16>)> {
             _ => None,
         };
     }
-    if let Some(a) = ip(m, true) {
-        return Some((a, None));
-    }
-    match m.iter().position(|&b| b == b':') {
-        Some(c) => Some((ip(m.get(..c)?, false)?, port(m.get(c + 1..)?)?)),
-        None => Some((ip(m, false)?, None)),
+    // By shape: no colon is IPv4; exactly one is IPv4 with a port; more is
+    // IPv6 (which always has at least two).
+    let mut colons = m.iter().enumerate().filter(|&(_, &b)| b == b':');
+    match (colons.next(), colons.next()) {
+        (None, _) => Some((ip(m, false)?, None)),
+        (Some((c, _)), None) => Some((ip(m.get(..c)?, false)?, port(m.get(c + 1..)?)?)),
+        (Some(_), Some(_)) => Some((ip(m, true)?, None)),
     }
 }
 

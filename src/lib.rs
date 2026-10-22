@@ -73,8 +73,8 @@
 //!
 //! ## Status
 //!
-//! Feature complete, `0.5.0`: the core, the web layer, links, Structured
-//! Field writing, and the email lexical layer. The public API is written
+//! Optimised, `0.6.0`: every planned field, measured against the Rust crates
+//! that do the same work (`docs/PERFORMANCE.md`). The public API is written
 //! down in `docs/API.md`, each field's grammar in `docs/GRAMMAR.md`, the
 //! design in `dev/PLAN.md`, and the milestone schedule in `dev/ROADMAP.md`
 //! (all in the [repository](https://github.com/jamesgober/parse-net)).

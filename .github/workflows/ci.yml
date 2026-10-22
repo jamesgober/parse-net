@@ -103,6 +103,22 @@ jobs:
           fi
           echo "$tree"
 
+  benches:
+    # The benchmark crate (benches/) is its own workspace with the
+    # competitor crates as its dependencies; building it here keeps it
+    # compiling without adding anything to parse-net's own builds.
+    name: Benchmarks build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: benches
+      - name: Build the benchmarks
+        working-directory: benches
+        run: cargo bench --no-run
+
   package:
     name: Package
     runs-on: ubuntu-latest

@@ -247,6 +247,12 @@ impl MailDate {
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     pub fn parse(value: &[u8], obsolete: bool) -> Result<Self> {
+        // The canonical form mailers write is read by position; anything
+        // else, and anything that fails a check there, takes the general
+        // path below, so results and errors are the same either way.
+        if let Some(d) = canonical(value) {
+            return Ok(d);
+        }
         let mut c = Cur {
             v: value,
             i: 0,
@@ -315,6 +321,90 @@ impl MailDate {
             leap_second,
         })
     }
+}
+
+/// The index of a three-letter name in `names`, ASCII case-insensitive.
+fn name3(b: &[u8], names: &[&[u8; 3]]) -> Option<usize> {
+    let [x, y, z] = *b else { return None };
+    if !(x.is_ascii_alphabetic() && y.is_ascii_alphabetic() && z.is_ascii_alphabetic()) {
+        return None;
+    }
+    // For letters, `| 0x20` is exact lowercase.
+    let key = [x | 0x20, y | 0x20, z | 0x20];
+    names
+        .iter()
+        .position(|n| [n[0] | 0x20, n[1] | 0x20, n[2] | 0x20] == key)
+}
+
+/// Two ASCII digits at `b`.
+fn pair(b: &[u8]) -> Option<u8> {
+    match *b {
+        [h @ b'0'..=b'9', l @ b'0'..=b'9'] => Some((h - b'0') * 10 + (l - b'0')),
+        _ => None,
+    }
+}
+
+/// `Ddd, DD Mmm YYYY HH:MM:SS +HHMM`, exactly 31 bytes, read by position.
+/// `None` for any other shape or any failed check.
+fn canonical(v: &[u8]) -> Option<MailDate> {
+    if v.len() != 31 {
+        return None;
+    }
+    let at = |i: usize| v.get(i).copied();
+    let punct = at(3) == Some(b',')
+        && at(4) == Some(b' ')
+        && at(7) == Some(b' ')
+        && at(11) == Some(b' ')
+        && at(16) == Some(b' ')
+        && at(19) == Some(b':')
+        && at(22) == Some(b':')
+        && at(25) == Some(b' ');
+    if !punct {
+        return None;
+    }
+    let weekday = name3(v.get(0..3)?, &DAY_NAMES)? as u8 + 1;
+    let day = pair(v.get(5..7)?)?;
+    let month = name3(v.get(8..11)?, &MONTH_NAMES)? as u8 + 1;
+    let year = u16::from(pair(v.get(12..14)?)?) * 100 + u16::from(pair(v.get(14..16)?)?);
+    let (hour, minute, second) = (
+        pair(v.get(17..19)?)?,
+        pair(v.get(20..22)?)?,
+        pair(v.get(23..25)?)?,
+    );
+    let sign = at(26)?;
+    let (zh, zm) = (pair(v.get(27..29)?)?, pair(v.get(29..31)?)?);
+    if !matches!(sign, b'+' | b'-')
+        || zm > 59
+        || hour > 23
+        || minute > 59
+        || second > 60
+        || year == 0
+    {
+        return None;
+    }
+    let year = i32::from(year);
+    if day == 0 || day > days_in_month(year, month) {
+        return None;
+    }
+    let days = days_from_civil(year, month, day);
+    if weekday != weekday_from_days(days) {
+        return None;
+    }
+    let minutes = i16::from(zh) * 60 + i16::from(zm);
+    let (offset, unknown) = if sign == b'-' {
+        (-minutes, minutes == 0)
+    } else {
+        (minutes, false)
+    };
+    let leap_second = second == 60;
+    let second = i64::from(if leap_second { 59 } else { second });
+    let local = days * SECS_PER_DAY + i64::from(hour) * 3600 + i64::from(minute) * 60 + second;
+    Some(MailDate {
+        utc: local - i64::from(offset) * 60,
+        offset,
+        offset_unknown: unknown,
+        leap_second,
+    })
 }
 
 fn put(out: &mut [u8], at: usize, bytes: &[u8]) {
@@ -407,10 +497,10 @@ impl Cur<'_> {
 
     /// A three-letter name from `names`, ASCII case-insensitive; its index.
     fn name(&mut self, names: &[&[u8; 3]]) -> Result<u32> {
-        let word = self.v.get(self.i..self.i + 3).unwrap_or(&[]);
-        let found = names
-            .iter()
-            .position(|n| n.eq_ignore_ascii_case(word))
+        let found = self
+            .v
+            .get(self.i..self.i + 3)
+            .and_then(|w| name3(w, names))
             .filter(|_| !self.v.get(self.i + 3).is_some_and(u8::is_ascii_alphabetic));
         match found {
             Some(idx) => {

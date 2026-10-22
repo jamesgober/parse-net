@@ -19,30 +19,71 @@ const fn q_plain(b: u8) -> bool {
     b.is_ascii_alphanumeric() || matches!(b, b'!' | b'*' | b'+' | b'-' | b'/')
 }
 
-/// The length of `c` in Q encoding.
-fn q_len(c: char) -> usize {
-    let mut buf = [0u8; 4];
-    c.encode_utf8(&mut buf)
-        .bytes()
-        .map(|b| if q_plain(b) || b == b' ' { 1 } else { 3 })
-        .sum()
+/// The Q-encoded length of every byte: 1 for a byte written as itself or
+/// as `_` (a space), 3 for `=XX`. One lookup instead of the class tests.
+// Built at compile time; `b` runs over 0..256, the array's own bounds.
+#[allow(clippy::indexing_slicing)]
+const Q_LEN: [u8; 256] = {
+    let mut t = [3u8; 256];
+    let mut b = 0usize;
+    while b < 256 {
+        if q_plain(b as u8) || b == b' ' as usize {
+            t[b] = 1;
+        }
+        b += 1;
+    }
+    t
+};
+
+/// The Q-encoded length of one byte.
+#[inline]
+fn q_byte_len(b: u8) -> usize {
+    usize::from(Q_LEN.get(usize::from(b)).copied().unwrap_or(3))
 }
 
-fn put_q(c: char, out: &mut impl Sink) -> core::result::Result<(), WriteError> {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut buf = [0u8; 4];
-    for b in c.encode_utf8(&mut buf).bytes() {
-        if b == b' ' {
-            out.put(b"_")?;
-        } else if q_plain(b) {
-            out.put(&[b])?;
-        } else {
-            let hi = HEX.get(usize::from(b >> 4)).copied().unwrap_or(b'0');
-            let lo = HEX.get(usize::from(b & 0xf)).copied().unwrap_or(b'0');
-            out.put(&[b'=', hi, lo])?;
+/// The length in bytes of the UTF-8 character that starts with `b`.
+const fn utf8_width(b: u8) -> usize {
+    match b {
+        0x00..=0x7f => 1,
+        0xc0..=0xdf => 2,
+        0xe0..=0xef => 3,
+        _ => 4,
+    }
+}
+
+/// The payload of one encoded word, built on the stack: at most 75 bytes
+/// less the 12 of `=?UTF-8?Q?` and `?=`.
+struct Payload {
+    buf: [u8; WORD_LIMIT - OVERHEAD],
+    len: usize,
+}
+
+impl Payload {
+    /// Appends the Q encoding of `ch` (one UTF-8 character); the caller has
+    /// checked that it fits.
+    fn push(&mut self, ch: &[u8]) {
+        const HEX: &[u8; 16] = b"0123456789ABCDEF";
+        for &b in ch {
+            let len = self.len;
+            if q_byte_len(b) == 1 {
+                if let Some(d) = self.buf.get_mut(len) {
+                    *d = if b == b' ' { b'_' } else { b };
+                }
+                self.len = len + 1;
+            } else {
+                let hi = HEX.get(usize::from(b >> 4)).copied().unwrap_or(b'0');
+                let lo = HEX.get(usize::from(b & 0xf)).copied().unwrap_or(b'0');
+                if let Some([x, y, z]) = self.buf.get_mut(len..len + 3) {
+                    (*x, *y, *z) = (b'=', hi, lo);
+                }
+                self.len = len + 3;
+            }
         }
     }
-    Ok(())
+
+    fn as_bytes(&self) -> &[u8] {
+        self.buf.get(..self.len).unwrap_or(&[])
+    }
 }
 
 fn put_words(
@@ -50,16 +91,27 @@ fn put_words(
     room_first_line: usize,
     out: &mut impl Sink,
 ) -> core::result::Result<(), WriteError> {
-    if text.bytes().all(|b| (0x20..=0x7e).contains(&b)) && !text.contains("=?") {
-        out.put(text.as_bytes())?;
+    let bytes = text.as_bytes();
+    if bytes.iter().all(|b| (0x20..=0x7e).contains(b)) && !text.contains("=?") {
+        out.put(bytes)?;
         return Ok(());
     }
     let mut limit = room_first_line.min(WORD_LIMIT);
-    let mut payload = 0usize;
+    let mut word = Payload {
+        buf: [0; WORD_LIMIT - OVERHEAD],
+        len: 0,
+    };
     let mut open = false;
-    for c in text.chars() {
-        let n = q_len(c);
-        if open && OVERHEAD + payload + n > limit {
+    let mut i = 0usize;
+    while let Some(&lead) = bytes.get(i) {
+        let ch = bytes.get(i..i + utf8_width(lead)).unwrap_or(&[]);
+        i += ch.len().max(1);
+        let mut n = 0usize;
+        for &b in ch {
+            n += q_byte_len(b);
+        }
+        if open && OVERHEAD + word.len + n > limit {
+            out.put(word.as_bytes())?;
             out.put(b"?=\r\n ")?;
             open = false;
             limit = WORD_LIMIT;
@@ -73,12 +125,12 @@ fn put_words(
             }
             out.put(b"=?UTF-8?Q?")?;
             open = true;
-            payload = 0;
+            word.len = 0;
         }
-        put_q(c, out)?;
-        payload += n;
+        word.push(ch);
     }
     if open {
+        out.put(word.as_bytes())?;
         out.put(b"?=")?;
     }
     Ok(())

@@ -13,6 +13,40 @@
 
 ---
 
+## [0.6.0] - 2026-10-22
+
+Optimisation: every operation measured against the Rust crates that do the
+same work.
+
+### Added
+
+- `benches/`: criterion benchmarks against `mime`, `httpdate`, `sfv`,
+  `headers`, `content_disposition`, and `mailparse` on real traffic shapes,
+  as their own crate so the competitors never enter parse-net's dependency
+  tree (D-066); a CI job keeps them building.
+- `docs/PERFORMANCE.md`: the results, what changed, the method, the machine,
+  and the commands.
+- Property tests: the `MailDate` fast path agrees with the general parser;
+  the `X-Forwarded-For` IPv4 reader agrees with `core::net::Ipv4Addr`.
+
+### Changed
+
+- Entity-tag lists, `Cache-Control`, and range sets are validated and read in
+  one pass by a walker for their own grammar (D-067): `if_none_match` 63 ns
+  to 18 ns, `byte_ranges` 40 ns to 28 ns.
+- `best_media` validates and scores in the same pass and compares exact
+  forms first: 861 ns to 461 ns.
+- `MailDate::parse` reads the canonical form by position (D-068): 54 ns to
+  22 ns. `client_address` reads IPv4 with a byte-level parser: 196 ns to
+  110 ns. `encode_words` builds each word on the stack from a length table.
+- `Cache-Control` names are dispatched on length; `Params::get` and
+  `MediaRange::matches` compare exact bytes before ignoring case.
+- `parse_media_type` and `response_cache_control` are 17% and 19% faster
+  than their competitors, below the 20% target; the plan is in
+  `docs/PERFORMANCE.md` (D-069).
+
+---
+
 ## [0.5.0] - 2026-10-22
 
 Feature complete: links, Structured Field writing, the email lexical layer,
@@ -244,7 +278,8 @@ The scaffold and the plan. No parsing code yet.
   (0.1 to 1.0 with exit criteria).
 - `fuzz/` crate skeleton; targets arrive with the parsers they cover.
 
-[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/jamesgober/parse-net/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jamesgober/parse-net/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jamesgober/parse-net/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jamesgober/parse-net/compare/v0.2.0...v0.3.0

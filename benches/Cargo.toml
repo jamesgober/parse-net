@@ -1,0 +1,70 @@
+[package]
+name = "parse-net-bench"
+version = "0.0.0"
+publish = false
+edition = "2024"
+description = "Benchmarks for parse-net against the competitor crates named in dev/PLAN.md section 10"
+
+# Kept out of parse-net's own dependency tree: criterion and the competitors
+# are dependencies of this crate only, so they never reach parse-net's
+# dev-dependencies, its MSRV job, or `cargo tree` (D-066).
+[dependencies]
+parse-net = { path = "..", features = ["std"] }
+criterion = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
+
+# Competitors, through their own public APIs.
+mime = "0.3"
+httpdate = "1"
+sfv = "0.16"
+headers = "0.4"
+http = "1"
+content_disposition = "0.4"
+mailparse = "0.15"
+httparse = "1"
+
+[[bench]]
+name = "scan"
+harness = false
+
+[[bench]]
+name = "media"
+harness = false
+
+[[bench]]
+name = "negotiate"
+harness = false
+
+[[bench]]
+name = "date"
+harness = false
+
+[[bench]]
+name = "sfv"
+harness = false
+
+[[bench]]
+name = "conditional"
+harness = false
+
+[[bench]]
+name = "disposition"
+harness = false
+
+[[bench]]
+name = "cache"
+harness = false
+
+[[bench]]
+name = "forwarded"
+harness = false
+
+[[bench]]
+name = "mail"
+harness = false
+
+# Keeps this crate out of any parent workspace.
+[workspace]
+members = ["."]
+
+[profile.bench]
+debug = true

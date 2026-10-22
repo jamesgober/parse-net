@@ -17,8 +17,7 @@ use crate::{
     class,
     error::{ErrorKind, ParseError, Result, WriteError, err},
     limits::Limits,
-    list,
-    text::trim_ows,
+    text::{skip_ows, trim_ows},
     write::{Sink, reserve},
 };
 
@@ -285,7 +284,9 @@ pub enum Condition<'a> {
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TagList<'a> {
-    list: list::List<'a>,
+    /// The validated value, OWS trimmed.
+    text: &'a [u8],
+    count: usize,
 }
 
 impl<'a> TagList<'a> {
@@ -302,9 +303,7 @@ impl<'a> TagList<'a> {
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     pub fn iter(&self) -> impl Iterator<Item = EntityTag<'a>> + use<'a> {
-        self.list
-            .iter()
-            .filter_map(|e| parse_prefix(e).ok().map(|(t, _)| t))
+        TagIter { s: self.text, i: 0 }
     }
 
     /// The number of tags.
@@ -320,7 +319,7 @@ impl<'a> TagList<'a> {
     /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
-        self.list.len()
+        self.count
     }
 
     /// Whether there are no tags.
@@ -336,8 +335,93 @@ impl<'a> TagList<'a> {
     /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
-        self.list.is_empty()
+        self.count == 0
     }
+}
+
+/// The tags of a validated [`TagList`].
+struct TagIter<'a> {
+    s: &'a [u8],
+    i: usize,
+}
+
+impl<'a> Iterator for TagIter<'a> {
+    type Item = EntityTag<'a>;
+
+    fn next(&mut self) -> Option<EntityTag<'a>> {
+        while matches!(self.s.get(self.i), Some(b' ' | b'\t' | b',')) {
+            self.i += 1;
+        }
+        let (tag, used) = parse_prefix(self.s.get(self.i..)?).ok()?;
+        self.i += used;
+        Some(tag)
+    }
+}
+
+/// What a condition value holds after [`walk`].
+enum Walked {
+    Any,
+    Tags(usize),
+}
+
+/// Validates `"*" / #entity-tag` in one pass over `v` (OWS already trimmed),
+/// calling `f` for every tag. Empty list elements are skipped up to
+/// `max_empty_elements`; `*` must stand alone.
+fn walk<'a>(v: &'a [u8], limits: &Limits, mut f: impl FnMut(EntityTag<'a>)) -> Result<Walked> {
+    let (mut i, mut count, mut empty, mut star) = (0usize, 0usize, 0usize, false);
+    loop {
+        while matches!(v.get(i), Some(b' ' | b'\t')) {
+            i += 1;
+        }
+        match v.get(i) {
+            None => break,
+            Some(b',') => {
+                empty += 1;
+                if empty > usize::from(limits.empty_elements) {
+                    return err(ErrorKind::TooManyEmptyElements, i);
+                }
+                i += 1;
+                continue;
+            }
+            Some(b'*') if !star && count == 0 => {
+                star = true;
+                i += 1;
+            }
+            Some(_) if star => return err(ErrorKind::Malformed, i),
+            Some(_) => {
+                let (tag, used) =
+                    parse_prefix(v.get(i..).unwrap_or(&[])).map_err(|e| match e.kind() {
+                        ErrorKind::InvalidEntityTag
+                            if e.offset() + i >= v.len() && v.get(i) == Some(&b'"') =>
+                        {
+                            ParseError::new(ErrorKind::UnterminatedQuote, v.len())
+                        }
+                        _ => e.shifted(i),
+                    })?;
+                count += 1;
+                if count > usize::from(limits.list_members) {
+                    return err(ErrorKind::TooManyMembers, i);
+                }
+                f(tag);
+                i += used;
+            }
+        }
+        while matches!(v.get(i), Some(b' ' | b'\t')) {
+            i += 1;
+        }
+        match v.get(i) {
+            None => break,
+            Some(b',') => {}
+            Some(&b) if crate::scan::is_control(b) => return err(crate::scan::control_kind(b), i),
+            Some(_) if star => return err(ErrorKind::Malformed, i),
+            Some(_) => return err(ErrorKind::InvalidEntityTag, i),
+        }
+    }
+    Ok(if star {
+        Walked::Any
+    } else {
+        Walked::Tags(count)
+    })
 }
 
 /// Parses `"*" / #entity-tag`.
@@ -359,26 +443,14 @@ impl<'a> TagList<'a> {
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn parse_condition<'a>(value: &'a [u8], limits: &Limits) -> Result<Condition<'a>> {
-    let l = list::parse(value, limits)?;
-    let mut star = false;
-    for e in l.iter() {
-        let at = (e.as_ptr() as usize).saturating_sub(value.as_ptr() as usize);
-        if e == b"*" {
-            star = true;
-            continue;
-        }
-        let (_, used) = parse_prefix(e).map_err(|x| x.shifted(at))?;
-        if used != e.len() {
-            return err(ErrorKind::InvalidEntityTag, at + used);
-        }
-    }
-    if star {
-        if l.len() != 1 {
-            return err(ErrorKind::Malformed, 0);
-        }
-        return Ok(Condition::Any);
-    }
-    Ok(Condition::Tags(TagList { list: l }))
+    let lead = skip_ows(value);
+    let v = trim_ows(value);
+    Ok(
+        match walk(v, limits, |_| {}).map_err(|e| e.shifted(lead))? {
+            Walked::Any => Condition::Any,
+            Walked::Tags(count) => Condition::Tags(TagList { text: v, count }),
+        },
+    )
 }
 
 /// Evaluates `If-None-Match` against the current representation's tag by
@@ -401,10 +473,15 @@ pub fn parse_condition<'a>(value: &'a [u8], limits: &Limits) -> Result<Condition
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn if_none_match(value: &[u8], current: &EntityTag<'_>) -> Result<bool> {
-    Ok(match parse_condition(value, &Limits::DEFAULT)? {
-        Condition::Any => true,
-        Condition::Tags(tags) => tags.iter().any(|t| t.weak_eq(current)),
+    // One pass: the whole field is validated, and the comparison runs as each
+    // tag is read.
+    let lead = skip_ows(value);
+    let mut matched = false;
+    let walked = walk(trim_ows(value), &Limits::DEFAULT, |t| {
+        matched |= t.weak_eq(current)
     })
+    .map_err(|e| e.shifted(lead))?;
+    Ok(matches!(walked, Walked::Any) || matched)
 }
 
 /// Evaluates `If-Match` by strong comparison (RFC 9110 section 13.1.1).
@@ -428,9 +505,15 @@ pub fn if_none_match(value: &[u8], current: &EntityTag<'_>) -> Result<bool> {
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn if_match(value: &[u8], current: Option<&EntityTag<'_>>) -> Result<bool> {
-    Ok(match parse_condition(value, &Limits::DEFAULT)? {
-        Condition::Any => current.is_some(),
-        Condition::Tags(tags) => current.is_some_and(|c| tags.iter().any(|t| t.strong_eq(c))),
+    let lead = skip_ows(value);
+    let mut matched = false;
+    let walked = walk(trim_ows(value), &Limits::DEFAULT, |t| {
+        matched |= current.is_some_and(|c| t.strong_eq(c));
+    })
+    .map_err(|e| e.shifted(lead))?;
+    Ok(match walked {
+        Walked::Any => current.is_some(),
+        Walked::Tags(_) => matched,
     })
 }
 

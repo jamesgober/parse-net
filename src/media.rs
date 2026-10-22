@@ -263,11 +263,19 @@ impl<'a> MediaRange<'a> {
     /// ```
     #[must_use]
     pub fn matches(&self, offer: &MediaType<'_>) -> bool {
-        let type_ok = self.type_ == b"*" || self.type_.eq_ignore_ascii_case(offer.type_());
-        let sub_ok = self.subtype == b"*" || self.subtype.eq_ignore_ascii_case(offer.subtype());
-        type_ok
-            && sub_ok
-            && self.params.iter().all(|p| {
+        // `*/subtype` is refused at parse, so a `*` type means `*/*`.
+        // An exact compare first: senders and offers are usually both lowercase.
+        let same = |a: &[u8], b: &[u8]| a == b || a.eq_ignore_ascii_case(b);
+        if self.type_ != b"*" {
+            if !same(self.type_, offer.type_()) {
+                return false;
+            }
+            if self.subtype != b"*" && !same(self.subtype, offer.subtype()) {
+                return false;
+            }
+        }
+        self.params.is_empty()
+            || self.params.iter().all(|p| {
                 let charset = p.name.eq_ignore_ascii_case(b"charset");
                 offer.params().iter().any(|o| {
                     o.name.eq_ignore_ascii_case(p.name) && p.value.same_value(&o.value, charset)

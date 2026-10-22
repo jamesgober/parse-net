@@ -78,19 +78,22 @@ Exit: every P0, P1, and P2 item exists; every public item has a doctest; `cargo 
 - [x] Fuzz targets for the 0.5 parsers and writers (`link`, `mail_date`, `mail_words`, `mime_params`, `addr_spec`, `fold_unfold`, `sfv_roundtrip`): all 34 targets ten minutes clean against 0.5.
 - [x] Property tests (no panic; every 0.5 writer's output parses back) and counting-allocator tests for every 0.5 parse and write.
 
-## v0.6.0 - Optimisation
+## v0.6.0 - Optimisation (DONE, 2026-10-22)
 
 Exit: every comparable row of PLAN 10.1 at least 20% faster than the best Rust competitor, or a recorded plan; no regression over 5% against 0.5.
 
-- [ ] Moved from 0.5 (D-062): ATH-3 `basic_decode_into`, MAIL-5 `encode_words_b`, `ByteSeq::decode_into`, `sfv::Writer::bytes`, `B` encoded words, behind `encode-lib`, if encode-lib is published by then.
-
-- [ ] Benchmarks for every row of PLAN 10.1 against the named competitors.
-- [ ] SWAR fast paths where measured to help; `#[inline]` decisions recorded with the consumer benchmark that justified each.
-- [ ] `docs/PERFORMANCE.md`.
+- [ ] Moved from 0.5 (D-062): ATH-3 `basic_decode_into`, MAIL-5 `encode_words_b`, `ByteSeq::decode_into`, `sfv::Writer::bytes`, `B` encoded words, behind `encode-lib`. encode-lib is still not published; they move to 0.7, then to the first release after encode-lib appears (D-002).
+- [x] Benchmarks for every row of PLAN 10.1 against the named competitors (`benches/`, D-066).
+- [x] SWAR fast paths where measured to help (`scan`, from 0.3); `#[inline]` decisions recorded in `docs/PERFORMANCE.md` with D-041.
+- [x] `docs/PERFORMANCE.md`.
+- [x] Exit: 10 of 12 compared rows at least 20% faster; `parse_media_type` (17%) and `response_cache_control` (19%) have a recorded plan (D-069); no regression against 0.5.
 
 ## v0.7.0 - Hardening
 
 Exit: no open fuzz or differential finding marked "ours wrong"; threat table fully tested.
+
+- [ ] From 0.6 (D-069): the slice-cursor rewrite of `param::parse` and `parse_word`, bringing `parse_media_type` and `response_cache_control` to the 20% target.
+- [ ] From 0.5 (D-062): the `encode-lib` helpers, if encode-lib is published.
 
 - [ ] Every fuzz target 24 hours clean; differential targets running weekly.
 - [ ] Attack tests T1 to T25 all present and passing; complexity tests (PLAN 11.6).
