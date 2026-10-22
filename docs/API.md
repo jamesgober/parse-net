@@ -376,7 +376,7 @@ The work and size bounds every parser enforces. Every bound is checked before th
 |---|---|---|
 | list members | 1024 | RFC 9651 section 3.1 minimum |
 | inner list members | 256 | RFC 9651 section 3.1.1 minimum |
-| parameters per item or field | 256 | RFC 9651 section 3.1.2 minimum |
+| parameters per item or field | 256 (RFC 9110 parameters under `Refuse`: at most `param::MAX_CHECKED_PARAMS`, 64; D-072) | RFC 9651 section 3.1.2 minimum |
 | dictionary members | 1024 | RFC 9651 section 3.2 minimum |
 | key length | 256 | RFC 9651 minimum is 64; a longer key from a conforming sender is not refused |
 | string length (decoded) | 1024 | RFC 9651 section 3.3.3 minimum |

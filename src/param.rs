@@ -41,8 +41,67 @@ pub struct Param<'a> {
     pub value: Word<'a>,
 }
 
-/// A small filter over parameter names, so a repeated name is searched for
-/// only when one could exist. Bounded: at most `max_params` names are seen.
+/// The most parameters one element may have when repeated names are
+/// refused: RFC 9110 parameters under [`DuplicatePolicy::Refuse`],
+/// authentication parameters, and MIME parameters. Their name offsets are
+/// kept on the stack, so a repeat is found by comparing names in place,
+/// never by reading the parameters again (D-072). Without it, the check for
+/// a repeat reads every earlier parameter, values included, and a field of
+/// many parameters costs the square of its length.
+pub const MAX_CHECKED_PARAMS: usize = 64;
+
+/// The names already seen in one parameter list, for the repeat check: their
+/// offsets in the list's text, compared in place (D-072). The caller keeps
+/// at most [`MAX_CHECKED_PARAMS`] names.
+pub(crate) struct Names {
+    at: [usize; MAX_CHECKED_PARAMS],
+    len: usize,
+    seen: u64,
+}
+
+impl Names {
+    pub(crate) const fn new() -> Self {
+        Self {
+            at: [0; MAX_CHECKED_PARAMS],
+            len: 0,
+            seen: 0,
+        }
+    }
+
+    /// Whether `name`, at `off` in `text`, repeats a recorded name (ASCII
+    /// case-insensitive); records it when it does not. `in_name` is the
+    /// names' byte class: a recorded name ends at the first byte outside it.
+    pub(crate) fn repeats(
+        &mut self,
+        text: &[u8],
+        off: usize,
+        name: &[u8],
+        in_name: fn(u8) -> bool,
+    ) -> bool {
+        let bit = name_bit(name);
+        let l = name.len();
+        let earlier = self.at.get(..self.len).unwrap_or(&[]);
+        if self.seen & bit != 0
+            && earlier.iter().any(|&o| {
+                text.get(o + l).is_none_or(|&b| !in_name(b))
+                    && text
+                        .get(o..o + l)
+                        .is_some_and(|e| e.eq_ignore_ascii_case(name))
+            })
+        {
+            return true;
+        }
+        self.seen |= bit;
+        if let Some(slot) = self.at.get_mut(self.len) {
+            *slot = off;
+            self.len += 1;
+        }
+        false
+    }
+}
+
+/// A small filter over parameter names, so the table of earlier names is
+/// searched only when a repeat could exist.
 #[inline]
 fn name_bit(name: &[u8]) -> u64 {
     let first = name.first().map_or(0, u8::to_ascii_lowercase);
@@ -69,8 +128,8 @@ fn name_bit(name: &[u8]) -> u64 {
 /// [`ErrorKind::NotToken`] for a bad name; [`ErrorKind::MissingValue`] for a
 /// name with no `=` or no value; [`ErrorKind::InvalidByte`] for whitespace
 /// around `=`; the quoted-string errors; [`ErrorKind::DuplicateParameter`]
-/// under [`DuplicatePolicy::Refuse`]; [`ErrorKind::TooManyMembers`] beyond
-/// [`Limits::max_params`].
+/// under [`DuplicatePolicy::Refuse`]; [`ErrorKind::TooManyMembers`] beyond [`Limits::max_params`], and under
+/// [`DuplicatePolicy::Refuse`] beyond [`MAX_CHECKED_PARAMS`] as well.
 ///
 /// # Examples
 ///
@@ -83,11 +142,17 @@ fn name_bit(name: &[u8]) -> u64 {
 /// ```
 pub fn parse<'a>(s: &'a [u8], limits: &Limits) -> Result<(Params<'a>, usize)> {
     let policy = limits.duplicate_params;
-    let max = usize::from(limits.params);
+    let refuse = policy == DuplicatePolicy::Refuse;
+    let max = if refuse {
+        usize::from(limits.params).min(MAX_CHECKED_PARAMS)
+    } else {
+        usize::from(limits.params)
+    };
     // The cursor is a shrinking slice; an offset is computed only for an
     // error or the result. `done` follows the last complete parameter.
     let at = |rest: &[u8]| s.len() - rest.len();
-    let (mut done, mut count, mut seen) = (s, 0usize, 0u64);
+    let (mut done, mut count) = (s, 0usize);
+    let mut names = Names::new();
     while let [b';', after @ ..] = skip_ws(done) {
         let r = skip_ws(after);
         let n = token_len(r);
@@ -145,19 +210,8 @@ pub fn parse<'a>(s: &'a [u8], limits: &Limits) -> Result<(Params<'a>, usize)> {
         if count > max {
             return err(ErrorKind::TooManyMembers, name_at);
         }
-        if policy == DuplicatePolicy::Refuse {
-            let bit = name_bit(name);
-            if seen & bit != 0 {
-                let earlier = Params {
-                    text: s.get(..at(done)).unwrap_or(&[]),
-                    count: 0,
-                    policy,
-                };
-                if earlier.iter().any(|p| p.name.eq_ignore_ascii_case(name)) {
-                    return err(ErrorKind::DuplicateParameter, name_at);
-                }
-            }
-            seen |= bit;
+        if refuse && names.repeats(s, name_at, name, class::is_tchar) {
+            return err(ErrorKind::DuplicateParameter, name_at);
         }
         done = value.get(used..).unwrap_or(&[]);
     }
@@ -500,8 +554,58 @@ mod tests {
             v.extend_from_slice(format!(";p{i}=v").as_bytes());
         }
         let cut = v.len() - format!(";p{}=v", 256).len();
-        assert_eq!(p(&v[..cut]).unwrap().0.len(), 256);
-        assert_eq!(p(&v).unwrap_err().kind(), ErrorKind::TooManyMembers);
+        // `First` and `Last` read up to `max_params` (256 by default).
+        for policy in [DuplicatePolicy::First, DuplicatePolicy::Last] {
+            let l = Limits::DEFAULT.duplicate_params(policy);
+            assert_eq!(parse(&v[..cut], &l).unwrap().0.len(), 256);
+            assert_eq!(parse(&v, &l).unwrap_err().kind(), ErrorKind::TooManyMembers);
+        }
+        // `Refuse` stops at the size of its name table, whatever the limit.
+        let upto = |n: usize| {
+            (0..n)
+                .map(|i| format!(";p{i}=v"))
+                .collect::<Vec<_>>()
+                .concat()
+        };
+        assert_eq!(p(upto(MAX_CHECKED_PARAMS).as_bytes()).unwrap().0.len(), 64);
+        let over = upto(MAX_CHECKED_PARAMS + 1);
+        let e = p(over.as_bytes()).unwrap_err();
+        let last = over.rfind(';').unwrap() + 1;
+        assert_eq!((e.kind(), e.offset()), (ErrorKind::TooManyMembers, last));
+        let wide = Limits::DEFAULT.max_params(u16::MAX);
+        assert_eq!(
+            parse(over.as_bytes(), &wide).unwrap_err().kind(),
+            ErrorKind::TooManyMembers
+        );
+        assert_eq!(
+            parse(upto(3).as_bytes(), &Limits::DEFAULT.max_params(2))
+                .unwrap_err()
+                .kind(),
+            ErrorKind::TooManyMembers
+        );
+    }
+
+    #[test]
+    fn test_params_duplicate_found_in_every_table_slot() {
+        // A repeat of each of the 64 names is found, in either case, and a
+        // name that is a prefix or an extension of an earlier one is not a
+        // repeat.
+        let base = (0..63)
+            .map(|i| format!(";p{i}=\"v;p{i}=w\""))
+            .collect::<Vec<_>>()
+            .concat();
+        for i in 0..63 {
+            let dup = format!("{base};P{i}=x");
+            let e = p(dup.as_bytes()).unwrap_err();
+            assert_eq!(
+                (e.kind(), e.offset()),
+                (ErrorKind::DuplicateParameter, base.len() + 1),
+                "{i}"
+            );
+        }
+        for other in ["p", "p1x", "xp1", "p100"] {
+            assert!(p(format!("{base};{other}=x").as_bytes()).is_ok(), "{other}");
+        }
     }
 
     #[test]

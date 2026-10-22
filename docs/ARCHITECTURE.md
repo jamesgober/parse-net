@@ -321,7 +321,7 @@ bound loops. The defaults meet every RFC 9651 minimum.
 |---|---|
 | list members | 1024 |
 | inner-list members | 256 |
-| parameters per item or field | 256 |
+| parameters per item or field | 256 (RFC 9110 parameters under `Refuse`: 64, D-072) |
 | dictionary members | 1024 |
 | key length | 256 |
 | string length (decoded) | 1024 |

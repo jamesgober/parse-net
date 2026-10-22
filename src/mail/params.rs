@@ -7,6 +7,7 @@ use crate::{
     error::{ErrorKind, ParseError, Result, WriteError, err},
     ext_value::{Charset, ExtValue},
     limits::{Limits, MAX_RFC2231_SECTIONS},
+    param::{MAX_CHECKED_PARAMS, Names},
     scan::control_kind,
     text::{Word, parse_quoted},
     write::{CountSink, Sink, reserve},
@@ -127,7 +128,8 @@ fn pct_chars(t: &[u8]) -> Option<usize> {
 ///
 /// [`ErrorKind::NotToken`], [`ErrorKind::MissingValue`],
 /// [`ErrorKind::DuplicateParameter`], [`ErrorKind::UnterminatedQuote`],
-/// [`ErrorKind::TooManyMembers`] beyond `max_params`; for RFC 2231:
+/// [`ErrorKind::TooManyMembers`] beyond `max_params` or
+/// [`MAX_CHECKED_PARAMS`](crate::param::MAX_CHECKED_PARAMS); for RFC 2231:
 /// [`ErrorKind::SectionGap`], [`ErrorKind::TooManySections`] beyond
 /// `max_rfc2231_sections`, the [`ExtValue::parse`] errors (a charset outside
 /// section 0 is [`ErrorKind::InvalidPercentEncoding`] at its `'`),
@@ -147,6 +149,8 @@ fn pct_chars(t: &[u8]) -> Option<usize> {
 /// ```
 pub fn parse_mime_params<'a>(s: &'a [u8], limits: &Limits) -> Result<(MimeParams<'a>, usize)> {
     let (mut i, mut count) = (0usize, 0usize);
+    let max = usize::from(limits.params).min(MAX_CHECKED_PARAMS);
+    let mut names = Names::new();
     loop {
         let j = cfws(s, i, limits)?;
         if s.get(j) != Some(&b';') {
@@ -154,14 +158,11 @@ pub fn parse_mime_params<'a>(s: &'a [u8], limits: &Limits) -> Result<(MimeParams
         }
         let (name, value, at, end) = param_at(s, j, limits)?;
         count += 1;
-        if count > usize::from(limits.params) {
+        if count > max {
             return err(ErrorKind::TooManyMembers, j);
         }
-        let earlier = MimeParams {
-            text: s.get(..j).unwrap_or(&[]),
-            count: count - 1,
-        };
-        if earlier.iter().any(|(n, _)| n.eq_ignore_ascii_case(name)) {
+        let name_at = (name.as_ptr() as usize).saturating_sub(s.as_ptr() as usize);
+        if names.repeats(s, name_at, name, class::is_mime_token_char) {
             return err(ErrorKind::DuplicateParameter, j);
         }
         match (split_name(name).1, value) {

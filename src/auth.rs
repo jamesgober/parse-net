@@ -27,6 +27,7 @@ use crate::{
     error::{ErrorKind, ParseError, Result, WriteError, err},
     limits::Limits,
     list,
+    param::{MAX_CHECKED_PARAMS, Names},
     scan::control_kind,
     text::{Word, is_token, parse_word, skip_ows, trim_ows},
     write::{CountSink, Sink, reserve, unique_names, write_quoted, write_word},
@@ -303,26 +304,20 @@ impl fmt::Debug for Credentials<'_> {
 /// repeated name, and counts it.
 fn check_params(text: &[u8], at: usize, limits: &Limits) -> Result<usize> {
     let l = list::parse(text, limits).map_err(|e| e.shifted(at))?;
-    let mut count = 0usize;
+    let max = usize::from(limits.params).min(MAX_CHECKED_PARAMS);
+    let (mut count, mut names) = (0usize, Names::new());
     for e in l.iter() {
-        let off = at + (e.as_ptr() as usize).saturating_sub(text.as_ptr() as usize);
+        let rel = (e.as_ptr() as usize).saturating_sub(text.as_ptr() as usize);
+        let off = at + rel;
         let (name, _) = auth_param(e).map_err(|x| x.shifted(off))?;
-        // A repeated name within one credential or challenge is refused
-        // (RFC 9110 section 11.2); bounded by `max_params`.
-        let earlier = text
-            .get(..(e.as_ptr() as usize).saturating_sub(text.as_ptr() as usize))
-            .unwrap_or(&[]);
-        let seen = list::parse(earlier, limits)
-            .into_iter()
-            .flat_map(|x| x.into_iter())
-            .filter_map(|x| auth_param(x).ok())
-            .any(|(n, _)| n.eq_ignore_ascii_case(name));
-        if seen {
-            return err(ErrorKind::DuplicateParameter, off);
-        }
         count += 1;
-        if count > usize::from(limits.params) {
+        if count > max {
             return err(ErrorKind::TooManyMembers, off);
+        }
+        // A repeated name within one credential or challenge is refused
+        // (RFC 9110 section 11.2); the name starts the element.
+        if names.repeats(text, rel, name, class::is_tchar) {
+            return err(ErrorKind::DuplicateParameter, off);
         }
     }
     Ok(count)

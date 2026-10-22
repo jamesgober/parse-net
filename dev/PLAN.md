@@ -292,7 +292,7 @@ Migration rule: http-net and ws-net adopt parse-net in their next minor release 
 |---|---|---|
 | list members | RFC 9651 section 3.1 minimum 1024 | 1024 |
 | inner list members | RFC 9651 section 3.1.1 minimum 256 | 256 |
-| parameters per item or field | RFC 9651 section 3.1.2 minimum 256 | 256 |
+| parameters per item or field | RFC 9651 section 3.1.2 minimum 256 | 256 (RFC 9110 parameters under `Refuse`: 64, D-072) |
 | dictionary members | RFC 9651 section 3.2 minimum 1024 | 1024 |
 | key length | RFC 9651 minimum 64 | 256 |
 | string length (decoded) | RFC 9651 section 3.3.3 minimum 1024 | 1024 |

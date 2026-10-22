@@ -427,3 +427,70 @@ fn test_sf_byteseq_padding_rules() {
         assert_eq!(kind(sfv::parse_item(v)), ErrorKind::InvalidBase64, "{v:?}");
     }
 }
+
+// T4 and T9: the repeat check compares whole names from a table of at most
+// 64 (D-072), for every parameter grammar that refuses repeats.
+
+#[test]
+fn test_repeat_checks_compare_whole_names() {
+    let l = &Limits::DEFAULT;
+    let names: Vec<String> = (0..63).map(|i| format!("n{i}")).collect();
+    let auth_ok = names
+        .iter()
+        .map(|n| format!("{n}=1"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mime_ok = names
+        .iter()
+        .map(|n| format!("; {n}=1"))
+        .collect::<Vec<_>>()
+        .concat();
+    for (i, n) in names.iter().enumerate() {
+        let up = n.to_uppercase();
+        // Optional whitespace before `=` (auth) and comments (MIME) do not
+        // hide a repeat.
+        let a = format!("Digest {auth_ok}, {up} = 2");
+        assert_eq!(
+            kind(auth::parse_credentials(a.as_bytes(), l)),
+            ErrorKind::DuplicateParameter,
+            "{i}"
+        );
+        let m = format!("{mime_ok}; (c) {up} (d) = 2");
+        assert_eq!(
+            kind(mail::parse_mime_params(m.as_bytes(), l)),
+            ErrorKind::DuplicateParameter,
+            "{i}"
+        );
+    }
+    // A prefix or an extension of an earlier name is another name; so is
+    // the RFC 2231 `name*`.
+    for other in ["n", "n1x", "xn1", "n100", "n1*"] {
+        let a = format!("Digest {auth_ok}, {other}=2");
+        assert!(auth::parse_credentials(a.as_bytes(), l).is_ok(), "{other}");
+    }
+    for other in ["n", "n1x", "xn1", "n100"] {
+        let m = format!("{mime_ok}; {other}=2");
+        assert!(mail::parse_mime_params(m.as_bytes(), l).is_ok(), "{other}");
+    }
+    assert!(mail::parse_mime_params(b"; n*=UTF-8''x; n=y", l).is_ok());
+    // 64 parameters are read; the 65th is refused whatever `max_params` says.
+    let wide = Limits::DEFAULT.max_params(u16::MAX);
+    let a64 = format!("Digest {auth_ok}, last=1");
+    assert_eq!(
+        auth::parse_credentials(a64.as_bytes(), &wide).map(|_| ()),
+        Ok(())
+    );
+    let a65 = format!("{a64}, more=1");
+    assert_eq!(
+        kind(auth::parse_credentials(a65.as_bytes(), &wide)),
+        ErrorKind::TooManyMembers
+    );
+    let m64 = format!("{mime_ok}; last=1");
+    assert!(mail::parse_mime_params(m64.as_bytes(), &wide).is_ok());
+    let m65 = format!("{m64}; more=1");
+    assert_eq!(
+        kind(mail::parse_mime_params(m65.as_bytes(), &wide)),
+        ErrorKind::TooManyMembers
+    );
+    assert_eq!(pn::param::MAX_CHECKED_PARAMS, 64);
+}
