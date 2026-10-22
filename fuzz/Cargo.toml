@@ -1,0 +1,29 @@
+[package]
+name = "parse-net-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.parse-net]
+path = ".."
+features = ["alloc"]
+
+# Keeps this crate out of any parent workspace.
+[workspace]
+members = ["."]
+
+# Fuzz targets are added with the parsers they cover, from 0.3.0 on
+# (dev/PLAN.md section 11.4). Each target is a `[[bin]]` entry here:
+#
+# [[bin]]
+# name = "list"
+# path = "fuzz_targets/list.rs"
+# test = false
+# doc = false
+# bench = false

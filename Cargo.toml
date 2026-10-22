@@ -1,0 +1,87 @@
+# =============================================================================
+#  R E P S   ·   parse-net
+# =============================================================================
+[package]
+name    = "parse-net"
+version = "0.1.0"
+
+# Minimum Supported Rust Version (MSRV)
+# 1.85: edition 2024. `core::net` addresses need 1.77, `core::error::Error`
+# needs 1.81, `Option::is_none_or` needs 1.82 (dev/PLAN.md, D-013).
+rust-version = "1.85"
+edition = "2024"
+
+# License
+license = "Apache-2.0 OR MIT"
+
+# Readme
+readme = "README.md"
+
+# Description
+description = "Grammar for Internet message fields: RFC 9110 field syntax, media types, RFC 9651 Structured Fields, HTTP and RFC 5322 dates, negotiation, entity tags, ranges, Content-Disposition, Cache-Control, Forwarded, auth challenges, and the email lexical layer. no_std, no allocation, sans-IO, zero dependencies."
+
+# Keywords (5 max)
+keywords = ["http", "parser", "header", "rfc9110", "no-std"]
+
+# Categories
+categories = ["parser-implementations", "network-programming", "web-programming", "no-std::no-alloc"]
+
+# Links
+homepage      = "https://github.com/jamesgober/parse-net"
+repository    = "https://github.com/jamesgober/parse-net"
+documentation = "https://docs.rs/parse-net"
+
+# Authors
+authors = ["James Gober <me@jamesgober.com>"]
+
+# The fuzz crate stays in the repository; it is not part of the package.
+exclude = ["/fuzz/"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lib]
+name = "parse_net"
+path = "src/lib.rs"
+
+
+# FEATURE FLAGS
+# #################################
+[features]
+default = []
+
+# Owned forms (`to_owned`), `Sink for Vec<u8>`, functions returning `String`.
+alloc = []
+
+# `HttpDate` to and from `SystemTime`, and the Tier 1 `http_date` that reads
+# the system clock for RFC 850 years. Implies `alloc`.
+std = ["alloc"]
+
+# Base64 decode and encode helpers through the first-party `encode-lib`
+# (dev/PLAN.md, D-002). Declared empty until encode-lib is published; with it
+# off, parse-net validates base64 text and never decodes it.
+encode-lib = []
+
+
+# DEPENDENCIES
+# #################################
+[dependencies]
+# None. The default build has zero runtime dependencies, first party included
+# (dev/PLAN.md, D-001). The one optional first-party dependency, encode-lib,
+# is added by published version behind the `encode-lib` feature once it exists.
+
+
+# DEV DEPENDENCIES
+# #################################
+[dev-dependencies]
+
+
+# RELEASE PROFILE
+# #################################
+[profile.release]
+opt-level     = 3
+lto           = "fat"
+codegen-units = 1
+panic         = "abort"
+strip         = "symbols"
