@@ -40,7 +40,10 @@ fuzz_target!(|data: &[u8]| {
                 assert_eq!(used, written.len());
                 assert_eq!(p.decode_into("filename", &mut out).expect("decodes"), Some(value));
             }
-            Err(_) => assert!(value.chars().any(char::is_control) || value.len() > 1000),
+            // A control character is refused; so is a value needing more
+            // than 32 RFC 2231 sections, which no parser here would accept.
+            Err(parse_net::WriteError::Forbidden { .. }) => assert!(value.chars().any(char::is_control)),
+            Err(e) => assert_eq!(e, parse_net::WriteError::OutOfRange),
         }
     });
 });

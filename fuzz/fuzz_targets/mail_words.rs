@@ -43,6 +43,13 @@ fuzz_target!(|data: &[u8]| {
         }
         let limits = Limits::DEFAULT.max_encoded_words(u16::MAX);
         let back = mail::decode_words(&flat[..n], &limits, &mut out).expect("encoded words decode");
+        // When nothing fits in `room`, the words start after a fold, whose
+        // space stays in front (as it would after `Subject:`).
+        let back = if written.starts_with(b"\r\n ") {
+            back.strip_prefix(' ').expect("the fold's space")
+        } else {
+            back
+        };
         assert_eq!(back, text);
     });
 });

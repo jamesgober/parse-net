@@ -74,8 +74,8 @@ Exit: every P0, P1, and P2 item exists; every public item has a doctest; `cargo 
 - [x] MED-11, OWN: `OwnedMediaType`, `OwnedEntityTag`, `OwnedHostPort`, `sfv::owned`. DSP-7 shipped in 0.4 (D-049).
 - [x] The `encode-lib` feature: encode-lib is not published, so ATH-3, MAIL-5, `ByteSeq::decode_into`, `sfv::Writer::bytes`, and `B` encoded words move to 0.6, recorded per D-002 (D-062).
 - [x] `docs/ARCHITECTURE.md`; `docs/GRAMMAR.md` extended to Link and the email layer.
-- [ ] Every public item has a doctest.
-- [ ] Fuzz targets for the 0.5 parsers and writers (`link`, `mail_date`, `mail_words`, `mime_params`, `addr_spec`, `fold_unfold`, `sfv_roundtrip`) run clean.
+- [x] Every public item has a doctest (560 items).
+- [x] Fuzz targets for the 0.5 parsers and writers (`link`, `mail_date`, `mail_words`, `mime_params`, `addr_spec`, `fold_unfold`, `sfv_roundtrip`): all 34 targets ten minutes clean against 0.5.
 - [x] Property tests (no panic; every 0.5 writer's output parses back) and counting-allocator tests for every 0.5 parse and write.
 
 ## v0.6.0 - Optimisation
