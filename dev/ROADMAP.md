@@ -61,7 +61,7 @@ Exit: conformance suites pass (httpwg structured-field-tests in full; every tc22
 - [x] Defence idea: writer-parser closure check (PLAN 15): property tests over every writer and the round trips in the fuzz targets; it found that `write_challenge` and `media::write` accepted a repeated parameter name that every parser refuses (D-052).
 - [x] httpwg structured-field-tests: all 1598 cases, and every list and dictionary again one line per member (D-050, D-051).
 - [x] tc2231: every case with a verdict, 66 agree and 21 in five recorded classes (D-054).
-- [ ] Every new parser's fuzz target 1 hour clean (17 targets, including the `diff_sfv` oracle, D-056).
+- [x] Every new parser's fuzz target 1 hour clean (17 targets, including the `diff_sfv` oracle, D-056): 6.6 to 407 million inputs each in WSL Ubuntu, 2026-10-21.
 
 ## v0.5.0 - Feature complete (smtp-net, links, challenges, owned forms)
 
