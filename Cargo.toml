@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "parse-net"
-version = "0.2.0"
+version = "0.3.0"
 
 # Minimum Supported Rust Version (MSRV)
 # 1.85: edition 2024. `core::net` addresses need 1.77, `core::error::Error`
@@ -75,6 +75,8 @@ encode-lib = []
 # DEV DEPENDENCIES
 # #################################
 [dev-dependencies]
+# Property tests only; never a runtime dependency.
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 
 # RELEASE PROFILE

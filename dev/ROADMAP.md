@@ -27,20 +27,22 @@ Exit: James approves `docs/API.md`; no `todo` in the API document.
 - [x] Open decisions closed or kept open with a date (all PN-1 to PN-18 are closed in the decision log; design-lock decisions D-026 to D-036 added).
 - [x] James approves `docs/API.md` (2026-10-22, with the go-ahead to release).
 
-## v0.3.0 - Core (what http-net, ws-net, and cookie-net need)
+## v0.3.0 - Core (what http-net, ws-net, and cookie-net need) (DONE, 2026-10-21)
 
 Exit: every item below implemented with unit tests, property tests, and fuzz targets; counting-allocator tests pass; the http-net and ws-net migration branches pass their full test suites and stay within 5% on their benchmarks (NFR-8).
 
-- [ ] ERR-1 to ERR-4, LIM-1, LIM-2.
-- [ ] CLS-1 to CLS-22, SCN-1 to SCN-4, NUM-1.
-- [ ] WRT-1 to WRT-11.
-- [ ] TXT-1 to TXT-12, LST-1 to LST-4, PRM-1 to PRM-3, PRM-5, PRM-6.
-- [ ] MED-1 to MED-6, MED-9, MED-10, MED-12.
-- [ ] DAT-1 to DAT-10.
-- [ ] HST-1 to HST-4.
-- [ ] PCT-1 to PCT-3, PCT-5, PCT-6.
-- [ ] `docs/MIGRATION.md`; draft pull requests in http-net and ws-net that switch to parse-net, with before and after benchmarks (merged in their own release cycles).
-- [ ] Defence idea: differential oracle (PLAN 15).
+- [x] ERR-1 to ERR-4, LIM-1, LIM-2.
+- [x] CLS-1 to CLS-22, SCN-1 to SCN-4, NUM-1 (and NUM-2, PCT-4, PRM-4 ahead of plan, D-042).
+- [x] WRT-1 to WRT-11.
+- [x] TXT-1 to TXT-12, LST-1 to LST-4, PRM-1 to PRM-3, PRM-5, PRM-6.
+- [x] MED-1 to MED-6, MED-9, MED-10, MED-12.
+- [x] DAT-1 to DAT-10.
+- [x] HST-1 to HST-4, and `host::parse_uri_host_port` (D-044).
+- [x] PCT-1 to PCT-3, PCT-5, PCT-6.
+- [x] `docs/MIGRATION.md`; the http-net and ws-net migrations tried on 2026-10-21: both full test suites pass; instruction counts http-net +3.9% / +0.4% / +0.1%, ws-net -23.3% (D-046). Draft pull requests open in both repositories once 0.3.0 is on crates.io (they cannot build against an unpublished version; merged in their own release cycles).
+- [x] Defence idea: differential oracle (PLAN 15): `diff_http_date` and `diff_media_type`, verdicts V-1 to V-4.
+
+Unit tests, property tests, fuzz targets (each run 60 s clean in WSL, 1.3 to 13.7 million inputs), and counting-allocator tests cover every item above.
 
 ## v0.4.0 - Extended (web layer and form-net)
 

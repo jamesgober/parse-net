@@ -1,0 +1,20 @@
+# RFC 9110 section 5.6.7: the three HTTP-date formats. Format: expected<TAB>input.
+# expected is the Unix time, or err:<ErrorKind>. Inputs are resolved against
+# now = 1792540800 (2026-10-21T00:00:00Z). \t and \xNN escapes are expanded.
+784111777	Sun, 06 Nov 1994 08:49:37 GMT
+784111777	Sunday, 06-Nov-94 08:49:37 GMT
+784111777	Sun Nov  6 08:49:37 1994
+0	Thu, 01 Jan 1970 00:00:00 GMT
+951782400	Tue, 29 Feb 2000 00:00:00 GMT
+-62135596800	Mon, 01 Jan 0001 00:00:00 GMT
+253402300799	Fri, 31 Dec 9999 23:59:59 GMT
+err:WeekdayMismatch	Mon, 06 Nov 1994 08:49:37 GMT
+err:InvalidDate	sun, 06 Nov 1994 08:49:37 GMT
+err:InvalidDate	Sun, 06 Nov 1994 08:49:37 UTC
+err:InvalidDate	Wed, 29 Feb 2023 00:00:00 GMT
+err:InvalidDate	Wed, 31 Apr 2026 00:00:00 GMT
+err:InvalidDate	Sun, 06 Nov 1994 24:00:00 GMT
+err:InvalidDate	Sun, 06 Nov 1994 08:49:60 GMT
+err:OutOfRange	Sat, 01 Jan 0000 00:00:00 GMT
+err:TrailingData	Sun, 06 Nov 1994 08:49:37 GMTZ
+err:InvalidDate	Sun, 06 Nov 1994 08:49:37
