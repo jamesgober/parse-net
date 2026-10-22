@@ -41,7 +41,7 @@
 
 ## Features
 
-The list below is the plan for 1.0. What ships in the current version is under [Status](#status-scaffold).
+The list below is the plan for 1.0. What ships in the current version is under [Status](#status-design-lock).
 
 ### **Field grammar**
 - **Byte classes** - every ABNF class (`tchar`, `qdtext`, `ctext`, `etagc`, `attr-char`, MIME `token`, RFC 3986, Structured Field keys and tokens) in one 1 KiB table, one load and one mask per byte.
@@ -76,10 +76,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-parse-net = "0.1.0"
+parse-net = "0.2.0"
 
 # Optional features:
-parse-net = { version = "0.1.0", features = [
+parse-net = { version = "0.2.0", features = [
     "alloc",        # owned forms and Sink for Vec<u8>
     "std",          # SystemTime conversions and http_date() with the system clock
 ] }
@@ -129,21 +129,21 @@ pn::parse_host_port(b"example.com:8443")?                     // HostPort
 
 ---
 
-## **Status: scaffold**
+## **Status: design lock**
 
-**Current Version:** `0.1.0` - the repository, the plan, and CI. No parsing code yet.
+**Current Version:** `0.2.0` - the public API locked in [`docs/API.md`](./docs/API.md). No parsing code yet.
 **Target:** `1.0.0` stable, per the roadmap in [`dev/ROADMAP.md`](./dev/ROADMAP.md).
 
 **What's complete**:
 - **Manifest and crate root** - edition 2024, MSRV 1.85, zero dependencies, `no_std`, `forbid(unsafe_code)`, `VERSION`.
 - **CI** - Linux, macOS, and Windows on stable and 1.85; a bare-metal `thumbv7em-none-eabi` build; a zero-dependency check; package, audit, and deny.
 - **Plan** - [`dev/PLAN.md`](./dev/PLAN.md): scope, requirements, design, threats, performance targets, testing, and the decision log.
+- **API** - [`docs/API.md`](./docs/API.md): every public item through 1.0 with its signature, behaviour, errors, examples, and edge cases, and one coverage checklist per consumer (http-net, ws-net, cookie-net, form-net, smtp-net).
 
 **What's planned next**:
-- `0.2.0` locks the public API in `docs/API.md`.
 - `0.3.0` ships the core http-net, ws-net, and cookie-net need: errors, limits, byte classes, scanning, writers, tokens, quoted strings, lists, parameters, media types, HTTP dates, `Host`, and percent-encoding.
 
-**Note on API stability**: nothing is public yet beyond `VERSION`. The API is locked at `0.2.0` and frozen at `1.0.0`, with the contract recorded in `docs/STABILITY-1.0.md`.
+**Note on API stability**: nothing is public yet beyond `VERSION`. The API was locked at `0.2.0`; names and signatures change only with a recorded decision until `1.0.0` freezes them, with the contract recorded in `docs/STABILITY-1.0.md`.
 
 ---
 

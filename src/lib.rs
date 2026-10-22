@@ -36,10 +36,10 @@
 //!
 //! ## Status
 //!
-//! Scaffold. The design is written down in `dev/PLAN.md` and the milestone
-//! schedule in `dev/ROADMAP.md` (both in the
-//! [repository](https://github.com/jamesgober/parse-net)); the public API is
-//! locked in `0.2.0` and the core ships in `0.3.0`.
+//! Design lock. The public API is written down in `docs/API.md`, the design
+//! in `dev/PLAN.md`, and the milestone schedule in `dev/ROADMAP.md` (all in
+//! the [repository](https://github.com/jamesgober/parse-net)); the core ships
+//! in `0.3.0`.
 
 #![doc(html_root_url = "https://docs.rs/parse-net")]
 #![no_std]
