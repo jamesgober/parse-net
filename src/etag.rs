@@ -38,8 +38,8 @@ use crate::{
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct EntityTag<'a> {
-    weak: bool,
-    opaque: &'a [u8],
+    pub(crate) weak: bool,
+    pub(crate) opaque: &'a [u8],
 }
 
 /// The offset of the first byte of `opaque` that is not an `etagc`.
@@ -65,6 +65,17 @@ impl<'a> EntityTag<'a> {
     ///
     /// [`ErrorKind::InvalidEntityTag`] (a lowercase `w/`, no quotes, a byte
     /// outside `etagc`, `W/ "a"`); [`ErrorKind::TrailingData`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::EntityTag;
+    ///
+    /// let t = EntityTag::parse(b" \"xyzzy\" ")?;
+    /// assert!(!t.is_weak() && t.opaque() == b"xyzzy");
+    /// assert!(EntityTag::parse(b"w/\"xyzzy\"").is_err());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn parse(value: &'a [u8]) -> Result<Self> {
         let lead = crate::text::skip_ows(value);
         let (tag, used) = parse_prefix(trim_ows(value)).map_err(|e| e.shifted(lead))?;
@@ -80,6 +91,16 @@ impl<'a> EntityTag<'a> {
     ///
     /// [`ErrorKind::InvalidEntityTag`] at the first byte that is not an
     /// `etagc`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::EntityTag;
+    ///
+    /// assert!(!EntityTag::strong(b"v1")?.is_weak());
+    /// assert!(EntityTag::strong(b"a\"b").is_err());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub const fn strong(opaque: &'a [u8]) -> Result<Self> {
         match first_bad(opaque) {
             Some(at) => Err(ParseError::new(ErrorKind::InvalidEntityTag, at)),
@@ -95,6 +116,14 @@ impl<'a> EntityTag<'a> {
     /// # Errors
     ///
     /// As [`strong`](Self::strong).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let t = parse_net::EntityTag::weak(b"v1")?;
+    /// assert!(t.is_weak() && t.opaque() == b"v1");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub const fn weak(opaque: &'a [u8]) -> Result<Self> {
         match first_bad(opaque) {
             Some(at) => Err(ParseError::new(ErrorKind::InvalidEntityTag, at)),
@@ -103,24 +132,65 @@ impl<'a> EntityTag<'a> {
     }
 
     /// Whether the tag is weak (`W/`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::EntityTag;
+    ///
+    /// assert!(EntityTag::parse(b"W/\"1\"")?.is_weak());
+    /// assert!(!EntityTag::parse(b"\"1\"")?.is_weak());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_weak(&self) -> bool {
         self.weak
     }
 
     /// The opaque bytes, without the quotes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::EntityTag;
+    ///
+    /// assert_eq!(EntityTag::parse(b"W/\"abc\"")?.opaque(), b"abc");
+    /// assert_eq!(EntityTag::parse(b"\"\"")?.opaque(), b"");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn opaque(&self) -> &'a [u8] {
         self.opaque
     }
 
     /// Strong comparison (RFC 9110 section 8.8.3.2): both strong and equal.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::EntityTag;
+    ///
+    /// let a = EntityTag::strong(b"1")?;
+    /// assert!(a.strong_eq(&EntityTag::parse(b"\"1\"")?));
+    /// assert!(!a.strong_eq(&EntityTag::weak(b"1")?));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn strong_eq(&self, other: &EntityTag<'_>) -> bool {
         !self.weak && !other.weak && self.opaque == other.opaque
     }
 
     /// Weak comparison: equal opaque bytes, either may be weak.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::EntityTag;
+    ///
+    /// let (w, s) = (EntityTag::weak(b"1")?, EntityTag::strong(b"1")?);
+    /// assert!(w.weak_eq(&s) && !w.weak_eq(&EntityTag::strong(b"2")?));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn weak_eq(&self, other: &EntityTag<'_>) -> bool {
         self.opaque == other.opaque
@@ -184,6 +254,16 @@ fn parse_prefix(s: &[u8]) -> Result<(EntityTag<'_>, usize)> {
 }
 
 /// An `If-Match` or `If-None-Match` value: `*` or a list of entity tags.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{etag::parse_condition, Condition, Limits};
+///
+/// assert_eq!(parse_condition(b"*", &Limits::DEFAULT)?, Condition::Any);
+/// assert!(matches!(parse_condition(b"\"a\"", &Limits::DEFAULT)?, Condition::Tags(t) if t.len() == 1));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Condition<'a> {
     /// `*`: any current representation.
@@ -193,6 +273,16 @@ pub enum Condition<'a> {
 }
 
 /// The tags of a validated condition.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{etag::parse_condition, Condition, Limits};
+///
+/// let Condition::Tags(tags) = parse_condition(b"\"a\", W/\"b\"", &Limits::DEFAULT)? else { unreachable!() };
+/// assert_eq!(tags.iter().filter(|t| t.is_weak()).count(), 1);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TagList<'a> {
     list: list::List<'a>,
@@ -200,6 +290,17 @@ pub struct TagList<'a> {
 
 impl<'a> TagList<'a> {
     /// The tags, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{etag::parse_condition, Condition, Limits};
+    ///
+    /// let Condition::Tags(tags) = parse_condition(b"\"a\", W/\"b\"", &Limits::DEFAULT)? else { unreachable!() };
+    /// let opaque: Vec<_> = tags.iter().map(|t| t.opaque()).collect();
+    /// assert_eq!(opaque, [&b"a"[..], &b"b"[..]]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn iter(&self) -> impl Iterator<Item = EntityTag<'a>> + use<'a> {
         self.list
             .iter()
@@ -207,12 +308,32 @@ impl<'a> TagList<'a> {
     }
 
     /// The number of tags.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{etag::parse_condition, Condition, Limits};
+    ///
+    /// let Condition::Tags(tags) = parse_condition(b"\"a\", , \"b\"", &Limits::DEFAULT)? else { unreachable!() };
+    /// assert_eq!(tags.len(), 2);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.list.len()
     }
 
     /// Whether there are no tags.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{etag::parse_condition, Condition, Limits};
+    ///
+    /// let Condition::Tags(tags) = parse_condition(b"\"a\"", &Limits::DEFAULT)? else { unreachable!() };
+    /// assert!(!tags.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.list.is_empty()

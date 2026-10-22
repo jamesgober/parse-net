@@ -195,3 +195,45 @@ name = "diff_sfv"
 path = "fuzz_targets/diff_sfv.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "link"
+path = "fuzz_targets/link.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "mail_date"
+path = "fuzz_targets/mail_date.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "mail_words"
+path = "fuzz_targets/mail_words.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "mime_params"
+path = "fuzz_targets/mime_params.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "addr_spec"
+path = "fuzz_targets/addr_spec.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fold_unfold"
+path = "fuzz_targets/fold_unfold.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "sfv_roundtrip"
+path = "fuzz_targets/sfv_roundtrip.rs"
+test = false
+doc = false

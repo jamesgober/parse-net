@@ -23,6 +23,16 @@ use crate::{
 };
 
 /// The charsets RFC 8187 values are decoded from.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{Charset, ExtValue};
+///
+/// assert_eq!(ExtValue::parse(b"iso-8859-1''%A3")?.charset(), Charset::Iso8859_1);
+/// assert_eq!(ExtValue::parse(b"US-ASCII''abc")?.charset(), Charset::UsAscii);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Charset {
@@ -35,6 +45,15 @@ pub enum Charset {
 }
 
 /// A validated extended value.
+///
+/// # Examples
+///
+/// ```
+/// let v = parse_net::ExtValue::parse(b"UTF-8''na%C3%AFve.txt")?;
+/// let mut buf = [0u8; 16];
+/// assert_eq!(v.decode_into(&mut buf)?, "na\u{ef}ve.txt");
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ExtValue<'a> {
     charset: Charset,
@@ -80,6 +99,17 @@ impl<'a> ExtValue<'a> {
     /// a malformed language); [`ErrorKind::UnsupportedCharset`];
     /// [`ErrorKind::InvalidPercentEncoding`]; [`ErrorKind::InvalidByte`], or a
     /// control kind, for a byte outside the value grammar.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{ErrorKind, ExtValue};
+    ///
+    /// assert!(ExtValue::parse(b"UTF-8''a%20b").is_ok());
+    /// assert_eq!(ExtValue::parse(b"UTF-8'a%20b").unwrap_err().kind(), ErrorKind::InvalidCharset);
+    /// assert_eq!(ExtValue::parse(b"Shift_JIS''x").unwrap_err().kind(), ErrorKind::UnsupportedCharset);
+    /// assert_eq!(ExtValue::parse(b"UTF-8''a%2").unwrap_err().kind(), ErrorKind::InvalidPercentEncoding);
+    /// ```
     pub fn parse(value: &'a [u8]) -> Result<Self> {
         let Some(q1) = value.iter().position(|&b| b == b'\'') else {
             return err(ErrorKind::InvalidCharset, value.len());
@@ -133,18 +163,44 @@ impl<'a> ExtValue<'a> {
     }
 
     /// The declared charset.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let v = parse_net::ExtValue::parse(b"utf-8''x")?;
+    /// assert_eq!(v.charset(), parse_net::Charset::Utf8);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn charset(&self) -> Charset {
         self.charset
     }
 
     /// The language tag, possibly empty, as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::ExtValue;
+    ///
+    /// assert_eq!(ExtValue::parse(b"UTF-8'de-CH'Gr%C3%BCezi")?.language(), b"de-CH");
+    /// assert!(ExtValue::parse(b"UTF-8''Gr%C3%BCezi")?.language().is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn language(&self) -> &'a [u8] {
         self.language
     }
 
     /// The `value-chars`, still percent-encoded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let v = parse_net::ExtValue::parse(b"UTF-8''a%20b")?;
+    /// assert_eq!(v.encoded(), b"a%20b");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn encoded(&self) -> &'a [u8] {
         self.encoded
@@ -159,6 +215,16 @@ impl<'a> ExtValue<'a> {
 
     /// An upper bound on the length [`decode_into`](Self::decode_into)
     /// writes: exact for UTF-8, doubled for ISO-8859-1.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let v = parse_net::ExtValue::parse(b"ISO-8859-1''%E9t%E9")?;
+    /// assert_eq!(v.max_decoded_len(), 6);
+    /// let mut buf = [0u8; 6];
+    /// assert_eq!(v.decode_into(&mut buf)?.len(), 5);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn max_decoded_len(&self) -> usize {
         let n = self.raw_bytes().count();
@@ -184,6 +250,18 @@ impl<'a> ExtValue<'a> {
     ///
     /// [`ErrorKind::InvalidUtf8`], [`ErrorKind::ControlInDecoded`],
     /// [`ErrorKind::BufferTooSmall`]. Nothing is written on error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{ErrorKind, ExtValue};
+    ///
+    /// let mut buf = [0u8; 8];
+    /// assert_eq!(ExtValue::parse(b"ISO-8859-1''%A3%205")?.decode_into(&mut buf)?, "\u{a3} 5");
+    /// let crlf = ExtValue::parse(b"UTF-8''a%0D%0Ab")?;
+    /// assert_eq!(crlf.decode_into(&mut buf).unwrap_err().kind(), ErrorKind::ControlInDecoded);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn decode_into<'b>(&self, out: &'b mut [u8]) -> Result<&'b str> {
         decode_checked(self.raw_bytes(), self.charset, out)
     }

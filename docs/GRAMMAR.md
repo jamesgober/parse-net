@@ -27,7 +27,10 @@ Contents: [lexical elements](#lexical-elements), [lists](#lists),
 [ranges](#ranges), [ext-value](#ext-value), [Content-Disposition](#content-disposition),
 [Cache-Control](#cache-control), [Forwarded](#forwarded), [X-Forwarded-*](#x-forwarded-),
 [authentication](#authorization-and-www-authenticate), [Origin](#origin),
-[Structured Fields](#structured-field-values).
+[Structured Fields](#structured-field-values), [Link](#link),
+[email dates](#email-dates), [email header values](#email-header-values),
+[encoded words](#encoded-words), [MIME parameters](#mime-parameters),
+[addresses and message identifiers](#addresses-and-message-identifiers).
 
 ## Lexical elements
 
@@ -522,3 +525,169 @@ pct-encoded      = "%" lc-hexdig lc-hexdig
 - Functions: `sfv::parse_item`, `parse_list`, `parse_dictionary`,
   `parse_list_lines`, `parse_dictionary_lines`, `sfv::Parser` (limits and
   `visit_*`), `Dictionary::get`, `index_into`.
+- The writer (`sfv::Writer`) produces the canonical form of section 4.1;
+  every accepted parse case is serialized again and compared with the
+  suite's `canonical`, and the four serialisation-only files run whole.
+
+## Link
+
+RFC 8288 section 3.
+
+```abnf
+Link       = #link-value
+link-value = "<" URI-Reference ">" *( OWS ";" OWS link-param )
+link-param = token BWS [ "=" BWS ( token / quoted-string ) ]
+```
+
+- Parameter names are case-insensitive; a parameter value is optional
+  (`; crossorigin`), and `BWS` around `=` is accepted, as the rule says.
+- `rel`: "The rel parameter MUST be present but MUST NOT appear more than
+  once in a given link-value; occurrences after the first MUST be ignored by
+  parsers." `rel` and the other single-valued parameters (`anchor`,
+  `media`, `title`, `title*`, `type`) return the first occurrence;
+  `hreflang` may repeat and returns every one.
+- The target is checked as RFC 3986 characters with well-formed `%XX` and
+  returned as sent. RFC 8288 section 3.1 says a relative reference must be
+  resolved; parse-net leaves resolution to the caller (url-lib), since it
+  needs the base URI.
+- `title*` is an RFC 8187 value decoded at parse time, as `filename*` is.
+- Functions: `parse_link`, `LinkValue`, `link::write_link`.
+
+## Email dates
+
+RFC 5322 section 3.3, and section 4.3 for the obsolete forms.
+
+```abnf
+date-time   =   [ day-of-week "," ] date time [CFWS]
+day-of-week =   ([FWS] day-name) / obs-day-of-week
+date        =   day month year
+day         =   ([FWS] 1*2DIGIT FWS) / obs-day
+year        =   (FWS 4*DIGIT FWS) / obs-year
+time        =   time-of-day zone
+time-of-day =   hour ":" minute [ ":" second ]
+zone        =   (FWS ( "+" / "-" ) 4DIGIT) / obs-zone
+```
+
+- Names are case-insensitive (RFC 5234 quoted strings); comments and folding
+  whitespace may separate the tokens; the weekday, when present, must match.
+- `-0000` sets `offset_unknown`: the time is UTC and the local zone is not
+  known (section 3.3). Second `60` is read as `59` with `leap_second` set.
+- Years outside 1 to 9999 are `OutOfRange`, the range every date type here
+  shares.
+- With `obsolete`: two-digit years below 50 are 20xx and others 19xx, and
+  three-digit years add 1900 (section 4.3, D-036); `UT`, `GMT`, and the North
+  American zones; the military zones are read as `-0000`, because "they
+  SHOULD all be considered equivalent to "-0000" unless there is out-of-band
+  information confirming their meaning." `J` is not a zone.
+- Writers always produce the weekday, a two-digit day, a four-digit year,
+  seconds, and a numeric zone.
+- Functions: `MailDate::parse`, `new`, `format`, `write_to`.
+
+## Email header values
+
+RFC 5322 sections 2.1.1, 2.2.3, and 3.6.8.
+
+```abnf
+field-name = 1*ftext
+ftext      = %d33-57 / %d59-126
+```
+
+- A header value for writing has no CR, LF, or NUL and is at most 998
+  bytes (the line limit of section 2.1.1, which `Name: ` also counts
+  toward): `mail::check_header_value`.
+- Unfolding removes a CRLF only when WSP follows it (section 2.2.3); any
+  other CR or LF is refused: `mail::unfold`.
+- Folding inserts CRLF before existing whitespace so lines stay within 78
+  columns where the words allow, never makes a line of only whitespace, and
+  refuses a word that cannot fit in 998: `mail::fold`.
+- `mail::is_field_name`.
+
+## Encoded words
+
+RFC 2047 sections 2 to 6.
+
+```abnf
+encoded-word = "=?" charset "?" encoding "?" encoded-text "?="
+charset      = token
+encoding     = token
+```
+
+- An encoded word is decoded only when it stands between whitespace (or
+  the start or end of the text) and has the whole shape; anything else is
+  ordinary text. Inside a quoted string nothing is decoded (section 5).
+- "any 'linear-white-space' that separates a pair of adjacent
+  'encoded-word's is ignored" (section 6.2); other whitespace is kept.
+- Q: `_` is a space and `=XX` a byte (either hex case read); each UTF-8 word
+  must hold whole characters. Charsets UTF-8, US-ASCII, and ISO-8859-1
+  (transcoded), with an optional RFC 2231 `*language`. Decoded CR, LF, and
+  NUL are refused. `B` waits for encode-lib (D-002).
+- Encoding: "An 'encoded-word' may not be more than 75 characters long";
+  words split only between characters and are separated by CRLF SP.
+  Printable ASCII without `=?` is written as it is.
+- Functions: `mail::decode_words`, `mail::encode_words`.
+
+## MIME parameters
+
+RFC 2045 section 5.1 and RFC 2231 sections 3 to 7.
+
+```abnf
+parameter := attribute "=" value
+attribute := token
+value     := token / quoted-string
+
+regular-parameter-name := attribute [section]
+section                := initial-section / other-sections
+initial-section        := "*0"
+other-sections         := "*" ("1" / "2" / "3" / "4" / "5" /
+                               "6" / "7" / "8" / "9") *DIGIT)
+extended-initial-name  := attribute [initial-section] "*"
+extended-other-names   := attribute other-sections "*"
+```
+
+- Tokens use the MIME class (which allows `{` and `}`, unlike HTTP
+  `tchar`); names are case-insensitive; comments and folding whitespace may
+  separate the parts; a name given twice (sections counted one by one) is
+  refused.
+- A section number with a leading zero (`*01`) is not a section (the
+  grammar excludes it), so that parameter is an ordinary one.
+- Continuations are validated at parse time: sections run from 0 with no
+  gap, at most `Limits::max_rfc2231_sections` (32 by default), a charset
+  only on section 0, and the joined value decodes. Charsets: UTF-8,
+  US-ASCII, ISO-8859-1 (transcoded).
+- Writing picks a token, a quoted string, a single `name*=UTF-8''...`, or
+  `name*0*`, `name*1*` sections on folded lines, whichever keeps the line
+  within 78 columns.
+- Functions: `mail::parse_mime_params`, `MimeParams::get`, `decode_into`,
+  `Continuation`, `mail::write_mime_param`.
+
+## Addresses and message identifiers
+
+RFC 5322 sections 3.2.3, 3.4, and 3.6.4; RFC 6532; RFC 5321 section
+4.5.3.1.
+
+```abnf
+atext          = ALPHA / DIGIT / "!" / "#" / "$" / "%" / "&" / "'" /
+                 "*" / "+" / "-" / "/" / "=" / "?" / "^" / "_" / "`" /
+                 "{" / "|" / "}" / "~"
+dot-atom-text  = 1*atext *("." 1*atext)
+addr-spec      = local-part "@" domain
+local-part     = dot-atom / quoted-string / obs-local-part
+domain         = dot-atom / domain-literal / obs-domain
+dtext          = %d33-90 / %d94-126 / obs-dtext
+mailbox        = name-addr / addr-spec
+name-addr      = [display-name] angle-addr
+msg-id         = [CFWS] "<" id-left "@" id-right ">" [CFWS]
+id-left        = dot-atom-text / obs-id-left
+id-right       = dot-atom-text / no-fold-literal / obs-id-right
+no-fold-literal = "[" *dtext "]"
+```
+
+- Stricter than the ABNF, for login validation (D-008): no obsolete forms,
+  no comments, and no folding inside an `addr-spec`; the local part is at
+  most 64 octets and the address at most 254 (RFC 5321).
+- Non-ASCII is accepted only as valid UTF-8 (RFC 6532), never as raw
+  obs-text; `AddrSpec::is_ascii` says whether SMTPUTF8 is needed.
+- A mailbox's display name is checked as a phrase (atoms, `.`, quoted
+  strings, comments, UTF-8) and returned raw, encoded words included.
+- Functions: `mail::parse_addr_spec`, `parse_mailbox`, `parse_msg_id`,
+  `write_msg_id`.

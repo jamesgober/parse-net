@@ -67,17 +67,22 @@ Exit: conformance suites pass (httpwg structured-field-tests in full; every tc22
 
 Exit: every P0, P1, and P2 item exists; every public item has a doctest; `cargo tree -e normal` is empty for the default build.
 
-- [ ] LNK-1 to LNK-4.
-- [ ] ATH-3, FWD-7 (ATH-5 and ATH-7 shipped in 0.4, D-049).
-- [ ] SFV-13, SFV-16.
-- [ ] DAT-11 to DAT-13, MAIL-1 to MAIL-14.
-- [ ] MED-11, OWN (DSP-7 shipped in 0.4, D-049).
-- [ ] The `encode-lib` feature, if encode-lib is published; otherwise the move is recorded here (D-002).
-- [ ] `docs/ARCHITECTURE.md`.
+- [x] LNK-1 to LNK-4 (empty values written as the name alone, D-061).
+- [x] FWD-7 (`forwarded::write_element`). ATH-5 and ATH-7 shipped in 0.4 (D-049).
+- [x] SFV-13 (the writer, with `param_key`, D-059, and canonical views, D-060; the httpwg serialisation tests and every parse case's canonical form pass), SFV-16.
+- [x] DAT-11 to DAT-13, MAIL-1 to MAIL-4, MAIL-6 to MAIL-14 (US-ASCII through `Charset::UsAscii`, D-058).
+- [x] MED-11, OWN: `OwnedMediaType`, `OwnedEntityTag`, `OwnedHostPort`, `sfv::owned`. DSP-7 shipped in 0.4 (D-049).
+- [x] The `encode-lib` feature: encode-lib is not published, so ATH-3, MAIL-5, `ByteSeq::decode_into`, `sfv::Writer::bytes`, and `B` encoded words move to 0.6, recorded per D-002 (D-062).
+- [x] `docs/ARCHITECTURE.md`; `docs/GRAMMAR.md` extended to Link and the email layer.
+- [ ] Every public item has a doctest.
+- [ ] Fuzz targets for the 0.5 parsers and writers (`link`, `mail_date`, `mail_words`, `mime_params`, `addr_spec`, `fold_unfold`, `sfv_roundtrip`) run clean.
+- [x] Property tests (no panic; every 0.5 writer's output parses back) and counting-allocator tests for every 0.5 parse and write.
 
 ## v0.6.0 - Optimisation
 
 Exit: every comparable row of PLAN 10.1 at least 20% faster than the best Rust competitor, or a recorded plan; no regression over 5% against 0.5.
+
+- [ ] Moved from 0.5 (D-062): ATH-3 `basic_decode_into`, MAIL-5 `encode_words_b`, `ByteSeq::decode_into`, `sfv::Writer::bytes`, `B` encoded words, behind `encode-lib`, if encode-lib is published by then.
 
 - [ ] Benchmarks for every row of PLAN 10.1 against the named competitors.
 - [ ] SWAR fast paths where measured to help; `#[inline]` decisions recorded with the consumer benchmark that justified each.

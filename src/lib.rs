@@ -73,7 +73,8 @@
 //!
 //! ## Status
 //!
-//! Extended, `0.4.0`: the core plus the web layer. The public API is written
+//! Feature complete, `0.5.0`: the core, the web layer, links, Structured
+//! Field writing, and the email lexical layer. The public API is written
 //! down in `docs/API.md`, each field's grammar in `docs/GRAMMAR.md`, the
 //! design in `dev/PLAN.md`, and the milestone schedule in `dev/ROADMAP.md`
 //! (all in the [repository](https://github.com/jamesgober/parse-net)).
@@ -124,6 +125,8 @@ pub mod media;
 pub mod negotiate;
 pub mod num;
 pub mod origin;
+#[cfg(feature = "alloc")]
+mod owned;
 pub mod param;
 pub mod pct;
 pub mod range;
@@ -154,6 +157,9 @@ pub use list::{List, list};
 pub use media::{Boundary, MediaRange, MediaType, parse_media_type};
 pub use negotiate::{QValue, best_charset, best_encoding, best_language, best_media};
 pub use origin::{Origin, OriginValue, parse_origin};
+#[cfg(feature = "alloc")]
+#[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
+pub use owned::{OwnedEntityTag, OwnedHostPort, OwnedMediaType};
 pub use param::{Param, Params};
 pub use range::{
     ByteRange, ContentRange, IfRange, RangeHeader, RangeOutcome, RangeSpec, byte_ranges,

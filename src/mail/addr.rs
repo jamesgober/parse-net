@@ -66,6 +66,17 @@ fn check_dtext(seg: &[u8], base: usize) -> Result<()> {
 }
 
 /// An address: `local-part "@" domain`.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::mail::{self, Domain, LocalPart};
+///
+/// let a = mail::parse_addr_spec(b"jane.doe@example.com")?;
+/// assert_eq!(a.local, LocalPart::DotAtom(b"jane.doe"));
+/// assert_eq!(a.domain, Domain::DotAtom(b"example.com"));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct AddrSpec<'a> {
     /// The part before `@`.
@@ -77,6 +88,16 @@ pub struct AddrSpec<'a> {
 impl AddrSpec<'_> {
     /// Whether the address is all ASCII; `false` means delivery needs
     /// SMTPUTF8 (RFC 6531).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::mail;
+    ///
+    /// assert!(mail::parse_addr_spec(b"info@example.com")?.is_ascii());
+    /// assert!(!mail::parse_addr_spec("info@b\u{fc}cher.example".as_bytes())?.is_ascii());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn is_ascii(&self) -> bool {
         let local = match self.local {
@@ -91,6 +112,16 @@ impl AddrSpec<'_> {
 }
 
 /// A local part.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::mail::{self, LocalPart};
+///
+/// let a = mail::parse_addr_spec(b"\"john doe\"@example.com")?;
+/// assert!(matches!(a.local, LocalPart::Quoted(q) if q.eq_bytes(b"john doe")));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum LocalPart<'a> {
     /// `dot-atom-text`, as sent.
@@ -100,6 +131,16 @@ pub enum LocalPart<'a> {
 }
 
 /// A domain.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::mail::{self, Domain};
+///
+/// assert_eq!(mail::parse_addr_spec(b"a@Example.COM")?.domain, Domain::DotAtom(b"Example.COM"));
+/// assert_eq!(mail::parse_addr_spec(b"a@[IPv6:2001:db8::1]")?.domain, Domain::Literal(b"IPv6:2001:db8::1"));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Domain<'a> {
     /// `dot-atom-text`, as sent (compare it ASCII case-insensitively).
@@ -179,6 +220,17 @@ fn addr_spec(v: &[u8]) -> Result<AddrSpec<'_>> {
 }
 
 /// A mailbox: an optional display name and an address.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{mail::{self, Domain}, Limits};
+///
+/// let m = mail::parse_mailbox(b"Jane Doe <jane@example.com>", &Limits::DEFAULT)?;
+/// assert_eq!(m.display_name, Some(&b"Jane Doe"[..]));
+/// assert_eq!(m.addr.domain, Domain::DotAtom(b"example.com"));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Mailbox<'a> {
     /// The display name as sent (words, quoted strings, comments, possibly
@@ -251,6 +303,14 @@ pub fn parse_mailbox<'a>(value: &'a [u8], limits: &Limits) -> Result<Mailbox<'a>
 }
 
 /// A message identifier: `"<" id-left "@" id-right ">"`.
+///
+/// # Examples
+///
+/// ```
+/// let id = parse_net::mail::parse_msg_id(b"<abc.123@[192.0.2.1]>")?;
+/// assert_eq!((id.left, id.right), (&b"abc.123"[..], &b"[192.0.2.1]"[..]));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MsgId<'a> {
     /// The part before `@`.

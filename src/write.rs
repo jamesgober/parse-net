@@ -116,30 +116,91 @@ pub struct SliceSink<'a> {
 
 impl<'a> SliceSink<'a> {
     /// A sink that writes into `buf`, starting at its first byte.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{Sink, SliceSink};
+    ///
+    /// let mut buf = [0u8; 4];
+    /// let out = SliceSink::new(&mut buf);
+    /// assert_eq!((out.len(), out.remaining()), (0, Some(4)));
+    /// ```
     #[must_use]
     pub fn new(buf: &'a mut [u8]) -> Self {
         Self { buf, len: 0 }
     }
 
     /// The bytes written so far.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{write, SliceSink};
+    ///
+    /// let mut buf = [0u8; 16];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// write::write_token(b"br", &mut out)?;
+    /// assert_eq!(out.written(), b"br");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     #[must_use]
     pub fn written(&self) -> &[u8] {
         self.buf.get(..self.len).unwrap_or(&[])
     }
 
     /// The number of bytes written so far.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{write, SliceSink};
+    ///
+    /// let mut buf = [0u8; 16];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// write::write_quoted(b"a b", &mut out)?;
+    /// assert_eq!(out.len(), 5);
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     #[must_use]
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Whether nothing has been written.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{write, SliceSink};
+    ///
+    /// let mut buf = [0u8; 16];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// assert!(out.is_empty());
+    /// write::write_token(b"gzip", &mut out)?;
+    /// assert!(!out.is_empty());
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
     /// Forgets what was written; the buffer is reused from its start.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{write, SliceSink};
+    ///
+    /// let mut buf = [0u8; 8];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// write::write_token(b"gzip", &mut out)?;
+    /// out.clear();
+    /// write::write_token(b"br", &mut out)?;
+    /// assert_eq!(out.written(), b"br");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn clear(&mut self) {
         self.len = 0;
     }
@@ -195,12 +256,32 @@ pub struct CountSink {
 
 impl CountSink {
     /// A counter at zero.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::CountSink;
+    ///
+    /// const ZERO: CountSink = CountSink::new();
+    /// assert_eq!((ZERO.count(), ZERO), (0, CountSink::default()));
+    /// ```
     #[must_use]
     pub const fn new() -> Self {
         Self { n: 0 }
     }
 
     /// The number of bytes put so far.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{write, CountSink};
+    ///
+    /// let mut count = CountSink::new();
+    /// write::write_quoted(b"a b", &mut count)?;
+    /// assert_eq!(count.count(), 5);
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     #[must_use]
     pub const fn count(&self) -> usize {
         self.n

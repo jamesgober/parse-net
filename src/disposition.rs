@@ -26,6 +26,16 @@ use crate::{
 };
 
 /// The disposition type.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{parse_content_disposition, DispositionType};
+///
+/// assert_eq!(parse_content_disposition(b"INLINE")?.kind(), DispositionType::Inline);
+/// assert_eq!(parse_content_disposition(b"x-custom")?.kind(), DispositionType::Other(&b"x-custom"[..]));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DispositionType<'a> {
@@ -41,6 +51,15 @@ pub enum DispositionType<'a> {
 }
 
 /// A validated `Content-Disposition` value.
+///
+/// # Examples
+///
+/// ```
+/// let cd = parse_net::parse_content_disposition(b"attachment; filename=report.pdf")?;
+/// assert_eq!(cd.kind(), parse_net::DispositionType::Attachment);
+/// assert!(cd.filename_plain().is_some_and(|f| f.eq_bytes(b"report.pdf")));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ContentDisposition<'a> {
     kind: DispositionType<'a>,
@@ -141,18 +160,48 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<ContentDisposition<
 
 impl<'a> ContentDisposition<'a> {
     /// The disposition type.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_content_disposition, DispositionType};
+    ///
+    /// let cd = parse_content_disposition(b"Form-Data; name=field")?;
+    /// assert_eq!(cd.kind(), DispositionType::FormData);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn kind(&self) -> DispositionType<'a> {
         self.kind
     }
 
     /// Every parameter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cd = parse_net::parse_content_disposition(b"inline; size=120; x=\"y\"")?;
+    /// assert_eq!(cd.params().len(), 2);
+    /// assert!(cd.params().get("size").is_some_and(|v| v.eq_bytes(b"120")));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn params(&self) -> Params<'a> {
         self.params
     }
 
     /// The `name` parameter (the field name of a `form-data` part).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::parse_content_disposition;
+    ///
+    /// let part = parse_content_disposition(b"form-data; name=\"comment\"")?;
+    /// assert!(part.name().is_some_and(|n| n.eq_bytes(b"comment")));
+    /// assert!(parse_content_disposition(b"attachment")?.name().is_none());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn name(&self) -> Option<Word<'a>> {
         self.params.get("name")
@@ -160,6 +209,15 @@ impl<'a> ContentDisposition<'a> {
 
     /// The file name: `filename*` when present, else `filename` (RFC 6266
     /// section 4.3).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cd = parse_net::parse_content_disposition(b"attachment; filename=plain.txt; filename*=UTF-8''ext.txt")?;
+    /// let mut buf = [0u8; 16];
+    /// assert_eq!(cd.filename().expect("present").decode_into(&mut buf)?, "ext.txt");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn filename(&self) -> Option<Filename<'a>> {
         self.filename_ext()
@@ -168,12 +226,29 @@ impl<'a> ContentDisposition<'a> {
     }
 
     /// The `filename` parameter as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cd = parse_net::parse_content_disposition(b"attachment; filename=plain.txt; filename*=UTF-8''ext.txt")?;
+    /// assert!(cd.filename_plain().is_some_and(|f| f.eq_bytes(b"plain.txt")));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn filename_plain(&self) -> Option<Word<'a>> {
         self.params.get("filename")
     }
 
     /// The `filename*` parameter, decoded as an RFC 8187 value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cd = parse_net::parse_content_disposition(b"attachment; filename=plain.txt; filename*=UTF-8''ext.txt")?;
+    /// let ext = cd.filename_ext().expect("present");
+    /// assert_eq!((ext.charset(), ext.encoded()), (parse_net::Charset::Utf8, &b"ext.txt"[..]));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn filename_ext(&self) -> Option<ExtValue<'a>> {
         match self.params.get("filename*")? {
@@ -184,6 +259,18 @@ impl<'a> ContentDisposition<'a> {
 }
 
 /// A file name from `Content-Disposition` or a `Link` `title`.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{parse_content_disposition, Filename};
+///
+/// let cd = parse_content_disposition(b"attachment; filename=\"a b.txt\"")?;
+/// assert!(matches!(cd.filename(), Some(Filename::Plain(w)) if w.eq_bytes(b"a b.txt")));
+/// let cd = parse_content_disposition(b"attachment; filename*=UTF-8''a%20b.txt")?;
+/// assert!(matches!(cd.filename(), Some(Filename::Ext(_))));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Filename<'a> {
     /// The `filename` (or `title`) parameter.
@@ -263,6 +350,17 @@ fn has_bad_percent(bytes: impl Iterator<Item = u8>) -> Option<usize> {
 
 impl Filename<'_> {
     /// An upper bound on the length the `decode` functions write.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let cd = parse_net::parse_content_disposition(b"attachment; filename*=ISO-8859-1''caf%E9")?;
+    /// let name = cd.filename().expect("present");
+    /// assert_eq!(name.max_decoded_len(), 8);
+    /// let mut buf = [0u8; 8];
+    /// assert_eq!(name.decode_into(&mut buf)?, "caf\u{e9}");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn max_decoded_len(&self) -> usize {
         match self {
@@ -279,6 +377,19 @@ impl Filename<'_> {
     ///
     /// [`ErrorKind::InvalidUtf8`], [`ErrorKind::ControlInDecoded`],
     /// [`ErrorKind::BufferTooSmall`]. Nothing is written on error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_content_disposition, ErrorKind};
+    ///
+    /// let cd = parse_content_disposition(b"attachment; filename=\"q\\\"uote.txt\"")?;
+    /// let name = cd.filename().expect("present");
+    /// let mut buf = [0u8; 16];
+    /// assert_eq!(name.decode_into(&mut buf)?, "q\"uote.txt");
+    /// assert_eq!(name.decode_into(&mut [0u8; 2]).unwrap_err().kind(), ErrorKind::BufferTooSmall);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn decode_into<'b>(&self, out: &'b mut [u8]) -> Result<&'b str> {
         match self {
             Filename::Plain(w) => decode_checked(word_bytes(w), Charset::Utf8, out),
@@ -324,6 +435,18 @@ impl Filename<'_> {
     /// Whether the decoded name contains `/` or `\` (in a plain name, also
     /// after percent-decoding). The file-name policy belongs to the caller
     /// (path-lib, customs-sec).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::parse_content_disposition;
+    ///
+    /// let cd = parse_content_disposition(b"attachment; filename=\"..%2Fetc%2Fpasswd\"")?;
+    /// assert!(cd.filename().expect("present").has_path_separator());
+    /// let ok = parse_content_disposition(b"attachment; filename=notes.txt")?;
+    /// assert!(!ok.filename().expect("present").has_path_separator());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn has_path_separator(&self) -> bool {
         let sep = |b: u8| b == b'/' || b == b'\\';

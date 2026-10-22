@@ -78,12 +78,28 @@ impl MailDate {
     }
 
     /// Seconds since the Unix epoch, UTC.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let d = parse_net::MailDate::parse(b"1 Jan 1970 01:00:00 +0100", false)?;
+    /// assert_eq!(d.utc(), 0);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn utc(self) -> i64 {
         self.utc
     }
 
     /// The zone offset in minutes east of UTC (`0` when unknown).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let d = parse_net::MailDate::parse(b"21 Oct 2026 08:08:00 -0330", false)?;
+    /// assert_eq!(d.offset_minutes(), -210);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn offset_minutes(self) -> i16 {
         self.offset
@@ -92,12 +108,33 @@ impl MailDate {
     /// Whether the zone was `-0000`: the time is UTC and the local zone is
     /// unknown (RFC 5322 section 3.3), or an obsolete military zone, which
     /// the RFC says to read the same way.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::MailDate;
+    ///
+    /// assert!(MailDate::parse(b"21 Oct 2026 17:38:00 -0000", false)?.offset_unknown());
+    /// assert!(!MailDate::parse(b"21 Oct 2026 17:38:00 +0000", false)?.offset_unknown());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn offset_unknown(self) -> bool {
         self.offset_unknown
     }
 
     /// Whether the seconds were `60` (read as `59`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::MailDate;
+    ///
+    /// let leap = MailDate::parse(b"31 Dec 2016 23:59:60 +0000", false)?;
+    /// assert!(leap.leap_second());
+    /// assert_eq!(leap.utc(), MailDate::parse(b"31 Dec 2016 23:59:59 +0000", false)?.utc());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn leap_second(self) -> bool {
         self.leap_second
@@ -106,6 +143,15 @@ impl MailDate {
     /// The value as `Wed, 21 Oct 2026 17:38:00 +0200`: weekday, two-digit
     /// day, four-digit year, seconds, and a numeric zone (`-0000` when the
     /// offset is unknown). Returns the bytes and their length (always 31).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let d = parse_net::MailDate::parse(b"21 oct 2026 17:38 +0200", false)?;
+    /// let (bytes, len) = d.format();
+    /// assert_eq!(&bytes[..len], b"Wed, 21 Oct 2026 17:38:00 +0200");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn format(self) -> ([u8; 31], usize) {
         let local = self.utc + i64::from(self.offset) * 60;
@@ -153,6 +199,20 @@ impl MailDate {
     ///
     /// [`WriteError::Full`]; nothing is written when the sink reports its
     /// room.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{MailDate, SliceSink, WriteError};
+    ///
+    /// let d = MailDate::new(0, 0).expect("in range");
+    /// let mut buf = [0u8; 40];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// d.write_to(&mut out)?;
+    /// assert_eq!(out.written(), b"Thu, 01 Jan 1970 00:00:00 +0000");
+    /// assert_eq!(d.write_to(&mut SliceSink::new(&mut [0u8; 10])), Err(WriteError::Full));
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn write_to(self, out: &mut impl Sink) -> core::result::Result<(), WriteError> {
         let (bytes, len) = self.format();
         reserve(out, len)?;

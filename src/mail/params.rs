@@ -207,6 +207,17 @@ pub fn parse_mime_params<'a>(s: &'a [u8], limits: &Limits) -> Result<(MimeParams
 }
 
 /// Validated MIME parameters.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{mail, Limits};
+///
+/// let (p, _) = mail::parse_mime_params(b"; charset=us-ascii", &Limits::DEFAULT)?;
+/// let mut buf = [0u8; 16];
+/// assert_eq!(p.decode_into("charset", &mut buf)?, Some("us-ascii"));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MimeParams<'a> {
     text: &'a [u8],
@@ -217,6 +228,17 @@ impl<'a> MimeParams<'a> {
     /// The value of `name` (case-insensitive): a continuation when
     /// `name*0` or `name*0*` is present, else the extended `name*`, else the
     /// plain `name`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{mail::{self, MimeValue}, Limits};
+    ///
+    /// let (p, _) = mail::parse_mime_params(b"; name=plain.txt; name*=UTF-8''ext.txt", &Limits::DEFAULT)?;
+    /// assert!(matches!(p.get("NAME"), Some(MimeValue::Extended(e)) if e.encoded() == b"ext.txt"));
+    /// assert!(p.get("other").is_none());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn get(&self, name: &str) -> Option<MimeValue<'a>> {
         let want = name.as_bytes();
@@ -249,6 +271,19 @@ impl<'a> MimeParams<'a> {
     ///
     /// [`ErrorKind::BufferTooSmall`]; [`ErrorKind::InvalidUtf8`] for a plain
     /// value that is not UTF-8. Nothing is written on error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{mail, ErrorKind, Limits};
+    ///
+    /// let (p, _) = mail::parse_mime_params(b"; boundary=\"simple boundary\"", &Limits::DEFAULT)?;
+    /// let mut buf = [0u8; 32];
+    /// assert_eq!(p.decode_into("boundary", &mut buf)?, Some("simple boundary"));
+    /// assert_eq!(p.decode_into("charset", &mut buf)?, None);
+    /// assert_eq!(p.decode_into("boundary", &mut [0u8; 4]).unwrap_err().kind(), ErrorKind::BufferTooSmall);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn decode_into<'b>(&self, name: &str, out: &'b mut [u8]) -> Result<Option<&'b str>> {
         match self.get(name) {
             None => Ok(None),
@@ -272,18 +307,49 @@ impl<'a> MimeParams<'a> {
     }
 
     /// The parameters as sent, sections included, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{mail, Limits};
+    ///
+    /// let (p, _) = mail::parse_mime_params(b"; a*0=x; a*1=y", &Limits::DEFAULT)?;
+    /// let names: Vec<&[u8]> = p.iter().map(|(name, _)| name).collect();
+    /// assert_eq!(names, [&b"a*0"[..], b"a*1"]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn iter(&self) -> MimeParamIter<'a> {
         MimeParamIter { s: self.text, i: 0 }
     }
 
     /// The number of parameters, sections counted one by one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{mail, Limits};
+    ///
+    /// let (p, _) = mail::parse_mime_params(b"; a*0=x; a*1=y; b=z", &Limits::DEFAULT)?;
+    /// assert_eq!(p.len(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.count
     }
 
     /// Whether there are no parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{mail, Limits};
+    ///
+    /// let (p, used) = mail::parse_mime_params(b" no params", &Limits::DEFAULT)?;
+    /// assert!(p.is_empty() && used == 0);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.count == 0
@@ -291,6 +357,19 @@ impl<'a> MimeParams<'a> {
 }
 
 /// The parameters of a validated [`MimeParams`].
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{mail, Limits};
+///
+/// let (p, _) = mail::parse_mime_params(b"; format=flowed", &Limits::DEFAULT)?;
+/// let mut it = p.iter();
+/// let (name, value) = it.next().expect("one parameter");
+/// assert!(name == b"format" && value.eq_bytes(b"flowed"));
+/// assert!(it.next().is_none());
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct MimeParamIter<'a> {
     s: &'a [u8],
@@ -312,6 +391,17 @@ impl<'a> Iterator for MimeParamIter<'a> {
 }
 
 /// A MIME parameter value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{mail::{self, MimeValue}, Limits};
+///
+/// let (p, _) = mail::parse_mime_params(b"; size=10; t*0=a; t*1=b", &Limits::DEFAULT)?;
+/// assert!(matches!(p.get("size"), Some(MimeValue::Plain(w)) if w.eq_bytes(b"10")));
+/// assert!(matches!(p.get("t"), Some(MimeValue::Continued(_))));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MimeValue<'a> {
     /// `name=value`.
@@ -323,6 +413,18 @@ pub enum MimeValue<'a> {
 }
 
 /// The sections of an RFC 2231 continued value, validated at parse.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{mail::{self, MimeValue}, Limits};
+///
+/// let (p, _) = mail::parse_mime_params(b"; url*0=\"http://a.example/\"; url*1=\"b\"", &Limits::DEFAULT)?;
+/// let Some(MimeValue::Continued(c)) = p.get("url") else { unreachable!() };
+/// let mut buf = [0u8; 32];
+/// assert_eq!(c.decode_into(&mut buf)?, "http://a.example/b");
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Continuation<'a> {
     params: MimeParams<'a>,
@@ -331,6 +433,17 @@ pub struct Continuation<'a> {
 
 impl Continuation<'_> {
     /// The number of sections.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{mail::{self, MimeValue}, Limits};
+    ///
+    /// let (p, _) = mail::parse_mime_params(b"; n*0=a; n*1=b; n*2=c", &Limits::DEFAULT)?;
+    /// let Some(MimeValue::Continued(c)) = p.get("n") else { unreachable!() };
+    /// assert_eq!(c.sections(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn sections(&self) -> usize {
         self.params
@@ -341,6 +454,19 @@ impl Continuation<'_> {
 
     /// An upper bound on the decoded length (twice the raw length, for
     /// ISO-8859-1 transcoded to UTF-8).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{mail::{self, MimeValue}, Limits};
+    ///
+    /// let (p, _) = mail::parse_mime_params(b"; t*0=abc; t*1=de", &Limits::DEFAULT)?;
+    /// let Some(MimeValue::Continued(c)) = p.get("t") else { unreachable!() };
+    /// assert_eq!(c.max_decoded_len(), 10);
+    /// let mut buf = [0u8; 10];
+    /// assert_eq!(c.decode_into(&mut buf)?, "abcde");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn max_decoded_len(&self) -> usize {
         self.params

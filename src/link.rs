@@ -180,6 +180,17 @@ pub fn parse_link<'a>(value: &'a [u8], limits: &Limits) -> Result<Links<'a>> {
 }
 
 /// A validated `Link` value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{parse_link, Limits};
+///
+/// let links = parse_link(b"</a>; rel=next, </b>; rel=prev", &Limits::DEFAULT)?;
+/// assert_eq!(links.len(), 2);
+/// assert!(links.iter().any(|v| v.has_rel("prev")));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Links<'a> {
     text: &'a [u8],
@@ -188,18 +199,48 @@ pub struct Links<'a> {
 
 impl<'a> Links<'a> {
     /// The link values, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// let links = parse_link(b"</a>; rel=next, </b>; rel=prev", &Limits::DEFAULT)?;
+    /// let targets: Vec<&[u8]> = links.iter().map(|v| v.target()).collect();
+    /// assert_eq!(targets, [&b"/a"[..], b"/b"]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn iter(&self) -> LinkIter<'a> {
         LinkIter { v: self.text, i: 0 }
     }
 
     /// The number of link values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// assert_eq!(parse_link(b"</a>, </b>, </c>", &Limits::DEFAULT)?.len(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.count
     }
 
     /// Whether the field holds no link value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// assert!(parse_link(b"", &Limits::DEFAULT)?.is_empty());
+    /// assert!(!parse_link(b"</a>", &Limits::DEFAULT)?.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.count == 0
@@ -207,6 +248,18 @@ impl<'a> Links<'a> {
 }
 
 /// The link values of a validated [`Links`].
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{link::LinkIter, parse_link, Limits};
+///
+/// let links = parse_link(b"</a>, </b>", &Limits::DEFAULT)?;
+/// let mut it: LinkIter<'_> = links.iter();
+/// assert_eq!(it.next().map(|v| v.target()), Some(&b"/a"[..]));
+/// assert_eq!(it.count(), 1);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct LinkIter<'a> {
     v: &'a [u8],
@@ -239,6 +292,17 @@ impl<'a> Iterator for LinkIter<'a> {
 }
 
 /// One link value: a target and its parameters.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{parse_link, Limits};
+///
+/// let v = parse_link(b"<https://x.test/>; rel=canonical", &Limits::DEFAULT)?.iter().next().expect("one link");
+/// assert_eq!(v.target(), b"https://x.test/");
+/// assert!(v.has_rel("canonical"));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LinkValue<'a> {
     target: &'a [u8],
@@ -247,12 +311,34 @@ pub struct LinkValue<'a> {
 
 impl<'a> LinkValue<'a> {
     /// The URI-reference between `<` and `>`, as sent (not resolved).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// let v = parse_link(b"</docs/%7Euser>", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// assert_eq!(v.target(), b"/docs/%7Euser");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn target(&self) -> &'a [u8] {
         self.target
     }
 
     /// The parameters, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// let v = parse_link(b"</a>; rel=next; crossorigin", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let p = v.params();
+    /// assert_eq!(p.len(), 2);
+    /// assert!(p.iter().any(|(n, w)| n == b"crossorigin" && w.is_none()));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn params(&self) -> LinkParams<'a> {
         self.params
@@ -269,6 +355,16 @@ impl<'a> LinkValue<'a> {
 
     /// The first `rel` value; later `rel` parameters are ignored (RFC 8288
     /// section 3.3).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// let v = parse_link(b"</a>; rel=\"next last\"; rel=prev", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// assert!(v.rel().is_some_and(|w| w.eq_bytes(b"next last")));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn rel(&self) -> Option<Word<'a>> {
         self.first("rel").flatten()
@@ -277,6 +373,17 @@ impl<'a> LinkValue<'a> {
     /// The relation types of the first `rel`, split on spaces. A relation
     /// type is a token or a URI, so it never needs a quoted pair; one that
     /// has one is yielded as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// let v = parse_link(b"</a>; rel=\"next last\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let rels: Vec<&[u8]> = v.rels().collect();
+    /// assert_eq!(rels, [&b"next"[..], b"last"]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn rels(&self) -> RelIter<'a> {
         let text = match self.rel() {
@@ -305,12 +412,33 @@ impl<'a> LinkValue<'a> {
     }
 
     /// The first `anchor`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// let v = parse_link(b"</a>; rel=next; anchor=\"#top\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// assert!(v.anchor().is_some_and(|w| w.eq_bytes(b"#top")));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn anchor(&self) -> Option<Word<'a>> {
         self.first("anchor").flatten()
     }
 
     /// Every `hreflang`, in order (the one parameter RFC 8288 lets repeat).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// let v = parse_link(b"</a>; rel=alternate; hreflang=en; hreflang=de", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let langs: Vec<_> = v.hreflang().map(|w| w.as_str()).collect();
+    /// assert_eq!(langs, [Some("en"), Some("de")]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn hreflang(&self) -> HreflangIter<'a> {
         HreflangIter {
@@ -343,12 +471,32 @@ impl<'a> LinkValue<'a> {
     }
 
     /// The first `media`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// let v = parse_link(b"</s.css>; rel=stylesheet; media=\"screen\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// assert!(v.media().is_some_and(|w| w.eq_bytes(b"screen")));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn media(&self) -> Option<Word<'a>> {
         self.first("media").flatten()
     }
 
     /// The first `type`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// let v = parse_link(b"</a.json>; rel=alternate; type=\"application/json\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// assert!(v.type_().is_some_and(|w| w.eq_bytes(b"application/json")));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn type_(&self) -> Option<Word<'a>> {
         self.first("type").flatten()
@@ -356,6 +504,18 @@ impl<'a> LinkValue<'a> {
 }
 
 /// The parameters of a link value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{parse_link, Limits};
+///
+/// let v = parse_link(b"</a>; rel=next; title=\"Next\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+/// let p = v.params();
+/// assert_eq!(p.len(), 2);
+/// assert!(p.iter().any(|(n, w)| n == b"title" && w.is_some_and(|w| w.eq_bytes(b"Next"))));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct LinkParams<'a> {
     text: &'a [u8],
@@ -364,18 +524,49 @@ pub struct LinkParams<'a> {
 
 impl<'a> LinkParams<'a> {
     /// The parameters, in order: the name as sent and the value, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// let v = parse_link(b"</a>; rel=next; title=\"Next\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let names: Vec<&[u8]> = v.params().iter().map(|(n, _)| n).collect();
+    /// assert_eq!(names, [&b"rel"[..], b"title"]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn iter(&self) -> LinkParamIter<'a> {
         LinkParamIter { s: self.text, i: 0 }
     }
 
     /// The number of parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// let v = parse_link(b"</a>; rel=next; title=x; crossorigin", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// assert_eq!(v.params().len(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.count
     }
 
     /// Whether there are no parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_link, Limits};
+    ///
+    /// let v = parse_link(b"</a>", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// assert!(v.params().is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.count == 0
@@ -383,6 +574,18 @@ impl<'a> LinkParams<'a> {
 }
 
 /// The parameters of a validated [`LinkParams`].
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{link::LinkParamIter, parse_link, Limits};
+///
+/// let v = parse_link(b"</a>; rel=next", &Limits::DEFAULT)?.iter().next().expect("one link");
+/// let mut it: LinkParamIter<'_> = v.params().iter();
+/// assert_eq!(it.next().map(|(n, _)| n), Some(&b"rel"[..]));
+/// assert!(it.next().is_none());
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct LinkParamIter<'a> {
     s: &'a [u8],
@@ -421,6 +624,19 @@ impl<'a> Iterator for LinkParamIter<'a> {
 }
 
 /// The relation types of a `rel` value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{parse_link, Limits};
+///
+/// let v = parse_link(b"</s.css>; rel=\"preload stylesheet\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+/// let mut rels = v.rels();
+/// assert_eq!(rels.next(), Some(&b"preload"[..]));
+/// assert_eq!(rels.next(), Some(&b"stylesheet"[..]));
+/// assert_eq!(rels.next(), None);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct RelIter<'a> {
     rest: &'a [u8],
@@ -440,6 +656,17 @@ impl<'a> Iterator for RelIter<'a> {
 }
 
 /// The `hreflang` values of a link value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{parse_link, Limits};
+///
+/// let v = parse_link(b"</a>; hreflang=en; rel=alternate; hreflang=\"fr\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+/// assert_eq!(v.hreflang().count(), 2);
+/// assert!(v.hreflang().last().is_some_and(|w| w.eq_bytes(b"fr")));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct HreflangIter<'a> {
     params: LinkParamIter<'a>,
@@ -460,7 +687,7 @@ impl<'a> Iterator for HreflangIter<'a> {
 }
 
 /// Writes one link value: `<target>; name=value` for each parameter, values
-/// through [`write_word`](crate::write::write_word). An empty value writes
+/// through [`write_word`]. An empty value writes
 /// the name alone (`; crossorigin`), which parses back as a parameter with no
 /// value.
 ///

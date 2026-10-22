@@ -28,6 +28,17 @@ use crate::{
 };
 
 /// One directive: a name and an optional argument.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{cache, Limits};
+///
+/// let d = cache::parse(b"max-age=60", &Limits::DEFAULT)?.iter().next().expect("one directive");
+/// assert_eq!(d.name, b"max-age");
+/// assert!(d.value.is_some_and(|v| v.eq_bytes(b"60")));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Directive<'a> {
     /// The name as sent (compare it ASCII case-insensitively).
@@ -71,6 +82,17 @@ fn bad(e: &[u8], at: usize) -> ParseError {
 }
 
 /// Validated directives.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{cache, Limits};
+///
+/// let d = cache::parse(b"no-store, max-age=0", &Limits::DEFAULT)?;
+/// assert_eq!(d.len(), 2);
+/// assert!(d.iter().any(|x| x.name.eq_ignore_ascii_case(b"NO-STORE")));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Directives<'a> {
     list: list::List<'a>,
@@ -78,17 +100,47 @@ pub struct Directives<'a> {
 
 impl<'a> Directives<'a> {
     /// The directives, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{cache, Limits};
+    ///
+    /// let d = cache::parse(b"public, max-age=60", &Limits::DEFAULT)?;
+    /// let has_value: Vec<bool> = d.iter().map(|x| x.value.is_some()).collect();
+    /// assert_eq!(has_value, [false, true]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn iter(&self) -> impl Iterator<Item = Directive<'a>> + use<'a> {
         self.list.iter().filter_map(|e| directive(e).ok())
     }
 
     /// The number of directives.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{cache, Limits};
+    ///
+    /// assert_eq!(cache::parse(b"no-cache, no-store, x-ext=1", &Limits::DEFAULT)?.len(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.list.len()
     }
 
     /// Whether there are no directives.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{cache, Limits};
+    ///
+    /// assert!(cache::parse(b"", &Limits::DEFAULT)?.is_empty());
+    /// assert!(!cache::parse(b"no-store", &Limits::DEFAULT)?.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.list.is_empty()
@@ -130,6 +182,16 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<Directives<'a>> {
 /// (`max-age=60s`) leaves the field `None` and sets `invalid_values`: treat
 /// such a response as stale. Conflicting directives (`private, public`) are
 /// both reported.
+///
+/// # Examples
+///
+/// ```
+/// let cc = parse_net::response_cache_control(b"max-age=60, s-maxage=60s, immutable")?;
+/// assert_eq!(cc.max_age, Some(60));
+/// assert!(cc.immutable);
+/// assert!(cc.s_maxage.is_none() && cc.invalid_values);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct ResponseDirectives {
@@ -168,6 +230,15 @@ pub struct ResponseDirectives {
 }
 
 /// The request directives (RFC 9111 section 5.2.1).
+///
+/// # Examples
+///
+/// ```
+/// let req = parse_net::request_cache_control(b"no-store, min-fresh=30, max-age=1, max-age=2")?;
+/// assert!(req.no_store);
+/// assert_eq!((req.min_fresh, req.max_age, req.duplicates), (Some(30), Some(1), true));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct RequestDirectives {
@@ -406,6 +477,18 @@ pub fn request_cache_control(value: &[u8]) -> Result<RequestDirectives> {
 /// # Errors
 ///
 /// As [`parse`], with [`ParseError::line`] set.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::cache;
+///
+/// let lines: [&[u8]; 2] = [b"public", b"max-age=300"];
+/// let cc = cache::response_lines(lines)?;
+/// assert!(cc.public);
+/// assert_eq!(cc.max_age, Some(300));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 pub fn response_lines<'a, I>(lines: I) -> Result<ResponseDirectives>
 where
     I: IntoIterator<Item = &'a [u8]>,
@@ -430,6 +513,18 @@ where
 /// # Errors
 ///
 /// As [`parse`], with [`ParseError::line`] set.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::cache;
+///
+/// let lines: [&[u8]; 2] = [b"no-cache", b"max-stale=60"];
+/// let req = cache::request_lines(lines)?;
+/// assert!(req.no_cache);
+/// assert_eq!(req.max_stale, Some(Some(60)));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 pub fn request_lines<'a, I>(lines: I) -> Result<RequestDirectives>
 where
     I: IntoIterator<Item = &'a [u8]>,
@@ -453,6 +548,18 @@ where
 ///
 /// Delta-seconds are always written as tokens (senders must not quote
 /// them); field lists are always quoted.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{cache::Writer, SliceSink};
+///
+/// let mut buf = [0u8; 64];
+/// let mut out = SliceSink::new(&mut buf);
+/// Writer::new(&mut out).flag("no-store")?.seconds("max-age", 0)?;
+/// assert_eq!(out.written(), b"no-store, max-age=0");
+/// # Ok::<(), parse_net::WriteError>(())
+/// ```
 pub struct Writer<'s, S: Sink> {
     out: &'s mut S,
     first: bool,
@@ -460,6 +567,19 @@ pub struct Writer<'s, S: Sink> {
 
 impl<'s, S: Sink> Writer<'s, S> {
     /// A writer over `out`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{cache::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 16];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::new(&mut out);
+    /// w.flag("public")?;
+    /// assert_eq!(out.written(), b"public");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn new(out: &'s mut S) -> Self {
         Self { out, first: true }
     }
@@ -474,6 +594,19 @@ impl<'s, S: Sink> Writer<'s, S> {
     ///
     /// [`WriteError::NotToken`]; [`WriteError::Full`] (nothing written for
     /// this directive when the sink reports its room).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{cache::Writer, SliceSink, WriteError};
+    ///
+    /// let mut buf = [0u8; 64];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// Writer::new(&mut out).flag("no-store")?.flag("no-transform")?;
+    /// assert_eq!(out.written(), b"no-store, no-transform");
+    /// assert!(matches!(Writer::new(&mut out).flag("no store"), Err(WriteError::NotToken)));
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn flag(&mut self, name: &str) -> core::result::Result<&mut Self, WriteError> {
         if !is_token(name.as_bytes()) {
             return Err(WriteError::NotToken);
@@ -491,6 +624,18 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Errors
     ///
     /// As [`flag`](Self::flag).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{cache::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 64];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// Writer::new(&mut out).seconds("max-age", 3600)?.seconds("stale-while-revalidate", 30)?;
+    /// assert_eq!(out.written(), b"max-age=3600, stale-while-revalidate=30");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn seconds(
         &mut self,
         name: &str,

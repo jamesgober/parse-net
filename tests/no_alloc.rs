@@ -13,8 +13,8 @@ use core::net::IpAddr;
 
 use parse_net::{
     self as pn, ByteRange, EntityTag, ForwardedSource, HttpDate, Limits, SliceSink, auth, cache,
-    class::Class, etag, forwarded, list, media, negotiate, param, pct, range, scan, sfv, text,
-    write,
+    class::Class, etag, forwarded, list, mail, media, negotiate, param, pct, range, scan, sfv,
+    text, write,
 };
 
 struct Counting;
@@ -277,6 +277,92 @@ fn test_web_layer_writing_never_allocates() {
         let _ = w.fields("no-cache", &["Set-Cookie"]);
     });
     assert_eq!(n, 0, "a web-layer write allocated");
+}
+
+/// 0.5 inputs: links, mail values, dates, parameters, addresses.
+const MAIL_INPUTS: &[&[u8]] = &[
+    b"<https://x.test/p?page=2,3>; rel=\"next last\"; title*=UTF-8''%E2%82%AC, </a>; rel=prev",
+    b"Wed, 21 Oct 2026 17:38:00 +0200",
+    b"21 Oct 26 17:38 (c) EDT",
+    b"a long\r\n subject",
+    b"=?UTF-8?Q?Caf=C3=A9?= =?ISO-8859-1?Q?_cr=E8me?=",
+    b"; filename*0*=UTF-8''caf%C3%A9; filename*1=\".txt\"; charset=utf-8",
+    b"\"john doe\"@example.com",
+    b"John Q. Public <jqp@example.com>",
+    b"<1234.5678@mail.example.com>",
+    b"\"unterminated",
+];
+
+#[test]
+fn test_mail_and_link_parsing_never_allocates() {
+    let l = Limits::DEFAULT;
+    let mut out = [0u8; 512];
+    let n = allocations(|| {
+        for &v in MAIL_INPUTS {
+            if let Ok(links) = pn::parse_link(v, &l) {
+                for x in links.iter() {
+                    let _ = x.has_rel("next");
+                    if let Some(t) = x.title() {
+                        let _ = t.decode_into(&mut out);
+                    }
+                }
+            }
+            let _ = pn::MailDate::parse(v, false).map(pn::MailDate::format);
+            let _ = pn::MailDate::parse(v, true);
+            let _ = mail::check_header_value(v);
+            if let Ok(u) = mail::unfold(v) {
+                let _ = u.iter().count();
+            }
+            let _ = mail::decode_words(v, &l, &mut out);
+            if let Ok((p, _)) = mail::parse_mime_params(v, &l) {
+                let _ = p.decode_into("filename", &mut out);
+                let _ = p.get("charset");
+            }
+            let _ = mail::parse_addr_spec(v).map(|a| a.is_ascii());
+            let _ = mail::parse_mailbox(v, &l);
+            let _ = mail::parse_msg_id(v);
+            if let Ok(list) = sfv::parse_list(v) {
+                let _ = list.iter().count();
+            }
+        }
+    });
+    assert_eq!(n, 0, "a 0.5 parse allocated");
+}
+
+#[test]
+fn test_mail_and_link_writing_never_allocates() {
+    let mut buf = [0u8; 4096];
+    let n = allocations(|| {
+        let mut out = SliceSink::new(&mut buf);
+        let _ = pn::link::write_link(b"/a?b", &[("rel", "next"), ("title", "x y")], &mut out);
+        let _ = pn::MailDate::new(0, 120).map(|d| d.write_to(&mut out));
+        let _ = mail::fold(
+            "Subject",
+            b"a value that is long enough to fold at least once when it passes the limit",
+            &mut out,
+        );
+        let _ = mail::encode_words("Caf\u{e9} au lait", 20, &mut out);
+        let _ = mail::write_mime_param("filename", "caf\u{e9}.txt", &mut out);
+        let _ = mail::write_msg_id("a.b", "example.com", &mut out);
+        let e = forwarded::Element {
+            for_: Some(forwarded::Node::Addr(IpAddr::from([192, 0, 2, 1]), None)),
+            by: None,
+            host: None,
+            proto: Some(forwarded::Proto::Https),
+        };
+        let _ = forwarded::write_element(&e, &mut out);
+        let mut w = sfv::Writer::list(&mut out);
+        let _ = w
+            .integer(1)
+            .and_then(|w| w.param_key("a"))
+            .and_then(|w| w.string("x"));
+        let _ = w
+            .open_inner_list()
+            .and_then(|w| w.token("t"))
+            .and_then(|w| w.close_inner_list());
+        let _ = w.finish();
+    });
+    assert_eq!(n, 0, "a 0.5 write allocated");
 }
 
 #[test]

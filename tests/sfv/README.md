@@ -1,10 +1,12 @@
 # RFC 9651 conformance suite
 
-The JSON files here are the parsing tests of
+The JSON files here are the parsing tests (and, in `serialisation-tests/`,
+the serialisation tests) of
 [httpwg/structured-field-tests](https://github.com/httpwg/structured-field-tests)
 at commit `3c6d77618d9d4c73e107fd7b90f15026675457b1`, unmodified, under the
 license in [LICENSE.md](LICENSE.md). `tests/sfv_conformance.rs` runs every
-case. Neither is part of the published crate.
+case, and serializes every accepted parsing case again to compare it with the
+suite's canonical form. Neither is part of the published crate.
 
 To update: download the same files at a newer commit, change the commit here,
 and update the case counts in `tests/sfv_conformance.rs`.

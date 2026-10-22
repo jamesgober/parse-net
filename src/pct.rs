@@ -84,19 +84,69 @@ const fn set_of(which: Named) -> [u64; 4] {
 
 impl EncodeSet {
     /// C0 controls, DEL, and 0x80 to 0xFF.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::pct::EncodeSet;
+    ///
+    /// let s = EncodeSet::CONTROLS_AND_NON_ASCII;
+    /// assert!(s.contains(b'\n') && s.contains(0x7f) && s.contains(0xe9));
+    /// assert!(!s.contains(b' ') && !s.contains(b'%'));
+    /// ```
     pub const CONTROLS_AND_NON_ASCII: Self = Self(set_of(Named::ControlsAndNonAscii));
     /// Every byte that is not an `attr-char` (RFC 8187 section 3.2.1).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::pct::EncodeSet;
+    ///
+    /// let s = EncodeSet::ATTR_CHAR_COMPLEMENT;
+    /// assert!(s.contains(b' ') && s.contains(b'%') && s.contains(b'\''));
+    /// assert!(!s.contains(b'a') && !s.contains(b'~'));
+    /// ```
     pub const ATTR_CHAR_COMPLEMENT: Self = Self(set_of(Named::AttrCharComplement));
     /// `%`, `"`, and every byte outside 0x20 to 0x7E (RFC 9651 section 4.1.11).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::pct::EncodeSet;
+    ///
+    /// let s = EncodeSet::SF_DISPLAY;
+    /// assert!(s.contains(b'%') && s.contains(b'"') && s.contains(0x7f));
+    /// assert!(!s.contains(b' ') && !s.contains(b'~'));
+    /// ```
     pub const SF_DISPLAY: Self = Self(set_of(Named::SfDisplay));
 
     /// The empty set (only bytes above 0x7F are then encoded).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::pct::{encoded_len, EncodeSet};
+    ///
+    /// let none = EncodeSet::empty();
+    /// assert!(!none.contains(b'%'));
+    /// assert_eq!(encoded_len(b"a b", &none), 3);
+    /// assert_eq!(encoded_len(&[0xff], &none), 3);
+    /// ```
     #[must_use]
     pub const fn empty() -> Self {
         Self([0; 4])
     }
 
     /// The set with `b` added.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::pct::EncodeSet;
+    ///
+    /// let s = EncodeSet::empty().add(b'/');
+    /// assert!(s.contains(b'/') && !s.contains(b'?'));
+    /// ```
     #[must_use]
     pub const fn add(self, b: u8) -> Self {
         let mut bits = self.0;
@@ -110,6 +160,15 @@ impl EncodeSet {
     }
 
     /// The set with `b` removed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::pct::EncodeSet;
+    ///
+    /// let s = EncodeSet::ATTR_CHAR_COMPLEMENT.remove(b'%');
+    /// assert!(!s.contains(b'%') && s.contains(b' '));
+    /// ```
     #[must_use]
     pub const fn remove(self, b: u8) -> Self {
         let mut bits = self.0;
@@ -123,6 +182,15 @@ impl EncodeSet {
     }
 
     /// Whether `b` is in the set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::pct::EncodeSet;
+    ///
+    /// assert!(EncodeSet::SF_DISPLAY.contains(b'"'));
+    /// assert!(!EncodeSet::SF_DISPLAY.contains(b'a'));
+    /// ```
     #[must_use]
     pub const fn contains(&self, b: u8) -> bool {
         let word = (b >> 6) as usize;
@@ -134,6 +202,18 @@ impl EncodeSet {
 }
 
 /// The hex case [`encode`] writes.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{pct::{encode, EncodeSet, HexCase}, SliceSink};
+///
+/// let mut buf = [0u8; 8];
+/// let mut out = SliceSink::new(&mut buf);
+/// encode(b"/", &EncodeSet::ATTR_CHAR_COMPLEMENT, HexCase::Lower, &mut out)?;
+/// assert_eq!(out.written(), b"%2f");
+/// # Ok::<(), parse_net::WriteError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum HexCase {
     /// `%2F` (RFC 3986 section 2.1 recommends uppercase).

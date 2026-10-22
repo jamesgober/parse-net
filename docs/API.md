@@ -1,7 +1,7 @@
 # parse-net - API Reference
 
 > Reference for every public item in `parse-net`, with signatures, behaviour, the errors each item can return, and examples.
-> **Current release: `0.4.0`.** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
+> **Current release: `0.5.0`.** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
 
 <sub>Copyright &copy; 2026 <strong>James Gober</strong>.</sub>
 
@@ -1361,7 +1361,7 @@ Edge cases tested: `bytes=0-0`; `bytes=0-`; `bytes=-0` (unsatisfiable); `bytes=-
 ```rust
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Charset { Utf8, Iso8859_1 }
+pub enum Charset { Utf8, Iso8859_1, UsAscii }       // UsAscii: 0.5 (D-058)
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ExtValue<'a> { /* charset, language, encoded */ }
@@ -1576,8 +1576,9 @@ impl<'a> LinkValue<'a> {
     pub fn title(&self) -> Option<Filename<'a>>;
     pub fn media(&self) -> Option<Word<'a>>;
     pub fn type_(&self) -> Option<Word<'a>>;
-    pub const fn params(&self) -> LinkParams<'a>;        // iter: (name, Option<Word>)
+    pub const fn params(&self) -> LinkParams<'a>;        // iter: (name, Option<Word>), len, is_empty
 }
+// Links: iter() -> LinkIter, len(), is_empty(); LinkParams: iter() -> LinkParamIter (D-064)
 pub fn write_link(target: &[u8], params: &[(&str, &str)], out: &mut impl Sink) -> Result<(), WriteError>;
 ```
 
@@ -1588,7 +1589,7 @@ RFC 8288 section 3: `link-value = "<" URI-Reference ">" *( OWS ";" OWS link-para
 | LNK-1 | `parse_link`, `Links`, `LinkValue` | P2, 2, 0.5 | commas inside `<...>` do not split; target bytes are RFC 3986 characters (validated with `%XX`), not resolved (url-lib resolves); a parameter value is optional (`; crossorigin`); BWS around `=` accepted | `InvalidByte` (a target byte outside RFC 3986, a space in the target); `UnterminatedQuote`; `InvalidPercentEncoding`; LST and PRM errors; `TrailingData` |
 | LNK-2 | `rel`, `rels`, `has_rel` | P2, 2, 0.5 | the first `rel` only; later `rel` parameters are ignored (RFC 8288 section 3.3); `rels` splits it on spaces; `has_rel` compares case-insensitively | none |
 | LNK-3 | `title` | P2, 2, 0.5 | `title*` (RFC 8187) when present, else `title` | none |
-| LNK-4 | `write_link` | P2, 2, 0.5 | `<target>; name=value`, values through `write_word` | `Forbidden { at }` for `<`, `>`, SP, or a control in the target; `NotToken`; `Full` |
+| LNK-4 | `write_link` | P2, 2, 0.5 | `<target>; name=value`, values through `write_word`; an empty value writes the name alone (D-061) | `Forbidden { at }` for a target byte that is not an RFC 3986 character (`<`, `>`, SP, a control, non-ASCII) or a broken `%XX`, and for a control in a value; `NotToken`; `Full` |
 
 ```rust
 use parse_net::{parse_link, Limits};
@@ -1650,7 +1651,7 @@ pub mod forwarded {
     pub fn parse_x_forwarded_for<'a>(lines: &'a [&'a [u8]], limits: &Limits) -> Result<XffChain<'a>, ParseError>; // iter: (IpAddr, Option<u16>)
     pub fn parse_x_forwarded_proto(value: &[u8]) -> Result<Proto, ParseError>;
     pub fn parse_x_forwarded_host(value: &[u8]) -> Result<HostPort<'_>, ParseError>;
-    pub fn write_element(e: &Element<'_>, out: &mut impl Sink) -> Result<(), WriteError>;   // 0.5
+    pub fn write_element(e: &Element<'_>, out: &mut impl Sink) -> Result<(), WriteError>;   // 0.5 (for, proto, by, host)
 }
 ```
 
@@ -1662,7 +1663,7 @@ pub mod forwarded {
 | FWD-4 | `parse_x_forwarded_proto` | P1, 2, 0.4 | `http` or `https`, case-insensitive; a comma list only when every value is equal | `Malformed` |
 | FWD-5 | `parse_x_forwarded_host` | P1, 2, 0.4 | one `HostPort` (HST-1) | `Malformed` for a list; HST errors |
 | FWD-6 | `Element::host`, `Element::proto` | P1, 2, 0.4 | values validated as `Host` (HST-1) and as `http` / `https` | as FWD-2 |
-| FWD-7 | `write_element` | P3, 2, 0.5 | for proxy-net: quotes IPv6 and ports; `for=192.0.2.60;proto=https;by=203.0.113.43` | `Full` |
+| FWD-7 | `write_element` | P3, 2, 0.5 | for proxy-net: `for`, `proto`, `by`, `host` in that order, quoting IPv6 and any node with a port; `for=192.0.2.60;proto=https;by=203.0.113.43` | `NotToken` (an obfuscated name or port outside its grammar), `Full` |
 | FWD-8 | `client_address_detailed`, `Resolved` | P2, 2, 0.4 | as FWD-1, and `other_present` reports whether the other header kind's lines (`other_lines`) are non-empty, so the caller can log a likely spoofing attempt ([T14](../dev/PLAN.md#9-threats)) | as FWD-1 |
 
 ```rust
@@ -1746,7 +1747,7 @@ RFC 9110 section 11: `credentials = auth-scheme [ 1*SP ( token68 / #auth-param )
 |---|---|---|---|---|
 | ATH-1 | `bearer` | P1, 1, 0.4 | scheme `Bearer` (case-insensitive), `1*SP`, then a `b64token` (RFC 6750 section 2.1: the token68 characters plus trailing `=`); `Ok(None)` for another scheme | `InvalidByte`, `TrailingData` (a second word), `Empty` (scheme alone) |
 | ATH-2 | `basic` | P1, 1, 0.4 | scheme `Basic`; the token68 text (base64, alphabet checked, not decoded) | `InvalidBase64`, as ATH-1 |
-| ATH-3 | `basic_decode_into` | P2, 1, 0.5 | `encode-lib`: decodes into `out` and splits at the first `:` (RFC 7617 section 2) into user and password; a decoded control byte is refused | `ControlInDecoded`, `InvalidBase64`, `BufferTooSmall` |
+| ATH-3 | `basic_decode_into` | P2, 1, 0.6 (D-062) | `encode-lib`: decodes into `out` and splits at the first `:` (RFC 7617 section 2) into user and password; a decoded control byte is refused | `ControlInDecoded`, `InvalidBase64`, `BufferTooSmall` |
 | ATH-4 | `parse_credentials`, `Credentials`, `AuthPayload` | P1, 2, 0.4 | one credential per field; parameter names unique ([T21](../dev/PLAN.md#9-threats)); BWS around `=` accepted; `Debug` prints the scheme only: credentials are secrets | `NotToken`, `DuplicateParameter`, `TrailingData`, PRM errors |
 | ATH-5 | `parse_challenges`, `Challenge` | P1, 2, 0.5 | the one-pass algorithm in [PLAN 7.10](../dev/PLAN.md#710-www-authenticate), which resolves where one challenge ends and the next begins; a token68 ends at `,` or the end, trailing `=` included | `DuplicateParameter` (a name twice in one challenge), `NotToken`, `ExpectedSeparator`, LST errors |
 | ATH-6 | `write_challenge` | P1, 2, 0.4 | `Bearer realm="api", error="invalid_token"`; `realm` always quoted (RFC 9110 section 11.5); other values through `write_word`; a name given twice is refused (D-052) | `NotToken`, `DuplicateName`, `Forbidden`, `Full` |
@@ -2040,8 +2041,9 @@ pub mod sfv {
         pub fn boolean(&mut self, b: bool) -> Result<&mut Self, WriteError>;
         pub fn date(&mut self, secs: i64) -> Result<&mut Self, WriteError>;
         pub fn display_string(&mut self, s: &str) -> Result<&mut Self, WriteError>;
-        #[cfg(feature = "encode-lib")] pub fn bytes(&mut self, b: &[u8]) -> Result<&mut Self, WriteError>;
+        #[cfg(feature = "encode-lib")] pub fn bytes(&mut self, b: &[u8]) -> Result<&mut Self, WriteError>;   // 0.6 (D-062)
         pub fn param(&mut self, key: &str, v: &BareItem<'_>) -> Result<&mut Self, WriteError>;
+        pub fn param_key(&mut self, key: &str) -> Result<&mut Self, WriteError>;    // the next value call is its value (D-059)
         pub fn key(&mut self, key: &str) -> Result<&mut Self, WriteError>;
         pub fn open_inner_list(&mut self) -> Result<&mut Self, WriteError>;
         pub fn close_inner_list(&mut self) -> Result<&mut Self, WriteError>;
@@ -2067,7 +2069,7 @@ RFC 9651. The parser follows section 4.2 exactly, as a loop with explicit state,
 | SFV-10 | Date | P1, 2, 0.4 | `@` and an Integer, seconds since the epoch; years 1 to 9999 (section 3.3.7 sets no range; parse-net keeps the `HttpDate` range, so every Date converts) | `InvalidNumber` (a Decimal after `@`), `OutOfRange` |
 | SFV-11 | `DisplayString` | P1, 2, 0.4 | `%"` then printable ASCII except `%` and `"`, or `%xx` with lowercase hex; the decoded bytes are UTF-8 validated during the parse by an incremental validator (no buffer, [T19](../dev/PLAN.md#9-threats)); `decode_into` writes the text | `InvalidPercentEncoding` (uppercase hex, a broken triple), `InvalidUtf8` (including surrogates and overlong forms), `UnterminatedQuote`, `TooLong` |
 | SFV-12 | keys | P1, 2, 0.4 | `( lcalpha / "*" ) *( lcalpha / DIGIT / "_" / "-" / "." / "*" )`; at most `max_key_len` (default 256, RFC minimum 64) | `InvalidKey` (uppercase, a digit first), `TooLong` |
-| SFV-13 | `Writer` | P1, 2, 0.5 | canonical serialization (section 4.1): `?1`, decimals with the shortest fractional part (`1.5`, `1.0` for whole numbers), strings with only `\"` and `\\` escaped, Display Strings with lowercase `%xx` for `%`, `"`, and everything outside `%x20-7E`, byte sequences always padded; a dictionary member whose value is Boolean true is written as its key alone | `OutOfRange` (an integer beyond 15 digits, a decimal beyond 12 integer digits, a date outside years 1 to 9999); `Forbidden { at }` (a non-ASCII or control byte in a string); `NotToken` (an invalid token or key); `InvalidSequence` (a parameter before any item, two items in an `item` writer, `finish` with an open inner list or with no item); `Full` |
+| SFV-13 | `Writer` | P1, 2, 0.5 | canonical serialization (section 4.1): `?1`, decimals with the shortest fractional part (`1.5`, `1.0` for whole numbers), strings with only `\"` and `\\` escaped, Display Strings with lowercase `%xx` for `%`, `"`, and everything outside `%x20-7E`, byte sequences always padded, with zero pad bits; a parsed Display String re-encoded minimally (D-060); a dictionary member whose value is Boolean true is written as its key alone; each call reserves its own room, so a failed call writes nothing | `OutOfRange` (an integer beyond 15 digits, a decimal beyond 12 integer digits, a date outside years 1 to 9999); `Forbidden { at }` (a non-ASCII or control byte in a string); `NotToken` (an invalid token or key); `InvalidSequence` (a parameter before any item, two items in an `item` writer, a `param_key` without its value, `finish` with an open inner list or with no item); `Full` |
 | SFV-14 | `Visitor`, `visit_*` | P2, 3, 0.4 | a single pass with no view, for callers that read one key or count items; a visitor error stops the parse and is returned | as the matching parse, plus the visitor's |
 | SFV-15 | `Dictionary::get`, `index_into` | P1, 2, 0.4 | `get` is a linear scan returning the last match; `index_into` fills a caller array with one slot per distinct key (last wins), for callers that look up many keys | `index_into`: `BufferTooSmall` when there are more distinct keys than slots |
 | SFV-16 | `owned` types | P2, 2, 0.5 | `alloc`; see [Owned forms](#owned-forms) | none |
@@ -2129,7 +2131,9 @@ pub mod mail {
         pub fn decode_into<'b>(&self, name: &str, out: &'b mut [u8]) -> Result<Option<&'b str>, ParseError>;
         pub fn iter(&self) -> MimeParamIter<'a>;                  // raw parameters, sections included
         pub const fn len(&self) -> usize;
+        pub const fn is_empty(&self) -> bool;
     }
+    // Unfolded: iter() -> UnfoldIter (Iterator<Item = &[u8]>)
     #[derive(Clone, Copy, Debug)]
     pub enum MimeValue<'a> { Plain(Word<'a>), Extended(ExtValue<'a>), Continued(Continuation<'a>) }
     #[derive(Clone, Copy, Debug)]
@@ -2162,7 +2166,7 @@ The grammar smtp-net needs to write mail and gate-net needs to validate login ad
 | MAIL-2 | `unfold` | P2, 2, 0.5 | validates, then iterates the pieces between `CRLF WSP` folds (the CRLF removed, the WSP kept, RFC 5322 section 2.2.3) | `BareCr`, `LineFeed` (a CRLF not followed by WSP, or a lone CR or LF) |
 | MAIL-3 | `fold` | P1, 1, 0.5 | writes `Name: value` and CRLF-SP folds at whitespace so lines stay within 78 columns where possible; never a line of only whitespace; never over 998 | `NotToken` for a name outside `ftext`; `Forbidden { at }` for CR, LF, NUL in `value`; `OutOfRange` for a word longer than 998 - the folding indent; `Full` |
 | MAIL-4 | `encode_words` (Q) | P1, 1, 0.5 | RFC 2047: printable ASCII text without `=?` is written as it is; otherwise `=?UTF-8?Q?...?=` words of at most 75 bytes, split only on UTF-8 character boundaries, separated by CRLF SP; the first word fits in `room_first_line` | `Forbidden { at }` for a control character; `Full` |
-| MAIL-5 | `encode_words_b` | P2, 1, 0.5 | `encode-lib`: the B encoding, used when Q would be longer | as MAIL-4 |
+| MAIL-5 | `encode_words_b` | P2, 1, 0.6 (D-062) | `encode-lib`: the B encoding, used when Q would be longer | as MAIL-4 |
 | MAIL-6 | `decode_words` | P2, 2, 0.5 | decodes encoded words in unstructured text into `out`; whitespace between adjacent encoded words is dropped (RFC 2047 section 6.2); text outside encoded words copied; `_` is a space in Q; words inside quoted strings are not decoded (section 5); B needs `encode-lib` | `UnsupportedCharset`, `InvalidEncodedWord`, `ControlInDecoded` (CR, LF, NUL), `InvalidUtf8`, `TooManyMembers` beyond `max_encoded_words`, `BufferTooSmall` |
 | MAIL-7 | `parse_mime_params`, `MimeParams` | P1, 3, 0.5 | RFC 2045 section 5.1 with the MIME `token` class (allows `{` and `}`); case-insensitive names; CFWS between parameters | `NotToken`, `MissingValue`, `DuplicateParameter`, `UnterminatedQuote`, `TooManyMembers` |
 | MAIL-8 | RFC 2231 (`get`, `decode_into`, `Continuation`) | P1, 2, 0.5 | the reassembly in [PLAN 7.12](../dev/PLAN.md#712-rfc-2231-reassembly-without-allocation): sections `name*0`, `name*1*`, ... numbered from 0 without gaps or duplicates; a charset only on section 0; decoded in order into `out` | `SectionGap`, `TooManySections`, EXT-1 and EXT-2 errors, `BufferTooSmall` |

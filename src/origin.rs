@@ -22,6 +22,16 @@ use crate::{
 };
 
 /// An `Origin` value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{parse_origin, OriginValue};
+///
+/// assert_eq!(parse_origin(b"null")?, OriginValue::Null);
+/// assert!(matches!(parse_origin(b"https://example.com")?, OriginValue::Origin(_)));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OriginValue<'a> {
     /// `null` (an opaque origin: a sandboxed frame, a `data:` URL, a
@@ -32,6 +42,17 @@ pub enum OriginValue<'a> {
 }
 
 /// A serialized origin.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{parse_origin, Host, OriginValue};
+///
+/// let OriginValue::Origin(o) = parse_origin(b"http://example.com:8080")? else { unreachable!() };
+/// assert_eq!(o.scheme, b"http");
+/// assert_eq!((o.host, o.port), (Host::Name(b"example.com"), Some(8080)));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Origin<'a> {
     /// The scheme as sent (compare it ASCII case-insensitively).
@@ -72,6 +93,18 @@ impl Origin<'_> {
     /// Whether two origins are the same: schemes and hosts equal as whole
     /// values (ASCII case-insensitive, IP literals by value), effective ports
     /// equal. Never a prefix or suffix comparison.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{parse_origin, OriginValue};
+    ///
+    /// let OriginValue::Origin(a) = parse_origin(b"http://example.com")? else { unreachable!() };
+    /// let OriginValue::Origin(b) = parse_origin(b"HTTP://EXAMPLE.com:80")? else { unreachable!() };
+    /// let OriginValue::Origin(c) = parse_origin(b"https://example.com")? else { unreachable!() };
+    /// assert!(a.same_origin(&b) && !a.same_origin(&c));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn same_origin(&self, other: &Origin<'_>) -> bool {
         self.scheme.eq_ignore_ascii_case(other.scheme)

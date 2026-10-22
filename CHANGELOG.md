@@ -13,6 +13,53 @@
 
 ---
 
+## [0.5.0] - 2026-10-22
+
+Feature complete: links, Structured Field writing, the email lexical layer,
+and owned forms.
+
+### Added
+
+- `link`: `parse_link`, `Links`, `LinkValue` (`target`, `rel`, `rels`,
+  `has_rel`, `anchor`, `hreflang`, `title` with `title*`, `media`, `type_`,
+  `params`), `LinkParams`, `write_link` (RFC 8288).
+- `sfv::Writer`: canonical Structured Field serialization (RFC 9651 section
+  4.1) for Items, Lists, and Dictionaries, with typed value methods, `bare`,
+  `param`, `param_key`, `key`, inner lists, and `finish`.
+- `MailDate`: RFC 5322 `date-time` with `new`, `parse` (strict, or with the
+  obsolete forms of section 4.3), `format`, `write_to`, `utc`,
+  `offset_minutes`, `offset_unknown`, `leap_second`.
+- `mail`: `check_header_value`, `is_field_name`, `unfold`, `fold`,
+  `encode_words` and `decode_words` (RFC 2047 Q), `parse_mime_params` and
+  `MimeParams` with RFC 2231 continuations (`MimeValue`, `Continuation`),
+  `write_mime_param`, `parse_addr_spec` (`AddrSpec`, `LocalPart`, `Domain`),
+  `parse_mailbox` (`Mailbox`), `parse_msg_id` and `write_msg_id` (`MsgId`).
+- `forwarded::write_element`.
+- With `alloc`: `OwnedMediaType`, `OwnedEntityTag`, `OwnedHostPort`, and
+  `sfv::owned` (`OwnedBareItem`, `OwnedItem`, `OwnedList`,
+  `OwnedDictionary`), each with `to_owned` on the view and `as_view` back.
+- `ext_value::Charset::UsAscii`.
+- Tests: the httpwg serialisation tests (547 cases), and every accepted
+  parse case serialized again and compared with its canonical form; property
+  tests for every 0.5 parser (no panic) and writer (its output parses back);
+  counting-allocator tests over every 0.5 parse and write; size and trait
+  checks for every 0.4 and 0.5 view; an example for every public item.
+- Fuzz targets: `link`, `mail_date`, `mail_words`, `mime_params`,
+  `addr_spec`, `fold_unfold`, `sfv_roundtrip`.
+- `docs/ARCHITECTURE.md`; `docs/GRAMMAR.md` extended to Link and the email
+  layer.
+
+### Changed
+
+- `docs/API.md`: `Writer::param_key` (D-059), `Charset::UsAscii` (D-058),
+  the iterator types (D-064); the `MailDate` example said "Tue, 21 Oct 2026",
+  which is a Wednesday.
+- The base64 decode helpers (ATH-3, MAIL-5, `ByteSeq::decode_into`,
+  `sfv::Writer::bytes`, `B` encoded words) move to 0.6, as D-002 provides,
+  because encode-lib is not published (D-062).
+
+---
+
 ## [0.4.0] - 2026-10-22
 
 Extended: the web layer and what form-net needs.
@@ -197,7 +244,8 @@ The scaffold and the plan. No parsing code yet.
   (0.1 to 1.0 with exit criteria).
 - `fuzz/` crate skeleton; targets arrive with the parsers they cover.
 
-[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jamesgober/parse-net/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/jamesgober/parse-net/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jamesgober/parse-net/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jamesgober/parse-net/compare/v0.1.0...v0.2.0

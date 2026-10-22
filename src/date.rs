@@ -181,6 +181,16 @@ pub struct Civil {
 }
 
 /// The HTTP-date format a value was written in.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{DateFormat, HttpDate};
+///
+/// let (_, fmt) = HttpDate::parse_detailed(b"Sun Nov  6 08:49:37 1994", 0)?;
+/// assert_eq!(fmt, DateFormat::Asctime);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DateFormat {
@@ -230,8 +240,24 @@ pub struct HttpDate {
 
 impl HttpDate {
     /// 0001-01-01T00:00:00Z.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::HttpDate;
+    ///
+    /// assert_eq!(&HttpDate::MIN.format(), b"Mon, 01 Jan 0001 00:00:00 GMT");
+    /// assert!(HttpDate::from_unix(HttpDate::MIN.unix() - 1).is_err());
+    /// ```
     pub const MIN: Self = Self { secs: MIN_SECS };
     /// 9999-12-31T23:59:59Z.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let c = parse_net::HttpDate::MAX.civil();
+    /// assert_eq!((c.year, c.month, c.day, c.hour, c.minute, c.second), (9999, 12, 31, 23, 59, 59));
+    /// ```
     pub const MAX: Self = Self { secs: MAX_SECS };
 
     /// The date `secs` seconds after the Unix epoch (negative before 1970).
@@ -239,6 +265,16 @@ impl HttpDate {
     /// # Errors
     ///
     /// [`ErrorKind::OutOfRange`] outside years 1 to 9999.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::HttpDate;
+    ///
+    /// assert_eq!(HttpDate::from_unix(1_792_540_800)?.civil().weekday, 3); // 2026-10-21, a Wednesday
+    /// assert!(HttpDate::from_unix(i64::MAX).is_err());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub const fn from_unix(secs: i64) -> Result<Self> {
         if secs < MIN_SECS || secs > MAX_SECS {
             return err(ErrorKind::OutOfRange, 0);
@@ -247,12 +283,28 @@ impl HttpDate {
     }
 
     /// Seconds since the Unix epoch.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let d = parse_net::HttpDate::parse_imf_fixdate(b"Thu, 01 Jan 1970 00:01:00 GMT")?;
+    /// assert_eq!(d.unix(), 60);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn unix(self) -> i64 {
         self.secs
     }
 
     /// The broken-down UTC time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let c = parse_net::HttpDate::from_unix(946_684_800)?.civil();
+    /// assert_eq!((c.year, c.month, c.day, c.weekday), (2000, 1, 1, 6)); // a Saturday
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn civil(self) -> Civil {
         let days = self.secs.div_euclid(SECS_PER_DAY);
@@ -271,6 +323,14 @@ impl HttpDate {
     }
 
     /// The IMF-fixdate text, `Sun, 06 Nov 1994 08:49:37 GMT`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let d = parse_net::HttpDate::from_unix(1_792_540_800)?;
+    /// assert_eq!(&d.format(), b"Wed, 21 Oct 2026 00:00:00 GMT");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn format(self) -> [u8; 29] {
         let c = self.civil();
@@ -299,6 +359,19 @@ impl HttpDate {
     /// # Errors
     ///
     /// [`WriteError::Full`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{HttpDate, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// HttpDate::MIN.write_to(&mut out)?;
+    /// assert_eq!(out.written(), b"Mon, 01 Jan 0001 00:00:00 GMT");
+    /// assert!(HttpDate::MAX.write_to(&mut SliceSink::new(&mut [0u8; 8])).is_err());
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn write_to(self, out: &mut impl Sink) -> core::result::Result<(), WriteError> {
         out.put(&self.format())?;
         Ok(())
@@ -311,6 +384,17 @@ impl HttpDate {
     ///
     /// [`ErrorKind::InvalidDate`], [`ErrorKind::WeekdayMismatch`],
     /// [`ErrorKind::OutOfRange`] (year 0000), [`ErrorKind::TrailingData`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::HttpDate;
+    ///
+    /// assert_eq!(HttpDate::parse_imf_fixdate(b" Wed, 21 Oct 2026 07:28:00 GMT ")?.civil().hour, 7);
+    /// assert!(HttpDate::parse_imf_fixdate(b"Thu, 21 Oct 2026 07:28:00 GMT").is_err()); // wrong weekday
+    /// assert!(HttpDate::parse_imf_fixdate(b"Wednesday, 21-Oct-26 07:28:00 GMT").is_err());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn parse_imf_fixdate(value: &[u8]) -> Result<Self> {
         let (lead, v) = trimmed(value);
         imf_fixdate(v, &Limits::DEFAULT).map_err(|e| e.shifted(lead))
@@ -329,6 +413,18 @@ impl HttpDate {
     ///
     /// [`ErrorKind::InvalidDate`], [`ErrorKind::WeekdayMismatch`],
     /// [`ErrorKind::OutOfRange`], [`ErrorKind::TrailingData`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::HttpDate;
+    ///
+    /// let now = 1_792_540_800; // 2026-10-21
+    /// let d = HttpDate::parse_at(b"Sunday, 06-Nov-94 08:49:37 GMT", now)?;
+    /// assert_eq!(d.civil().year, 1994);
+    /// assert_eq!(d, HttpDate::parse_at(b"Sun Nov  6 08:49:37 1994", now)?);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn parse_at(value: &[u8], now: i64) -> Result<Self> {
         Self::parse_detailed_with(value, now, &Limits::DEFAULT).map(|(d, _)| d)
     }
@@ -339,6 +435,16 @@ impl HttpDate {
     /// # Errors
     ///
     /// As [`parse_at`](Self::parse_at).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{HttpDate, Limits};
+    ///
+    /// let leap = b"Sat, 31 Dec 2016 23:59:60 GMT";
+    /// assert!(HttpDate::parse_at(leap, 0).is_err());
+    /// assert!(HttpDate::parse_at_with(leap, 0, &Limits::DEFAULT.allow_leap_second(true)).is_ok());
+    /// ```
     pub fn parse_at_with(value: &[u8], now: i64, limits: &Limits) -> Result<Self> {
         Self::parse_detailed_with(value, now, limits).map(|(d, _)| d)
     }
@@ -375,6 +481,15 @@ impl HttpDate {
 
     /// The current time from the system clock, clamped to the supported
     /// range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::HttpDate;
+    ///
+    /// assert!(HttpDate::now() > HttpDate::from_unix(1_700_000_000)?); // later than 2023-11-14
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[cfg(feature = "std")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     #[must_use]
@@ -391,6 +506,16 @@ impl HttpDate {
     /// # Errors
     ///
     /// [`ErrorKind::OutOfRange`] outside years 1 to 9999.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::{Duration, UNIX_EPOCH};
+    ///
+    /// let t = UNIX_EPOCH + Duration::from_millis(1_500);
+    /// assert_eq!(parse_net::HttpDate::from_system_time(t)?.unix(), 1);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[cfg(feature = "std")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     pub fn from_system_time(t: std::time::SystemTime) -> Result<Self> {
@@ -408,6 +533,16 @@ impl HttpDate {
 
     /// The date as a `SystemTime`, or `None` when the platform's clock type
     /// cannot represent it (Windows cannot go before the year 1601).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::{Duration, UNIX_EPOCH};
+    ///
+    /// let d = parse_net::HttpDate::from_unix(86_400)?;
+    /// assert_eq!(d.to_system_time(), Some(UNIX_EPOCH + Duration::from_secs(86_400)));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[cfg(feature = "std")]
     #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
     #[must_use]

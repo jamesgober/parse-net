@@ -153,6 +153,15 @@ pub fn unfold(value: &[u8]) -> Result<Unfolded<'_>> {
 }
 
 /// A validated folded field body.
+///
+/// # Examples
+///
+/// ```
+/// let u = parse_net::mail::unfold(b"x\r\n\ty")?;
+/// let joined: Vec<u8> = u.iter().flatten().copied().collect();
+/// assert_eq!(joined, b"x\ty");
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Unfolded<'a> {
     value: &'a [u8],
@@ -160,6 +169,14 @@ pub struct Unfolded<'a> {
 
 impl<'a> Unfolded<'a> {
     /// The pieces between folds, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let u = parse_net::mail::unfold(b"no folds here")?;
+    /// assert_eq!(u.iter().collect::<Vec<_>>(), [&b"no folds here"[..]]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn iter(&self) -> UnfoldIter<'a> {
         UnfoldIter {
@@ -169,6 +186,17 @@ impl<'a> Unfolded<'a> {
 }
 
 /// The pieces of an [`Unfolded`] value.
+///
+/// # Examples
+///
+/// ```
+/// let mut it = parse_net::mail::unfold(b"a\r\n b\r\n c")?.iter();
+/// assert_eq!(it.next(), Some(&b"a"[..]));
+/// assert_eq!(it.next(), Some(&b" b"[..]));
+/// assert_eq!(it.next(), Some(&b" c"[..]));
+/// assert_eq!(it.next(), None);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct UnfoldIter<'a> {
     rest: Option<&'a [u8]>,

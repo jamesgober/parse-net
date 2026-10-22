@@ -84,6 +84,20 @@ pub struct Writer<'s, S: Sink> {
 
 impl<'s, S: Sink> Writer<'s, S> {
     /// A writer for an Item.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::item(&mut out);
+    /// w.integer(5)?.param_key("a")?.token("b")?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"5;a=b");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn item(out: &'s mut S) -> Self {
         Self {
             out,
@@ -94,6 +108,20 @@ impl<'s, S: Sink> Writer<'s, S> {
     }
 
     /// A writer for a List.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::list(&mut out);
+    /// w.token("a")?.token("b")?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"a, b");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn list(out: &'s mut S) -> Self {
         Self {
             out,
@@ -104,6 +132,21 @@ impl<'s, S: Sink> Writer<'s, S> {
     }
 
     /// A writer for a Dictionary.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::dictionary(&mut out);
+    /// w.key("a")?.integer(1)?;
+    /// w.key("b")?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"a=1, b");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn dictionary(out: &'s mut S) -> Self {
         Self {
             out,
@@ -161,6 +204,20 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Errors
     ///
     /// As the typed methods; [`WriteError::InvalidSequence`] out of order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::{BareItem, Writer}, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::list(&mut out);
+    /// w.bare(&BareItem::Token("x"))?.bare(&BareItem::Integer(-2))?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"x, -2");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn bare(&mut self, b: &BareItem<'_>) -> WResult<&mut Self> {
         self.value(Val::Bare(b))
     }
@@ -171,6 +228,21 @@ impl<'s, S: Sink> Writer<'s, S> {
     ///
     /// [`WriteError::OutOfRange`] beyond 15 digits; [`WriteError::Full`];
     /// [`WriteError::InvalidSequence`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::list(&mut out);
+    /// w.integer(-42)?;
+    /// assert!(w.integer(1_000_000_000_000_000).is_err());
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"-42");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn integer(&mut self, v: i64) -> WResult<&mut Self> {
         self.value(Val::Integer(v))
     }
@@ -182,6 +254,20 @@ impl<'s, S: Sink> Writer<'s, S> {
     ///
     /// [`WriteError::OutOfRange`] beyond 12 integer digits;
     /// [`WriteError::Full`]; [`WriteError::InvalidSequence`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::list(&mut out);
+    /// w.decimal(1500)?.decimal(2000)?.decimal(-125)?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"1.5, 2.0, -0.125");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn decimal(&mut self, thousandths: i64) -> WResult<&mut Self> {
         self.value(Val::Decimal(thousandths))
     }
@@ -193,6 +279,20 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// [`WriteError::Forbidden`] for a byte outside `%x20-7E` (use
     /// [`display_string`](Self::display_string) for other text);
     /// [`WriteError::Full`]; [`WriteError::InvalidSequence`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::item(&mut out);
+    /// w.string("say \"hi\"")?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), br#""say \"hi\"""#);
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn string(&mut self, s: &str) -> WResult<&mut Self> {
         self.value(Val::String(s))
     }
@@ -203,6 +303,21 @@ impl<'s, S: Sink> Writer<'s, S> {
     ///
     /// [`WriteError::NotToken`]; [`WriteError::Full`];
     /// [`WriteError::InvalidSequence`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::list(&mut out);
+    /// w.token("gzip")?;
+    /// assert!(w.token("a b").is_err());
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"gzip");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn token(&mut self, t: &str) -> WResult<&mut Self> {
         self.value(Val::Token(t))
     }
@@ -212,6 +327,20 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Errors
     ///
     /// [`WriteError::Full`]; [`WriteError::InvalidSequence`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::list(&mut out);
+    /// w.boolean(true)?.boolean(false)?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"?1, ?0");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn boolean(&mut self, b: bool) -> WResult<&mut Self> {
         self.value(Val::Boolean(b))
     }
@@ -222,6 +351,20 @@ impl<'s, S: Sink> Writer<'s, S> {
     ///
     /// [`WriteError::OutOfRange`] outside years 1 to 9999 (D-030);
     /// [`WriteError::Full`]; [`WriteError::InvalidSequence`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::item(&mut out);
+    /// w.date(1_659_578_233)?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"@1659578233");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn date(&mut self, secs: i64) -> WResult<&mut Self> {
         self.value(Val::Date(secs))
     }
@@ -232,6 +375,20 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Errors
     ///
     /// [`WriteError::Full`]; [`WriteError::InvalidSequence`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::item(&mut out);
+    /// w.display_string("caf\u{e9}")?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"%\"caf%c3%a9\"");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn display_string(&mut self, s: &str) -> WResult<&mut Self> {
         self.value(Val::Display(s))
     }
@@ -245,6 +402,20 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// `( lcalpha / "*" ) *( lcalpha / DIGIT / "_" / "-" / "." / "*" )`;
     /// the value's errors; [`WriteError::InvalidSequence`] before any item;
     /// [`WriteError::Full`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::{BareItem, Writer}, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::item(&mut out);
+    /// w.token("a")?.param("q", &BareItem::Integer(1))?.param("x", &BareItem::Boolean(true))?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"a;q=1;x");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn param(&mut self, key: &str, v: &BareItem<'_>) -> WResult<&mut Self> {
         if self.pending || !matches!(self.state, State::Member | State::Key | State::InnerItem) {
             return Err(WriteError::InvalidSequence);
@@ -298,6 +469,21 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// [`WriteError::NotToken`] for an invalid key;
     /// [`WriteError::InvalidSequence`] outside a dictionary or inside an
     /// inner list; [`WriteError::Full`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::dictionary(&mut out);
+    /// w.key("a")?;
+    /// w.key("b")?.integer(2)?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"a, b=2");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn key(&mut self, key: &str) -> WResult<&mut Self> {
         if self.pending {
             return Err(WriteError::InvalidSequence);
@@ -318,6 +504,21 @@ impl<'s, S: Sink> Writer<'s, S> {
     ///
     /// [`WriteError::InvalidSequence`] in an Item writer, inside an inner
     /// list, or in a dictionary before a key; [`WriteError::Full`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::list(&mut out);
+    /// w.open_inner_list()?.token("a")?.token("b")?.close_inner_list()?;
+    /// w.token("c")?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"(a b), c");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn open_inner_list(&mut self) -> WResult<&mut Self> {
         if self.pending {
             return Err(WriteError::InvalidSequence);
@@ -339,6 +540,20 @@ impl<'s, S: Sink> Writer<'s, S> {
     ///
     /// [`WriteError::InvalidSequence`] with no inner list open;
     /// [`WriteError::Full`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::{BareItem, Writer}, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// let mut w = Writer::list(&mut out);
+    /// w.open_inner_list()?.integer(1)?.close_inner_list()?.param("q", &BareItem::Integer(9))?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"(1);q=9");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn close_inner_list(&mut self) -> WResult<&mut Self> {
         if self.pending || !matches!(self.state, State::Inner | State::InnerItem) {
             return Err(WriteError::InvalidSequence);
@@ -355,6 +570,21 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// [`WriteError::InvalidSequence`] with an inner list open, a
     /// parameter key without its value, or with nothing written (an empty List or Dictionary is not serialized at
     /// all: omit the field, RFC 9651 section 4.1).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Writer, SliceSink};
+    ///
+    /// let mut buf = [0u8; 8];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// assert!(Writer::list(&mut out).finish().is_err());
+    /// let mut w = Writer::list(&mut out);
+    /// w.token("a")?;
+    /// w.finish()?;
+    /// assert_eq!(out.written(), b"a");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
     pub fn finish(self) -> WResult<()> {
         if self.pending {
             return Err(WriteError::InvalidSequence);

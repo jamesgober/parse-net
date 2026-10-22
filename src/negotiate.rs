@@ -45,17 +45,54 @@ pub struct QValue(u16);
 
 impl QValue {
     /// `q=1`, the weight of a member without `q`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::QValue;
+    ///
+    /// assert_eq!(QValue::ONE.thousandths(), 1000);
+    /// assert_eq!(QValue::parse(b"1")?, QValue::ONE);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub const ONE: Self = Self(1000);
     /// `q=0`: not acceptable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::QValue;
+    ///
+    /// assert_eq!(QValue::parse(b"0.000")?, QValue::ZERO);
+    /// assert!(QValue::ZERO < QValue::ONE);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub const ZERO: Self = Self(0);
 
     /// The weight `t` thousandths, if `t` is at most 1000.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::QValue;
+    ///
+    /// assert_eq!(QValue::from_thousandths(500), Some(QValue::parse(b"0.5")?));
+    /// assert_eq!(QValue::from_thousandths(1001), None);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn from_thousandths(t: u16) -> Option<Self> {
         if t <= 1000 { Some(Self(t)) } else { None }
     }
 
     /// The weight in thousandths, 0 to 1000.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(parse_net::QValue::parse(b"0.05")?.thousandths(), 50);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn thousandths(self) -> u16 {
         self.0
@@ -67,6 +104,16 @@ impl QValue {
     ///
     /// [`ErrorKind::InvalidQValue`] for anything else (`1.5`, `0.1234`, `.5`,
     /// `-1`, `1.001`, an empty value).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::QValue;
+    ///
+    /// assert_eq!(QValue::parse(b"0.125")?.thousandths(), 125);
+    /// assert!(QValue::parse(b"0.1234").is_err());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn parse(s: &[u8]) -> Result<Self> {
         let (first, rest) = match s.split_first() {
             Some((&f, r)) => (f, r),
@@ -95,6 +142,17 @@ impl QValue {
 }
 
 /// How `Accept-Language` ranges are matched against offered tags.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::negotiate::{LanguageMatching, Negotiator};
+///
+/// let offers = ["en-US"];
+/// assert_eq!(Negotiator::new().language(Some(b"en"), &offers).index(), None);
+/// let filter = Negotiator::new().language_matching(LanguageMatching::BasicFilter);
+/// assert_eq!(filter.language(Some(b"en"), &offers).index(), Some(0));
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum LanguageMatching {
@@ -108,6 +166,17 @@ pub enum LanguageMatching {
 }
 
 /// What a selection does with a header that does not parse.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::negotiate::{MalformedPolicy, Negotiator, Outcome};
+///
+/// let bad = Some(&b"text/html;q=x"[..]);
+/// assert_eq!(Negotiator::new().media(bad, &["text/html"]), Outcome::HeaderIgnored { index: 0 });
+/// let strict = Negotiator::new().on_malformed(MalformedPolicy::Refuse);
+/// assert!(matches!(strict.media(bad, &["text/html"]), Outcome::Refused(_)));
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum MalformedPolicy {
@@ -155,6 +224,16 @@ pub enum Outcome {
 
 impl Outcome {
     /// The chosen offer, if any.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::negotiate::Negotiator;
+    ///
+    /// let n = Negotiator::new();
+    /// assert_eq!(n.encoding(Some(b"gzip"), &["br", "gzip"]).index(), Some(1));
+    /// assert_eq!(n.encoding(Some(b"gzip"), &["br"]).index(), None);
+    /// ```
     #[must_use]
     pub const fn index(&self) -> Option<usize> {
         match self {
@@ -235,6 +314,16 @@ fn pick(weights: impl Iterator<Item = (usize, Option<u16>)>) -> Outcome {
 
 impl Negotiator {
     /// Default limits, RFC 4647 lookup, malformed headers treated as absent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::negotiate::Negotiator;
+    ///
+    /// let n = Negotiator::new();
+    /// assert_eq!(n, Negotiator::default());
+    /// assert_eq!(n.media(None, &["text/html", "text/plain"]).index(), Some(0));
+    /// ```
     #[must_use]
     pub const fn new() -> Self {
         Self {
@@ -245,12 +334,30 @@ impl Negotiator {
     }
 
     /// Sets the limits the request headers are parsed with.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{negotiate::{Negotiator, Outcome}, Limits};
+    ///
+    /// let n = Negotiator::new().limits(Limits::DEFAULT.max_list_members(1));
+    /// assert_eq!(n.media(Some(b"text/plain, text/html"), &["text/html"]), Outcome::HeaderIgnored { index: 0 });
+    /// ```
     #[must_use]
     pub const fn limits(self, l: Limits) -> Self {
         Self { limits: l, ..self }
     }
 
     /// Sets how language ranges are matched.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::negotiate::{LanguageMatching, Negotiator};
+    ///
+    /// let n = Negotiator::new().language_matching(LanguageMatching::BasicFilter);
+    /// assert_eq!(n.language(Some(b"de"), &["fr", "de-AT"]).index(), Some(1));
+    /// ```
     #[must_use]
     pub const fn language_matching(self, m: LanguageMatching) -> Self {
         Self {
@@ -260,6 +367,16 @@ impl Negotiator {
     }
 
     /// Sets what happens with a header that does not parse.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{negotiate::{MalformedPolicy, Negotiator, Outcome}, ErrorKind};
+    ///
+    /// let n = Negotiator::new().on_malformed(MalformedPolicy::Refuse);
+    /// let out = n.encoding(Some(b"gzip;q=2"), &["gzip"]);
+    /// assert!(matches!(out, Outcome::Refused(e) if e.kind() == ErrorKind::InvalidQValue));
+    /// ```
     #[must_use]
     pub const fn on_malformed(self, p: MalformedPolicy) -> Self {
         Self {
@@ -283,6 +400,17 @@ impl Negotiator {
     /// (RFC 9110 section 12.5.1); `q=0` means not acceptable; ties go to the
     /// earlier offer. An absent header makes every offer acceptable, so the
     /// first wins. An offer that is not a valid media type is never chosen.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{negotiate::{Negotiator, Outcome}, QValue};
+    ///
+    /// let n = Negotiator::new();
+    /// let accept = Some(&b"text/*;q=0.5, text/html"[..]);
+    /// assert_eq!(n.media(accept, &["text/plain", "text/html"]), Outcome::Chosen { index: 1, weight: QValue::ONE });
+    /// assert_eq!(n.media(accept, &["image/png"]), Outcome::NoneAcceptable);
+    /// ```
     #[must_use]
     pub fn media(&self, accept: Option<&[u8]>, offers: &[&str]) -> Outcome {
         match accept {
@@ -293,6 +421,15 @@ impl Negotiator {
 
     /// As [`media`](Self::media), for several `Accept` field lines read as
     /// one list.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::negotiate::Negotiator;
+    ///
+    /// let lines: [&[u8]; 2] = [b"text/plain;q=0.5", b"application/json"];
+    /// assert_eq!(Negotiator::new().media_lines(lines, &["text/plain", "application/json"]).index(), Some(1));
+    /// ```
     #[must_use]
     pub fn media_lines<'a, I>(&self, lines: I, offers: &[&str]) -> Outcome
     where
@@ -364,6 +501,15 @@ impl Negotiator {
     /// wins; between equal weights the closer match (as lookup returns the
     /// longest truncation), then the earlier offer. Tags compare ASCII
     /// case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{negotiate::{Negotiator, Outcome}, QValue};
+    ///
+    /// let n = Negotiator::new();
+    /// assert_eq!(n.language(Some(b"fr-CA, en;q=0.8"), &["en", "fr"]), Outcome::Chosen { index: 1, weight: QValue::ONE });
+    /// ```
     #[must_use]
     pub fn language(&self, value: Option<&[u8]>, offers: &[&str]) -> Outcome {
         let mode = self.language;
@@ -380,6 +526,16 @@ impl Negotiator {
     /// `identity` is acceptable unless `identity;q=0`, or `*;q=0` without an
     /// explicit `identity`; an empty field value means only `identity` is
     /// acceptable; `x-gzip` equals `gzip` and `x-compress` equals `compress`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::negotiate::{Negotiator, Outcome};
+    ///
+    /// let n = Negotiator::new();
+    /// assert_eq!(n.encoding(Some(b"x-gzip"), &["br", "gzip"]).index(), Some(1));
+    /// assert_eq!(n.encoding(Some(b"*;q=0"), &["gzip", "identity"]), Outcome::NoneAcceptable);
+    /// ```
     #[must_use]
     pub fn encoding(&self, value: Option<&[u8]>, offers: &[&str]) -> Outcome {
         let Some(v) = value else {
@@ -402,6 +558,16 @@ impl Negotiator {
     /// Selects the best of `offers` (charsets such as `"utf-8"`) for
     /// `Accept-Charset`: as [`encoding`](Self::encoding), without the
     /// `identity` rule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::negotiate::{Negotiator, Outcome};
+    ///
+    /// let n = Negotiator::new();
+    /// assert_eq!(n.charset(Some(b"utf-8, *;q=0.1"), &["iso-8859-1", "utf-8"]).index(), Some(1));
+    /// assert_eq!(n.charset(Some(b"utf-8"), &["iso-8859-1"]), Outcome::NoneAcceptable);
+    /// ```
     #[must_use]
     pub fn charset(&self, value: Option<&[u8]>, offers: &[&str]) -> Outcome {
         let Some(v) = value else {
@@ -680,6 +846,17 @@ fn shift_into(e: ParseError, value: &[u8], element: &[u8]) -> ParseError {
 }
 
 /// The media ranges of a validated `Accept` value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{negotiate::parse_accept, Limits};
+///
+/// let a = parse_accept(b"text/html, application/*;q=0.2", &Limits::DEFAULT)?;
+/// assert_eq!(a.len(), 2);
+/// assert!(a.iter().any(|r| r.specificity() == 2));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub struct AcceptList<'a> {
     list: list::List<'a>,
@@ -688,6 +865,17 @@ pub struct AcceptList<'a> {
 
 impl<'a> AcceptList<'a> {
     /// The ranges, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{negotiate::parse_accept, Limits};
+    ///
+    /// let a = parse_accept(b"image/webp, image/*;q=0.8", &Limits::DEFAULT)?;
+    /// let subtypes: Vec<_> = a.iter().map(|r| r.subtype()).collect();
+    /// assert_eq!(subtypes, [&b"webp"[..], &b"*"[..]]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn iter(&self) -> impl Iterator<Item = media::MediaRange<'a>> + '_ {
         self.list
             .iter()
@@ -695,12 +883,30 @@ impl<'a> AcceptList<'a> {
     }
 
     /// The number of ranges.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{negotiate::parse_accept, Limits};
+    ///
+    /// assert_eq!(parse_accept(b"text/html, , text/plain", &Limits::DEFAULT)?.len(), 2);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.list.len()
     }
 
     /// Whether there are no ranges.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{negotiate::parse_accept, Limits};
+    ///
+    /// assert!(!parse_accept(b"*/*", &Limits::DEFAULT)?.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.list.is_empty()
@@ -708,6 +914,17 @@ impl<'a> AcceptList<'a> {
 }
 
 /// One member of a weighted list: a value, its weight, and its parameters.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{negotiate::parse_weighted, Limits};
+///
+/// let w = parse_weighted(b"en-GB;q=0.7", &Limits::DEFAULT)?;
+/// let m = w.iter().next().expect("one member");
+/// assert_eq!((m.value, m.weight.thousandths(), m.params.len()), (&b"en-GB"[..], 700, 0));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Weighted<'a> {
     /// The value (a coding, a charset, or a language range).
@@ -776,6 +993,17 @@ fn weighted_member<'a>(element: &'a [u8], limits: &Limits) -> Result<Weighted<'a
 }
 
 /// The members of a validated weighted list.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{negotiate::parse_weighted, Limits};
+///
+/// let w = parse_weighted(b"utf-8, iso-8859-1;q=0.5", &Limits::DEFAULT)?;
+/// assert_eq!(w.len(), 2);
+/// assert!(w.iter().all(|m| m.weight.thousandths() >= 500));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub struct WeightedList<'a> {
     list: list::List<'a>,
@@ -784,6 +1012,17 @@ pub struct WeightedList<'a> {
 
 impl<'a> WeightedList<'a> {
     /// The members, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{negotiate::parse_weighted, Limits};
+    ///
+    /// let w = parse_weighted(b"gzip;q=0.5, br", &Limits::DEFAULT)?;
+    /// let best = w.iter().max_by_key(|m| m.weight).map(|m| m.value);
+    /// assert_eq!(best, Some(&b"br"[..]));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn iter(&self) -> impl Iterator<Item = Weighted<'a>> + '_ {
         self.list
             .iter()
@@ -791,12 +1030,30 @@ impl<'a> WeightedList<'a> {
     }
 
     /// The number of members.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{negotiate::parse_weighted, Limits};
+    ///
+    /// assert_eq!(parse_weighted(b"gzip, deflate, br", &Limits::DEFAULT)?.len(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.list.len()
     }
 
     /// Whether there are no members.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{negotiate::parse_weighted, Limits};
+    ///
+    /// assert!(!parse_weighted(b"identity", &Limits::DEFAULT)?.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.list.is_empty()
