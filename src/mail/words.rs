@@ -245,7 +245,7 @@ fn shape(v: &[u8], i: usize) -> Result<Option<Encoded<'_>>> {
 /// Decodes one Q word's text, emitting UTF-8.
 fn decode_q(cs: Charset, text: &[u8], at: usize, emit: &mut impl FnMut(&[u8])) -> Result<()> {
     let mut utf8 = Utf8::new();
-    let mut i = 0usize;
+    let (mut i, mut prev) = (0usize, 0u8);
     while let Some(&b) = text.get(i) {
         let byte = match b {
             b'_' => b' ',
@@ -262,9 +262,19 @@ fn decode_q(cs: Charset, text: &[u8], at: usize, emit: &mut impl FnMut(&[u8])) -
             _ => return err(ErrorKind::InvalidEncodedWord, at + i),
         };
         i += 1;
-        if matches!(byte, b'\r' | b'\n' | 0) {
+        // Every control character is refused, as in ext-values: C0 (HTAB
+        // included), DEL, and C1 (U+0080 to U+009F: `C2 80` to `C2 9F` in
+        // UTF-8, where 0xC2 is always a lead byte; bytes 0x80 to 0x9F in
+        // ISO-8859-1).
+        let c1 = match cs {
+            Charset::Utf8 => prev == 0xc2 && (0x80..=0x9f).contains(&byte),
+            Charset::Latin1 => (0x80..=0x9f).contains(&byte),
+            Charset::Ascii => false,
+        };
+        if byte < 0x20 || byte == 0x7f || c1 {
             return err(ErrorKind::ControlInDecoded, at + i - 1);
         }
+        prev = byte;
         match cs {
             Charset::Utf8 => {
                 if !utf8.push(byte) {
@@ -378,7 +388,8 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
 ///
 /// [`ErrorKind::UnsupportedCharset`]; [`ErrorKind::InvalidEncodedWord`] (a
 /// bad encoding letter, a broken `=XX`, a byte not allowed in a Q word, a
-/// `B` word); [`ErrorKind::ControlInDecoded`] for a decoded CR, LF, or NUL;
+/// `B` word); [`ErrorKind::ControlInDecoded`] for a decoded control
+/// character (C0 including CR, LF, NUL, and HTAB; DEL; C1), as in ext-values;
 /// [`ErrorKind::InvalidUtf8`] (a UTF-8 word that is not whole characters, or
 /// text outside the words that is not UTF-8); [`ErrorKind::TooManyMembers`]
 /// beyond `max_encoded_words`; [`ErrorKind::BufferTooSmall`]. Nothing is
