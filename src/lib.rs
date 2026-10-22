@@ -112,12 +112,14 @@ pub mod disposition;
 mod error;
 pub mod etag;
 pub mod ext_value;
+pub mod forwarded;
 pub mod host;
 mod limits;
 pub mod list;
 pub mod media;
 pub mod negotiate;
 pub mod num;
+pub mod origin;
 pub mod param;
 pub mod pct;
 pub mod range;
@@ -138,11 +140,13 @@ pub use disposition::{
 pub use error::{ErrorKind, Full, ParseError, WriteError};
 pub use etag::{Condition, EntityTag, TagList, if_match, if_none_match, parse_condition};
 pub use ext_value::{Charset, ExtValue, write_ext_value};
+pub use forwarded::{ClientAddress, ForwardedSource, Trust, client_address};
 pub use host::{Host, HostPort, parse_host_port};
 pub use limits::{DuplicatePolicy, Limits};
 pub use list::{List, list};
 pub use media::{Boundary, MediaRange, MediaType, parse_media_type};
 pub use negotiate::{QValue, best_charset, best_encoding, best_language, best_media};
+pub use origin::{Origin, OriginValue, parse_origin};
 pub use param::{Param, Params};
 pub use range::{
     ByteRange, ContentRange, IfRange, RangeHeader, RangeOutcome, RangeSpec, byte_ranges,
