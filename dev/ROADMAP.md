@@ -17,7 +17,7 @@ Exit: CI green on every platform; crate on crates.io; docs.rs build green.
 - [x] README, CHANGELOG, `docs/API.md`, `docs/release/v0.1.0.md`; `fuzz/` crate skeleton.
 - [x] Publish 0.1.0 to claim the name (crates.io and docs.rs green).
 
-## v0.2.0 - Design lock
+## v0.2.0 - Design lock (DONE, 2026-10-22)
 
 Exit: James approves `docs/API.md`; no `todo` in the API document.
 
@@ -25,7 +25,7 @@ Exit: James approves `docs/API.md`; no `todo` in the API document.
 - [x] One checklist per consumer (http-net, ws-net, cookie-net, form-net, smtp-net) proving the API covers what each needs, kept in `docs/API.md`.
 - [x] The edge-case lists placed beside each item (PLAN 11.7).
 - [x] Open decisions closed or kept open with a date (all PN-1 to PN-18 are closed in the decision log; design-lock decisions D-026 to D-036 added).
-- [ ] James approves `docs/API.md`.
+- [x] James approves `docs/API.md` (2026-10-22, with the go-ahead to release).
 
 ## v0.3.0 - Core (what http-net, ws-net, and cookie-net need)
 

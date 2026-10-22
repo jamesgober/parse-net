@@ -13,7 +13,7 @@
 
 ---
 
-## [0.2.0] - 2026-10-21
+## [0.2.0] - 2026-10-22
 
 The design lock: the public API through 1.0, written down before the code. No
 parsing code yet.
