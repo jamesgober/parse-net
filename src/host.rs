@@ -402,7 +402,7 @@ fn reg_name_or_ipv4(v: &[u8]) -> Result<(Host<'_>, usize)> {
                 _ => return err(ErrorKind::InvalidPercentEncoding, i),
             }
             digits_dots = false;
-        } else if b < 0x20 || b == 0x7f {
+        } else if crate::scan::is_control(b) {
             return err(control_kind(b), i);
         } else {
             return err(ErrorKind::InvalidHost, i);

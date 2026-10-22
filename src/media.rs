@@ -55,7 +55,7 @@ pub fn parse_media_type(value: &[u8]) -> Result<MediaType<'_>> {
 /// The error for a byte that ends a media type where it may not.
 fn bad_byte(value: &[u8], at: usize) -> ParseError {
     match value.get(at) {
-        Some(&b) if b < 0x20 || b == 0x7f => ParseError::new(control_kind(b), at),
+        Some(&b) if crate::scan::is_control(b) => ParseError::new(control_kind(b), at),
         _ => ParseError::new(ErrorKind::InvalidMediaType, at),
     }
 }

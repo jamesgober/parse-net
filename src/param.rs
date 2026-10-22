@@ -97,7 +97,7 @@ pub fn parse<'a>(s: &'a [u8], limits: &Limits) -> Result<(Params<'a>, usize)> {
                     break;
                 }
                 return err(
-                    if b < 0x20 || b == 0x7f {
+                    if crate::scan::is_control(b) {
                         control_kind(b)
                     } else {
                         ErrorKind::NotToken
@@ -179,7 +179,7 @@ pub fn parse<'a>(s: &'a [u8], limits: &Limits) -> Result<(Params<'a>, usize)> {
 
 #[inline]
 const fn control_or_invalid(b: u8) -> ErrorKind {
-    if b < 0x20 || b == 0x7f {
+    if crate::scan::is_control(b) {
         control_kind(b)
     } else {
         ErrorKind::InvalidByte

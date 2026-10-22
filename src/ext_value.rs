@@ -115,7 +115,7 @@ impl<'a> ExtValue<'a> {
                 }
             } else if class::is_attr_char(b) {
                 i += 1;
-            } else if b < 0x20 || b == 0x7f {
+            } else if crate::scan::is_control(b) {
                 return err(control_kind(b), encoded_at + i);
             } else {
                 return err(ErrorKind::InvalidByte, encoded_at + i);

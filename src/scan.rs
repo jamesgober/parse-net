@@ -164,6 +164,14 @@ fn check_field_bytes(bytes: &[u8], base: usize) -> Result<()> {
     }
 }
 
+/// Whether `b` is a control byte that no field value may hold: C0 other than
+/// HTAB, or DEL. HTAB is field text, so a misplaced tab is a grammar error,
+/// not a control (D-037).
+#[inline]
+pub(crate) const fn is_control(b: u8) -> bool {
+    (b < 0x20 && b != 0x09) || b == 0x7f
+}
+
 /// The error kind for a byte that is not allowed in a field value.
 #[inline]
 pub(crate) const fn control_kind(b: u8) -> ErrorKind {

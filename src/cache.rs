@@ -65,7 +65,7 @@ fn directive(e: &[u8]) -> Result<Directive<'_>> {
 
 fn bad(e: &[u8], at: usize) -> ParseError {
     match e.get(at) {
-        Some(&b) if b < 0x20 || b == 0x7f => ParseError::new(control_kind(b), at),
+        Some(&b) if crate::scan::is_control(b) => ParseError::new(control_kind(b), at),
         _ => ParseError::new(ErrorKind::NotToken, at),
     }
 }

@@ -172,7 +172,7 @@ fn parse_prefix(s: &[u8]) -> Result<(EntityTag<'_>, usize)> {
         }
         Some(i) => {
             let b = body.get(i).copied().unwrap_or(0);
-            let kind = if b < 0x20 || b == 0x7f {
+            let kind = if crate::scan::is_control(b) {
                 crate::scan::control_kind(b)
             } else {
                 ErrorKind::InvalidEntityTag

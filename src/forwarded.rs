@@ -289,7 +289,7 @@ fn element(e: &[u8]) -> Result<Element<'_>> {
 
 fn refused(e: &[u8], at: usize, kind: ErrorKind) -> ParseError {
     match e.get(at) {
-        Some(&b) if b < 0x20 || b == 0x7f => ParseError::new(control_kind(b), at),
+        Some(&b) if crate::scan::is_control(b) => ParseError::new(control_kind(b), at),
         _ => ParseError::new(kind, at),
     }
 }

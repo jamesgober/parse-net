@@ -105,6 +105,7 @@ extern crate std;
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+pub mod auth;
 pub mod cache;
 pub mod class;
 pub mod date;
@@ -128,6 +129,7 @@ pub mod text;
 mod utf8;
 pub mod write;
 
+pub use auth::{AuthPayload, Challenge, Credentials, basic, bearer};
 pub use cache::{
     Directive, RequestDirectives, ResponseDirectives, request_cache_control, response_cache_control,
 };

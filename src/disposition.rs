@@ -95,7 +95,7 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<ContentDisposition<
     let type_len = v.iter().take_while(|&&b| class::is_tchar(b)).count();
     if type_len == 0 {
         return Err(match v.first() {
-            Some(&b) if b < 0x20 || b == 0x7f => ParseError::new(control_kind(b), lead),
+            Some(&b) if crate::scan::is_control(b) => ParseError::new(control_kind(b), lead),
             _ => ParseError::new(ErrorKind::NotToken, lead),
         });
     }
@@ -107,7 +107,7 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<ContentDisposition<
     if end < v.len() {
         let at = end + skip_ows(v.get(end..).unwrap_or(&[]));
         return Err(match v.get(at) {
-            Some(&b) if b < 0x20 || b == 0x7f => ParseError::new(control_kind(b), lead + at),
+            Some(&b) if crate::scan::is_control(b) => ParseError::new(control_kind(b), lead + at),
             _ => ParseError::new(ErrorKind::TrailingData, lead + at),
         });
     }

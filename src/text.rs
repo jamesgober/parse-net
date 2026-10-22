@@ -130,7 +130,7 @@ pub fn parse_token(s: &[u8]) -> Result<(&[u8], usize)> {
 /// The error for a byte refused inside a quoted string or comment.
 #[inline]
 const fn refused(b: u8) -> ErrorKind {
-    if b < 0x20 || b == 0x7f {
+    if crate::scan::is_control(b) {
         control_kind(b)
     } else {
         ErrorKind::InvalidByte
