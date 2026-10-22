@@ -13,6 +13,79 @@
 
 ---
 
+## [0.4.0] - 2026-10-22
+
+Extended: the web layer and what form-net needs.
+
+### Added
+
+- `media`: `parse_range` and `MediaRange` (`matches`, `specificity`,
+  `weight`, `params`) for `Accept` members.
+- `negotiate`: `QValue`, `best_media`, `best_language`, `best_encoding`,
+  `best_charset`; `Negotiator` with `LanguageMatching` (RFC 4647 lookup or
+  basic filtering), `MalformedPolicy`, and `Outcome`, including
+  `media_lines`; `parse_accept` (`AcceptList`) and `parse_weighted`
+  (`WeightedList`, `Weighted`) for other selection rules.
+- `etag`: `EntityTag` (`parse`, `strong`, `weak`, `strong_eq`, `weak_eq`,
+  `write_to`), `Condition`, `TagList`, `parse_condition`, `if_match`,
+  `if_none_match`.
+- `range`: `parse`, `RangeHeader`, `RangeSpec`, `resolve` and `byte_ranges`
+  with `RangeOutcome` (overlap and order rules against range abuse),
+  `ByteRange`, `parse_content_range`, `ContentRange`, `write_content_range`,
+  `write_unsatisfied`, `parse_if_range`, `IfRange`.
+- `ext_value`: RFC 8187 `ExtValue` (UTF-8 and ISO-8859-1, decoded controls
+  refused), `Charset`, `write_ext_value`.
+- `disposition`: `parse_content_disposition`, `parse`, `ContentDisposition`,
+  `DispositionType`, `Filename` (`decode_into`, `decode_percent_into`,
+  `max_decoded_len`, `has_path_separator`, `has_bidi_control`),
+  `write_attachment` with an ASCII fallback.
+- `cache`: `parse`, `Directive`, `Directives`, `response_cache_control`,
+  `request_cache_control`, `response_lines`, `request_lines`,
+  `ResponseDirectives`, `RequestDirectives`, `Writer`.
+- `forwarded`: `client_address` and `client_address_detailed` with `Trust`,
+  `ForwardedSource`, `ClientAddress`, `Resolved`; `parse`, `Element`, `Node`,
+  `NodePort`, `Proto`; `parse_x_forwarded_for` (`XffChain`),
+  `parse_x_forwarded_proto`, `parse_x_forwarded_host`.
+- `auth`: `parse_credentials`, `Credentials`, `AuthPayload`, `AuthParams`
+  (redacted `Debug`), `bearer`, `basic`, `parse_challenges`, `Challenges`,
+  `Challenge`, `write_challenge`, `write_challenge_token68`.
+- `origin`: `parse_origin`, `OriginValue`, `Origin` (`same_origin`,
+  `effective_port`, `write_to`).
+- `sfv`: RFC 9651 parsing: `parse_item`, `parse_list`, `parse_dictionary`,
+  `parse_list_lines`, `parse_dictionary_lines`, `Parser` with `Limits` and the
+  single-pass `visit_item`, `visit_list`, `visit_dictionary` through
+  `Visitor`; `BareItem` (all eight types, Date and Display String included),
+  `Decimal`, `SfString`, `ByteSeq`, `DisplayString`, `Item`, `Member`,
+  `InnerList`, `List`, `Dictionary` (`get`, `index_into`), `SfParams`,
+  `ListLines`, `DictionaryLines`, and their iterators.
+- `WriteError::DuplicateName`.
+- Tests: the httpwg structured-field-tests suite in full (1598 cases), again
+  with every list and dictionary split into one line per member; every
+  greenbytes tc2231 case with a recorded verdict
+  (`tests/differential/tc2231.md`); property tests for every 0.4 parser and
+  the writer-parser closure check for every 0.4 writer; counting-allocator
+  tests over every 0.4 parse and write.
+- Fuzz targets: `media_range`, `accept_negotiate`, `etag_condition`, `range`,
+  `content_range`, `ext_value`, `content_disposition`, `cache_control`,
+  `forwarded`, `xff`, `authorization`, `www_authenticate`, `origin`,
+  `sfv_item`, `sfv_list`, `sfv_dictionary`, and the differential oracle
+  `diff_sfv` (against `sfv`), with verdicts V-5 to V-7.
+- `docs/GRAMMAR.md`: for every field, the ABNF from its RFC, the case rules,
+  each leniency or strictness and the RFC text behind it, and the function
+  that parses it.
+
+### Changed
+
+- `media::write` refuses a parameter name given twice (`DuplicateName`), so
+  its output always parses (D-052).
+- `docs/API.md`: `Node` ports (D-047), `AuthParams` (D-048), the `sfv`
+  additions (D-055); `parse_challenges`, `write_challenge_token68`, and
+  `has_bidi_control` shipped in 0.4, ahead of plan (D-049).
+- `RangeHeader::len` is documented as the size of the range set whatever the
+  unit.
+
+---
+
 ## [0.3.0] - 2026-10-22
 
 The core: what http-net, ws-net, and cookie-net need.
@@ -124,7 +197,8 @@ The scaffold and the plan. No parsing code yet.
   (0.1 to 1.0 with exit criteria).
 - `fuzz/` crate skeleton; targets arrive with the parsers they cover.
 
-[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/jamesgober/parse-net/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jamesgober/parse-net/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/jamesgober/parse-net/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/parse-net/releases/tag/v0.1.0

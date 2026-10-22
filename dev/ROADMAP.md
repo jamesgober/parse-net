@@ -48,27 +48,30 @@ Unit tests, property tests, fuzz targets (each run 60 s clean in WSL, 1.3 to 13.
 
 Exit: conformance suites pass (httpwg structured-field-tests in full; every tc2231 case with a recorded verdict); every new parser has a fuzz target that has run 1 hour clean.
 
-- [ ] TXT-13, TXT-14, LIM-3, NUM-2, PRM-4, MED-7, MED-8.
-- [ ] NEG-1 to NEG-9.
-- [ ] ETG-1 to ETG-7, RNG-1 to RNG-8.
-- [ ] EXT-1 to EXT-4, DSP-1 to DSP-6.
-- [ ] CCH-1 to CCH-5.
-- [ ] FWD-1 to FWD-6, FWD-8.
-- [ ] ATH-1, ATH-2, ATH-4, ATH-6.
-- [ ] ORG-1 to ORG-4, PCT-4.
-- [ ] SFV-1 to SFV-12, SFV-14, SFV-15.
-- [ ] `docs/GRAMMAR.md`.
-- [ ] Defence idea: writer-parser closure check (PLAN 15).
+- [x] TXT-13, TXT-14, LIM-3, NUM-2, PRM-4, MED-7, MED-8 (NUM-2, PCT-4, and PRM-4's policies shipped in 0.3, D-042).
+- [x] NEG-1 to NEG-9.
+- [x] ETG-1 to ETG-7, RNG-1 to RNG-8.
+- [x] EXT-1 to EXT-4, DSP-1 to DSP-6 (and DSP-7, ahead of 0.5, D-049).
+- [x] CCH-1 to CCH-5.
+- [x] FWD-1 to FWD-6, FWD-8 (node ports as `NodePort`, D-047).
+- [x] ATH-1, ATH-2, ATH-4, ATH-6 (and ATH-5, ATH-7, ahead of 0.5, D-049; `AuthParams`, D-048).
+- [x] ORG-1 to ORG-4, PCT-4.
+- [x] SFV-1 to SFV-12, SFV-14, SFV-15 (additions in D-055).
+- [x] `docs/GRAMMAR.md`.
+- [x] Defence idea: writer-parser closure check (PLAN 15): property tests over every writer and the round trips in the fuzz targets; it found that `write_challenge` and `media::write` accepted a repeated parameter name that every parser refuses (D-052).
+- [x] httpwg structured-field-tests: all 1598 cases, and every list and dictionary again one line per member (D-050, D-051).
+- [x] tc2231: every case with a verdict, 66 agree and 21 in five recorded classes (D-054).
+- [x] Every new parser's fuzz target 1 hour clean (17 targets, including the `diff_sfv` oracle, D-056): 6.6 to 407 million inputs each in WSL Ubuntu, 2026-10-21.
 
 ## v0.5.0 - Feature complete (smtp-net, links, challenges, owned forms)
 
 Exit: every P0, P1, and P2 item exists; every public item has a doctest; `cargo tree -e normal` is empty for the default build.
 
 - [ ] LNK-1 to LNK-4.
-- [ ] ATH-3, ATH-5, ATH-7, FWD-7.
+- [ ] ATH-3, FWD-7 (ATH-5 and ATH-7 shipped in 0.4, D-049).
 - [ ] SFV-13, SFV-16.
 - [ ] DAT-11 to DAT-13, MAIL-1 to MAIL-14.
-- [ ] DSP-7, MED-11, OWN.
+- [ ] MED-11, OWN (DSP-7 shipped in 0.4, D-049).
 - [ ] The `encode-lib` feature, if encode-lib is published; otherwise the move is recorded here (D-002).
 - [ ] `docs/ARCHITECTURE.md`.
 

@@ -1,0 +1,180 @@
+# greenbytes tc2231 (https://greenbytes.de/tech/tc2231/): every case, the header
+# bytes as the test pages send them. Format: expected<TAB>input. expected is the
+# disposition type (lowercase), then ;filename=<decoded> when a file name decodes
+# (;filename=err:<ErrorKind> when it does not), or err:<ErrorKind>. The comment
+# before each case names it and its verdict: agree, or a class C-n explained in
+# tests/differential/tc2231.md.
+# inlonly: agree
+inline	inline
+# inlonlyquoted: agree
+err:NotToken	"inline"
+# inlwithasciifilename: agree
+inline;filename=foo.html	inline; filename="foo.html"
+# inlwithfnattach: agree
+inline;filename=Not an attachment!	inline; filename="Not an attachment!"
+# inlwithasciifilenamepdf: agree
+inline;filename=foo.pdf	inline; filename="foo.pdf"
+# attonly: agree
+attachment	attachment
+# attonlyquoted: agree
+err:NotToken	"attachment"
+# attonly403: agree
+attachment	attachment
+# attonlyucase: agree
+attachment	ATTACHMENT
+# attwithasciifilename: agree
+attachment;filename=foo.html	attachment; filename="foo.html"
+# attwithasciifilename25: agree
+attachment;filename=0000000000111111111122222	attachment; filename="0000000000111111111122222"
+# attwithasciifilename35: agree
+attachment;filename=00000000001111111111222222222233333	attachment; filename="00000000001111111111222222222233333"
+# attwithasciifnescapedchar: agree
+attachment;filename=foo.html	attachment; filename="f\x5coo.html"
+# attwithasciifnescapedquote: agree
+attachment;filename="quoting" tested.html	attachment; filename="\x5c"quoting\x5c" tested.html"
+# attwithquotedsemicolon: agree
+attachment;filename=Here's a semicolon;.html	attachment; filename="Here's a semicolon;.html"
+# attwithfilenameandextparam: agree
+attachment;filename=foo.html	attachment; foo="bar"; filename="foo.html"
+# attwithfilenameandextparamescaped: agree
+attachment;filename=foo.html	attachment; foo="\x5c"\x5c\x5c";filename="foo.html"
+# attwithasciifilenameucase: agree
+attachment;filename=foo.html	attachment; FILENAME="foo.html"
+# attwithasciifilenamenq: agree
+attachment;filename=foo.html	attachment; filename=foo.html
+# attwithtokfncommanq: agree
+err:TrailingData	attachment; filename=foo,bar.html
+# attwithasciifilenamenqs: C-1
+attachment;filename=foo.html	attachment; filename=foo.html ;
+# attemptyparam: C-1
+attachment;filename=foo	attachment; ;filename=foo
+# attwithasciifilenamenqws: agree
+err:TrailingData	attachment; filename=foo bar.html
+# attwithfntokensq: agree
+attachment;filename='foo.bar'	attachment; filename='foo.bar'
+# attwithisofnplain: C-4
+attachment;filename=err:InvalidUtf8	attachment; filename="foo-\xe4.html"
+# attwithutf8fnplain: agree
+attachment;filename=foo-\xc3\xa4.html	attachment; filename="foo-\xc3\xa4.html"
+# attwithfnrawpctenca: agree
+attachment;filename=foo-%41.html	attachment; filename="foo-%41.html"
+# attwithfnusingpct: agree
+attachment;filename=50%.html	attachment; filename="50%.html"
+# attwithfnrawpctencaq: agree
+attachment;filename=foo-%41.html	attachment; filename="foo-%\x5c41.html"
+# attwithnamepct: agree
+attachment	attachment; name="foo-%41.html"
+# attwithfilenamepctandiso: C-4
+attachment;filename=err:InvalidUtf8	attachment; filename="\xe4-%41.html"
+# attwithfnrawpctenclong: agree
+attachment;filename=foo-%c3%a4-%e2%82%ac.html	attachment; filename="foo-%c3%a4-%e2%82%ac.html"
+# attwithasciifilenamews1: C-2
+err:InvalidByte	attachment; filename ="foo.html"
+# attwith2filenames: agree
+err:DuplicateParameter	attachment; filename="foo.html"; filename="bar.html"
+# attfnbrokentoken: agree
+err:TrailingData	attachment; filename=foo[1](2).html
+# attfnbrokentokeniso: agree
+err:TrailingData	attachment; filename=foo-\xe4.html
+# attfnbrokentokenutf: agree
+err:TrailingData	attachment; filename=foo-\xc3\xa4.html
+# attmissingdisposition: agree
+err:TrailingData	filename=foo.html
+# attmissingdisposition2: agree
+err:TrailingData	x=y; filename=foo.html
+# attmissingdisposition3: agree
+err:NotToken	"foo; filename=bar;baz"; filename=qux
+# attmissingdisposition4: agree
+err:TrailingData	filename=foo.html, filename=bar.html
+# emptydisposition: agree
+err:NotToken	; filename=foo.html
+# doublecolon: agree
+err:NotToken	: inline; attachment; filename=foo.html
+# attandinline: agree
+err:MissingValue	inline; attachment; filename=foo.html
+# attandinline2: agree
+err:MissingValue	attachment; inline; filename=foo.html
+# attbrokenquotedfn: agree
+err:TrailingData	attachment; filename="foo.html".txt
+# attbrokenquotedfn2: agree
+err:UnterminatedQuote	attachment; filename="bar
+# attbrokenquotedfn3: agree
+err:TrailingData	attachment; filename=foo"bar;baz"qux
+# attmultinstances: agree
+err:TrailingData	attachment; filename=foo.html, attachment; filename=bar.html
+# attmissingdelim: agree
+err:TrailingData	attachment; foo=foo filename=bar
+# attmissingdelim2: agree
+err:TrailingData	attachment; filename=bar foo=foo 
+# attmissingdelim3: agree
+err:TrailingData	attachment filename=bar
+# attreversed: agree
+err:TrailingData	filename=foo.html; attachment
+# attconfusedparam: agree
+attachment	attachment; xfilename=foo.html
+# attabspath: agree
+attachment;filename=/foo.html	attachment; filename="/foo.html"
+# attabspathwin: agree
+attachment;filename=\x5cfoo.html	attachment; filename="\x5c\x5cfoo.html"
+# attcdate: agree
+attachment	attachment; creation-date="Wed, 12 Feb 1997 16:29:51 -0500"
+# attmdate: agree
+attachment	attachment; modification-date="Wed, 12 Feb 1997 16:29:51 -0500"
+# dispext: agree
+foobar	foobar
+# dispextbadfn: agree
+attachment	attachment; example="filename=example.txt"
+# attwithisofn2231iso: agree
+attachment;filename=foo-\xc3\xa4.html	attachment; filename*=iso-8859-1''foo-%E4.html
+# attwithfn2231utf8: agree
+attachment;filename=foo-\xc3\xa4-\xe2\x82\xac.html	attachment; filename*=UTF-8''foo-%c3%a4-%e2%82%ac.html
+# attwithfn2231noc: C-5
+err:InvalidCharset	attachment; filename*=''foo-%c3%a4-%e2%82%ac.html
+# attwithfn2231utf8comp: agree
+attachment;filename=foo-a\xcc\x88.html	attachment; filename*=UTF-8''foo-a%cc%88.html
+# attwithfn2231ws1: C-5
+err:MissingValue	attachment; filename *=UTF-8''foo-%c3%a4.html
+# attwithfn2231ws2: C-2
+err:InvalidByte	attachment; filename*= UTF-8''foo-%c3%a4.html
+# attwithfn2231ws3: C-2
+err:InvalidByte	attachment; filename* =UTF-8''foo-%c3%a4.html
+# attwithfn2231quot: C-5
+err:InvalidCharset	attachment; filename*="UTF-8''foo-%c3%a4.html"
+# attwithfn2231quot2: C-5
+err:InvalidCharset	attachment; filename*="foo%20bar.html"
+# attwithfn2231singleqmissing: C-5
+err:InvalidCharset	attachment; filename*=UTF-8'foo-%c3%a4.html
+# attwithfn2231nbadpct1: C-5
+err:InvalidPercentEncoding	attachment; filename*=UTF-8''foo%
+# attwithfn2231nbadpct2: C-5
+err:InvalidPercentEncoding	attachment; filename*=UTF-8''f%oo.html
+# attwithfn2231dpct: agree
+attachment;filename=A-%41.html	attachment; filename*=UTF-8''A-%2541.html
+# attwithfn2231abspathdisguised: agree
+attachment;filename=\x5cfoo.html	attachment; filename*=UTF-8''%5cfoo.html
+# attfncont: C-3
+attachment	attachment; filename*0="foo."; filename*1="html"
+# attfncontqs: C-3
+attachment	attachment; filename*0="foo"; filename*1="\x5cb\x5ca\x5cr.html"
+# attfncontenc: C-3
+attachment	attachment; filename*0*=UTF-8''foo-%c3%a4; filename*1=".html"
+# attfncontlz: C-3
+attachment	attachment; filename*0="foo"; filename*01="bar"
+# attfncontnc: C-3
+attachment	attachment; filename*0="foo"; filename*2="bar"
+# attfnconts1: C-3
+attachment	attachment; filename*1="foo."; filename*2="html"
+# attfncontord: C-3
+attachment	attachment; filename*1="bar"; filename*0="foo"
+# attfnboth: agree
+attachment;filename=foo-\xc3\xa4.html	attachment; filename="foo-ae.html"; filename*=UTF-8''foo-%c3%a4.html
+# attfnboth2: agree
+attachment;filename=foo-\xc3\xa4.html	attachment; filename*=UTF-8''foo-%c3%a4.html; filename="foo-ae.html"
+# attfnboth3: agree
+attachment;filename=currency-sign=\xc2\xa4	attachment; filename*0*=ISO-8859-15''euro-sign%3d%a4; filename*=ISO-8859-1''currency-sign%3d%a4
+# attnewandfn: agree
+attachment;filename=foo.html	attachment; foobar=x; filename="foo.html"
+# attrfc2047token: agree
+err:InvalidByte	attachment; filename==?ISO-8859-1?Q?foo-=E4.html?=
+# attrfc2047quoted: agree
+attachment;filename==?ISO-8859-1?Q?foo-=E4.html?=	attachment; filename="=?ISO-8859-1?Q?foo-=E4.html?="

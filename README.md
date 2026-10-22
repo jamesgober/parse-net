@@ -41,7 +41,7 @@
 
 ## Features
 
-The list below is the plan for 1.0. What ships in the current version is under [Status](#status-core).
+The list below is the plan for 1.0. What ships in the current version is under [Status](#status-extended).
 
 ### **Field grammar**
 - **Byte classes** - every ABNF class (`tchar`, `qdtext`, `ctext`, `etagc`, `attr-char`, MIME `token`, RFC 3986, Structured Field keys and tokens) in one 1 KiB table, one load and one mask per byte.
@@ -76,10 +76,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-parse-net = "0.3.0"
+parse-net = "0.4.0"
 
 # Optional features:
-parse-net = { version = "0.3.0", features = [
+parse-net = { version = "0.4.0", features = [
     "alloc",        # owned forms and Sink for Vec<u8>
     "std",          # SystemTime conversions and http_date() with the system clock
 ] }
@@ -164,9 +164,9 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 
 ---
 
-## **Status: core**
+## **Status: extended**
 
-**Current Version:** `0.3.0` - the core that http-net, ws-net, and cookie-net need.
+**Current Version:** `0.4.0` - the core plus the web layer and what form-net needs.
 **Target:** `1.0.0` stable, per the roadmap in [`dev/ROADMAP.md`](./dev/ROADMAP.md).
 
 **What's complete**:
@@ -179,11 +179,16 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 - **HTTP-date** - all three formats, the RFC 9110 50-year rule with an explicit clock, IMF-fixdate formatting, years 1 to 9999, the calendar functions; `SystemTime` conversions with `std`.
 - **Host** - reg-names, IPv4, IPv6, IPvFuture, ports; numeric names that browsers read as IPv4 refused.
 - **Percent-encoding** - validation, decoding into a caller buffer (UTF-8 checked, lowercase-only for Structured Fields), encoding with named sets.
-- **Proof** - unit tests on every path, property tests (no panic, round trips, SWAR equals bytewise, combined lines), counting-allocator tests for every parse and write, RFC vectors, ten fuzz targets including two differential oracles against `httpdate` and `mime`.
+- **Content negotiation** - `Accept`, `Accept-Language` (RFC 4647 lookup or filtering), `Accept-Encoding`, `Accept-Charset`, with q-values and an explicit outcome when a header is ignored.
+- **Conditional and range requests** - entity tags with strong and weak comparison, `If-Match`, `If-None-Match`, `Range` resolution that refuses abusive sets, `Content-Range`, `If-Range`.
+- **File names** - RFC 8187 values and `Content-Disposition` with `filename*` preferred, decoded controls refused, path separators and bidi controls reported; every tc2231 case has a verdict.
+- **Caching, proxies, auth, origins** - `Cache-Control`, `Forwarded` and `X-Forwarded-*` with client-address resolution through trusted proxies only, `Authorization` and `WWW-Authenticate` with redacted `Debug`, `Origin` with exact same-origin comparison.
+- **Structured Fields** - RFC 9651 Items, Lists, and Dictionaries with every bare item type, views and a single-pass visitor, passing the httpwg structured-field-tests suite in full.
+- **Proof** - unit tests on every path, property tests (no panic, round trips, writer-parser closure, combined lines), counting-allocator tests for every parse and write, RFC and tc2231 vectors, 27 fuzz targets including three differential oracles against `httpdate`, `mime`, and `sfv`.
 
 **What's planned next**:
-- `0.4.0`: negotiation, entity tags, ranges, RFC 8187 and `Content-Disposition`, `Cache-Control`, `Forwarded`, `Authorization`, `Origin`, Structured Field parsing.
-- `0.5.0`: `Link`, challenges, Structured Field writing, the email lexical layer, owned forms.
+- `0.5.0`: `Link`, Structured Field writing, the email lexical layer, owned forms, `docs/ARCHITECTURE.md`.
+- `0.6.0`: benchmarks against the named competitors and `docs/PERFORMANCE.md`.
 
 **Note on API stability**: the API was locked at `0.2.0` ([`docs/API.md`](./docs/API.md)); names and signatures change only with a recorded decision until `1.0.0` freezes them, with the contract recorded in `docs/STABILITY-1.0.md`.
 
@@ -192,6 +197,7 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 ## **Documentation & Resources**
 
 - **[API Reference](docs/API.md)** - every public item with examples
+- **[Grammar](docs/GRAMMAR.md)** - each field's ABNF, case rules, and leniencies
 - **[Migration](docs/MIGRATION.md)** - moving http-net and ws-net onto parse-net
 - **[Plan](dev/PLAN.md)** - design, threats, and decisions
 - **[Roadmap](dev/ROADMAP.md)** - versions and exit criteria

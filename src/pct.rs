@@ -224,7 +224,7 @@ pub fn validate_with(input: &[u8], allowed: Class) -> Result<()> {
             }
         } else if allowed.contains(b) {
             i += 1;
-        } else if b < 0x20 || b == 0x7f {
+        } else if crate::scan::is_control(b) {
             return err(control_kind(b), i);
         } else {
             return err(ErrorKind::InvalidByte, i);

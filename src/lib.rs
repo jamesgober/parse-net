@@ -73,7 +73,8 @@
 //!
 //! ## Status
 //!
-//! The core, `0.3.0`. The public API is written down in `docs/API.md`, the
+//! Extended, `0.4.0`: the core plus the web layer. The public API is written
+//! down in `docs/API.md`, each field's grammar in `docs/GRAMMAR.md`, the
 //! design in `dev/PLAN.md`, and the milestone schedule in `dev/ROADMAP.md`
 //! (all in the [repository](https://github.com/jamesgober/parse-net)).
 
@@ -105,30 +106,55 @@ extern crate std;
 #[cfg(feature = "alloc")]
 extern crate alloc;
 
+pub mod auth;
+pub mod cache;
 pub mod class;
 pub mod date;
+pub mod disposition;
 mod error;
+pub mod etag;
+pub mod ext_value;
+pub mod forwarded;
 pub mod host;
 mod limits;
 pub mod list;
 pub mod media;
+pub mod negotiate;
 pub mod num;
+pub mod origin;
 pub mod param;
 pub mod pct;
+pub mod range;
 pub mod scan;
+pub mod sfv;
 pub mod text;
 mod utf8;
 pub mod write;
 
+pub use auth::{AuthPayload, Challenge, Credentials, basic, bearer};
+pub use cache::{
+    Directive, RequestDirectives, ResponseDirectives, request_cache_control, response_cache_control,
+};
 #[cfg(feature = "std")]
 pub use date::http_date;
 pub use date::{Civil, DateFormat, HttpDate, http_date_at};
+pub use disposition::{
+    ContentDisposition, DispositionType, Filename, parse_content_disposition, write_attachment,
+};
 pub use error::{ErrorKind, Full, ParseError, WriteError};
+pub use etag::{Condition, EntityTag, TagList, if_match, if_none_match, parse_condition};
+pub use ext_value::{Charset, ExtValue, write_ext_value};
+pub use forwarded::{ClientAddress, ForwardedSource, Trust, client_address};
 pub use host::{Host, HostPort, parse_host_port};
 pub use limits::{DuplicatePolicy, Limits};
 pub use list::{List, list};
-pub use media::{Boundary, MediaType, parse_media_type};
+pub use media::{Boundary, MediaRange, MediaType, parse_media_type};
+pub use negotiate::{QValue, best_charset, best_encoding, best_language, best_media};
+pub use origin::{Origin, OriginValue, parse_origin};
 pub use param::{Param, Params};
+pub use range::{
+    ByteRange, ContentRange, IfRange, RangeHeader, RangeOutcome, RangeSpec, byte_ranges,
+};
 pub use text::{Comment, Quoted, Word};
 pub use write::{CountSink, Sink, SliceSink};
 

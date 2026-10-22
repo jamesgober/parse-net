@@ -130,7 +130,7 @@ pub fn parse_token(s: &[u8]) -> Result<(&[u8], usize)> {
 /// The error for a byte refused inside a quoted string or comment.
 #[inline]
 const fn refused(b: u8) -> ErrorKind {
-    if b < 0x20 || b == 0x7f {
+    if crate::scan::is_control(b) {
         control_kind(b)
     } else {
         ErrorKind::InvalidByte
@@ -311,6 +311,12 @@ pub struct Quoted<'a> {
 }
 
 impl<'a> Quoted<'a> {
+    /// A view over content already validated by another grammar whose
+    /// escapes are `\x` pairs (RFC 9651 strings).
+    pub(crate) const fn from_raw(raw: &'a [u8], has_escapes: bool) -> Self {
+        Self { raw, has_escapes }
+    }
+
     /// The content between the quotes exactly as sent, quoted pairs included.
     #[must_use]
     pub const fn raw(&self) -> &'a [u8] {
@@ -513,6 +519,33 @@ impl<'a> Word<'a> {
         match self {
             Self::Token(t) => t.len(),
             Self::Quoted(q) => q.unescaped_len(),
+        }
+    }
+
+    /// Whether two words have equal unescaped values, optionally ignoring
+    /// ASCII case (RFC 9110 section 5.6.6: the token and quoted forms of the
+    /// same value are equal).
+    pub(crate) fn same_value(&self, other: &Word<'_>, ignore_case: bool) -> bool {
+        match other {
+            Word::Token(t) if ignore_case => self.eq_ignore_ascii_case(t),
+            Word::Token(t) => self.eq_bytes(t),
+            Word::Quoted(q) => {
+                let mut theirs = q.bytes();
+                let eq = |a: u8, b: u8| {
+                    if ignore_case {
+                        a.eq_ignore_ascii_case(&b)
+                    } else {
+                        a == b
+                    }
+                };
+                let all = match self {
+                    Word::Token(t) => t.iter().all(|&a| theirs.next().is_some_and(|b| eq(a, b))),
+                    Word::Quoted(mine) => mine
+                        .bytes()
+                        .all(|a| theirs.next().is_some_and(|b| eq(a, b))),
+                };
+                all && theirs.next().is_none()
+            }
         }
     }
 
