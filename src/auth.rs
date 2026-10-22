@@ -81,6 +81,18 @@ fn is_param_start(e: &[u8]) -> bool {
 /// Comma-separated `auth-param`s, validated.
 ///
 /// `Debug` prints the parameter names only: values can be secrets.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{auth, AuthPayload, Limits};
+///
+/// let c = auth::parse_credentials(b"Digest username=\"a\", realm=\"r\"", &Limits::DEFAULT)?;
+/// let AuthPayload::Params(p) = c.payload() else { unreachable!() };
+/// assert_eq!(p.len(), 2);
+/// assert!(p.get("realm").is_some_and(|v| v.eq_bytes(b"r")));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AuthParams<'a> {
     text: &'a [u8],
@@ -89,6 +101,18 @@ pub struct AuthParams<'a> {
 
 impl<'a> AuthParams<'a> {
     /// The parameters, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, AuthPayload, Limits};
+    ///
+    /// let c = auth::parse_credentials(b"Digest username=\"a\", nc=1", &Limits::DEFAULT)?;
+    /// let AuthPayload::Params(p) = c.payload() else { unreachable!() };
+    /// let names: Vec<&[u8]> = p.iter().map(|(n, _)| n).collect();
+    /// assert_eq!(names, [&b"username"[..], b"nc"]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn iter(&self) -> impl Iterator<Item = (&'a [u8], Word<'a>)> + use<'a> {
         list::parse(self.text, &Limits::DEFAULT.max_list_members(u16::MAX))
             .into_iter()
@@ -97,6 +121,18 @@ impl<'a> AuthParams<'a> {
     }
 
     /// The value of the parameter `name` (ASCII case-insensitive).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, AuthPayload, Limits};
+    ///
+    /// let c = auth::parse_credentials(b"Digest Realm=\"api\"", &Limits::DEFAULT)?;
+    /// let AuthPayload::Params(p) = c.payload() else { unreachable!() };
+    /// assert!(p.get("realm").is_some_and(|v| v.eq_bytes(b"api")));
+    /// assert!(p.get("nonce").is_none());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Word<'a>> {
         self.iter()
@@ -105,12 +141,34 @@ impl<'a> AuthParams<'a> {
     }
 
     /// The number of parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, AuthPayload, Limits};
+    ///
+    /// let c = auth::parse_credentials(b"Digest a=1, b=2, c=3", &Limits::DEFAULT)?;
+    /// let AuthPayload::Params(p) = c.payload() else { unreachable!() };
+    /// assert_eq!(p.len(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.count
     }
 
     /// Whether there are no parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, AuthPayload, Limits};
+    ///
+    /// let c = auth::parse_credentials(b"Digest a=1", &Limits::DEFAULT)?;
+    /// let AuthPayload::Params(p) = c.payload() else { unreachable!() };
+    /// assert!(!p.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.count == 0
@@ -131,6 +189,18 @@ impl fmt::Debug for AuthParams<'_> {
 }
 
 /// What follows the scheme of a credential or a challenge.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{auth, AuthPayload, Limits};
+///
+/// let l = Limits::DEFAULT;
+/// assert_eq!(auth::parse_credentials(b"Negotiate", &l)?.payload(), AuthPayload::None);
+/// assert_eq!(auth::parse_credentials(b"Bearer abc123", &l)?.payload(), AuthPayload::Token68(b"abc123"));
+/// assert!(matches!(auth::parse_credentials(b"Digest a=b", &l)?.payload(), AuthPayload::Params(_)));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AuthPayload<'a> {
     /// Nothing.
@@ -154,6 +224,17 @@ impl fmt::Debug for AuthPayload<'_> {
 /// Validated credentials (`Authorization`, `Proxy-Authorization`).
 ///
 /// `Debug` prints the scheme only.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{auth, AuthPayload, Limits};
+///
+/// let c = auth::parse_credentials(b"Bearer abc123", &Limits::DEFAULT)?;
+/// assert!(c.scheme_is("bearer"));
+/// assert_eq!(c.payload(), AuthPayload::Token68(b"abc123"));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Credentials<'a> {
     scheme: &'a [u8],
@@ -162,18 +243,48 @@ pub struct Credentials<'a> {
 
 impl<'a> Credentials<'a> {
     /// The scheme, as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, Limits};
+    ///
+    /// let c = auth::parse_credentials(b"Bearer abc123", &Limits::DEFAULT)?;
+    /// assert_eq!(c.scheme(), b"Bearer");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn scheme(&self) -> &'a [u8] {
         self.scheme
     }
 
     /// Whether the scheme is `s` (ASCII case-insensitive).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, Limits};
+    ///
+    /// let c = auth::parse_credentials(b"BASIC dXNlcjpwYXNz", &Limits::DEFAULT)?;
+    /// assert!(c.scheme_is("basic") && !c.scheme_is("bearer"));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn scheme_is(&self, s: &str) -> bool {
         self.scheme.eq_ignore_ascii_case(s.as_bytes())
     }
 
     /// The payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, AuthPayload, Limits};
+    ///
+    /// let c = auth::parse_credentials(b"Basic dXNlcjpwYXNz", &Limits::DEFAULT)?;
+    /// assert_eq!(c.payload(), AuthPayload::Token68(b"dXNlcjpwYXNz"));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn payload(&self) -> AuthPayload<'a> {
         self.payload
@@ -287,6 +398,15 @@ pub fn parse_credentials<'a>(value: &'a [u8], limits: &Limits) -> Result<Credent
 /// [`ErrorKind::Empty`] for `Bearer` alone; [`ErrorKind::InvalidByte`] when
 /// the payload is not a `b64token`; [`ErrorKind::TrailingData`]; the scheme
 /// errors.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(parse_net::bearer(b"Bearer abc123")?, Some(&b"abc123"[..]));
+/// assert_eq!(parse_net::bearer(b"Basic dXNlcjpwYXNz")?, None);
+/// assert!(parse_net::bearer(b"Bearer").is_err());
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 pub fn bearer(value: &[u8]) -> Result<Option<&[u8]>> {
     let c = parse_credentials(value, &Limits::DEFAULT)?;
     if !c.scheme_is("bearer") {
@@ -311,6 +431,15 @@ pub fn bearer(value: &[u8]) -> Result<Option<&[u8]>> {
 ///
 /// [`ErrorKind::InvalidBase64`]; [`ErrorKind::Empty`] for `Basic` alone;
 /// the scheme errors.
+///
+/// # Examples
+///
+/// ```
+/// assert_eq!(parse_net::basic(b"Basic dXNlcjpwYXNz")?, Some(&b"dXNlcjpwYXNz"[..]));
+/// assert_eq!(parse_net::basic(b"Bearer abc123")?, None);
+/// assert!(parse_net::basic(b"Basic YQ").is_err());
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 pub fn basic(value: &[u8]) -> Result<Option<&[u8]>> {
     let c = parse_credentials(value, &Limits::DEFAULT)?;
     if !c.scheme_is("basic") {
@@ -334,6 +463,18 @@ pub fn basic(value: &[u8]) -> Result<Option<&[u8]>> {
 }
 
 /// One challenge.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{auth, Limits};
+///
+/// let c = auth::parse_challenges(b"Bearer realm=\"api\", error=invalid_token", &Limits::DEFAULT)?;
+/// let first = c.iter().next().expect("one challenge");
+/// assert!(first.scheme_is("bearer"));
+/// assert!(first.param("error").is_some_and(|v| v.eq_bytes(b"invalid_token")));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Challenge<'a> {
     scheme: &'a [u8],
@@ -342,24 +483,68 @@ pub struct Challenge<'a> {
 
 impl<'a> Challenge<'a> {
     /// The scheme, as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, Limits};
+    ///
+    /// let c = auth::parse_challenges(b"Basic realm=\"x\", Negotiate", &Limits::DEFAULT)?;
+    /// let schemes: Vec<&[u8]> = c.iter().map(|x| x.scheme()).collect();
+    /// assert_eq!(schemes, [&b"Basic"[..], b"Negotiate"]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn scheme(&self) -> &'a [u8] {
         self.scheme
     }
 
     /// Whether the scheme is `s` (ASCII case-insensitive).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, Limits};
+    ///
+    /// let c = auth::parse_challenges(b"NEGOTIATE", &Limits::DEFAULT)?;
+    /// assert!(c.iter().next().is_some_and(|x| x.scheme_is("negotiate")));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn scheme_is(&self, s: &str) -> bool {
         self.scheme.eq_ignore_ascii_case(s.as_bytes())
     }
 
     /// The payload.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, AuthPayload, Limits};
+    ///
+    /// let c = auth::parse_challenges(b"Negotiate abc==", &Limits::DEFAULT)?;
+    /// let first = c.iter().next().expect("one challenge");
+    /// assert_eq!(first.payload(), AuthPayload::Token68(b"abc=="));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn payload(&self) -> AuthPayload<'a> {
         self.payload
     }
 
     /// The parameter `name` (`realm`, `error`, `scope`, ...).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, Limits};
+    ///
+    /// let c = auth::parse_challenges(b"Basic realm=\"simple\", charset=UTF-8", &Limits::DEFAULT)?;
+    /// let first = c.iter().next().expect("one challenge");
+    /// assert!(first.param("Realm").is_some_and(|v| v.eq_bytes(b"simple")));
+    /// assert!(first.param("scope").is_none());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn param(&self, name: &str) -> Option<Word<'a>> {
         match self.payload {
@@ -370,6 +555,17 @@ impl<'a> Challenge<'a> {
 }
 
 /// Validated challenges.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{auth, Limits};
+///
+/// let c = auth::parse_challenges(b"Basic realm=\"a\", Bearer", &Limits::DEFAULT)?;
+/// assert_eq!(c.len(), 2);
+/// assert!(c.iter().any(|x| x.scheme_is("bearer")));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Challenges<'a> {
     list: list::List<'a>,
@@ -379,6 +575,19 @@ pub struct Challenges<'a> {
 
 impl<'a> Challenges<'a> {
     /// The challenges, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, Limits};
+    ///
+    /// let c = auth::parse_challenges(b"Basic realm=\"a\", Bearer", &Limits::DEFAULT)?;
+    /// let mut it = c.iter();
+    /// assert!(it.next().is_some_and(|x| x.scheme_is("basic")));
+    /// assert!(it.next().is_some_and(|x| x.scheme_is("bearer")));
+    /// assert!(it.next().is_none());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn iter(&self) -> ChallengeIter<'a> {
         ChallengeIter {
@@ -388,12 +597,32 @@ impl<'a> Challenges<'a> {
     }
 
     /// The number of challenges.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, Limits};
+    ///
+    /// let c = auth::parse_challenges(b"A, B realm=x, C abc==", &Limits::DEFAULT)?;
+    /// assert_eq!(c.len(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.count
     }
 
     /// Whether there are no challenges.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{auth, Limits};
+    ///
+    /// assert!(auth::parse_challenges(b"", &Limits::DEFAULT)?.is_empty());
+    /// assert!(!auth::parse_challenges(b"Basic", &Limits::DEFAULT)?.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.count == 0
@@ -401,6 +630,17 @@ impl<'a> Challenges<'a> {
 }
 
 /// The challenges of a validated value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{auth::{self, ChallengeIter}, Limits};
+///
+/// let c = auth::parse_challenges(b"Negotiate, Basic realm=\"x\"", &Limits::DEFAULT)?;
+/// let it: ChallengeIter<'_> = c.iter();
+/// assert_eq!(it.count(), 2);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct ChallengeIter<'a> {
     value: &'a [u8],

@@ -246,6 +246,16 @@ impl ParseError {
     ///
     /// For callers that implement a visitor or wrap parse-net. Offsets above
     /// `u32::MAX` saturate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{ErrorKind, ParseError};
+    ///
+    /// let e = ParseError::new(ErrorKind::TooLong, 12);
+    /// assert_eq!((e.kind(), e.offset(), e.line()), (ErrorKind::TooLong, 12, 0));
+    /// assert_eq!(ParseError::new(ErrorKind::TooLong, usize::MAX).offset(), u32::MAX as usize);
+    /// ```
     #[must_use]
     pub const fn new(kind: ErrorKind, offset: usize) -> Self {
         let at = if offset > u32::MAX as usize {
@@ -257,6 +267,15 @@ impl ParseError {
     }
 
     /// What was refused.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::ErrorKind;
+    ///
+    /// let e = parse_net::list(b"a, \"b").unwrap_err();
+    /// assert_eq!(e.kind(), ErrorKind::UnterminatedQuote);
+    /// ```
     #[must_use]
     pub const fn kind(&self) -> ErrorKind {
         self.kind
@@ -265,6 +284,15 @@ impl ParseError {
     /// The offset of the first byte that could not be accepted, relative to
     /// the start of the value passed in, or of the field line named by
     /// [`line`](Self::line) when several lines were parsed as one field.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::ErrorKind;
+    ///
+    /// let e = parse_net::list(b"gzip, b\x01r").unwrap_err();
+    /// assert_eq!((e.kind(), e.offset()), (ErrorKind::Control, 7));
+    /// ```
     #[must_use]
     pub const fn offset(&self) -> usize {
         self.at as usize
@@ -272,6 +300,16 @@ impl ParseError {
 
     /// The zero-based index of the field line that failed when several lines
     /// were parsed as one field; `0` otherwise. Saturates at 255.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{list, ErrorKind, Limits};
+    ///
+    /// let lines: [&[u8]; 3] = [b"gzip", b"br", b"x\x00"];
+    /// let e = list::combined(lines, &Limits::DEFAULT).unwrap_err();
+    /// assert_eq!((e.kind(), e.line(), e.offset()), (ErrorKind::Nul, 2, 1));
+    /// ```
     #[must_use]
     pub const fn line(&self) -> usize {
         self.line as usize

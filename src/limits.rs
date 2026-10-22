@@ -63,6 +63,17 @@ pub(crate) const MAX_RFC2231_SECTIONS: u8 = 32;
 
 impl Limits {
     /// The defaults in the table above.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::Limits;
+    ///
+    /// assert_eq!(Limits::DEFAULT, Limits::default());
+    /// let l = parse_net::list::parse(b"a, b, c", &Limits::DEFAULT)?;
+    /// assert_eq!(l.len(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub const DEFAULT: Self = Self {
         list_members: 1024,
         inner_list_members: 256,
@@ -83,12 +94,32 @@ impl Limits {
     };
 
     /// The defaults; the same as [`Limits::DEFAULT`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::Limits;
+    ///
+    /// const LIMITS: Limits = Limits::new();
+    /// assert_eq!(LIMITS, Limits::DEFAULT);
+    /// ```
     #[must_use]
     pub const fn new() -> Self {
         Self::DEFAULT
     }
 
     /// The most members a list may have (default 1024).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{list, ErrorKind, Limits};
+    ///
+    /// let two = Limits::DEFAULT.max_list_members(2);
+    /// assert_eq!(list::parse(b"a, b", &two)?.len(), 2);
+    /// assert_eq!(list::parse(b"a, b, c", &two).unwrap_err().kind(), ErrorKind::TooManyMembers);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn max_list_members(self, n: u16) -> Self {
         Self {
@@ -98,6 +129,16 @@ impl Limits {
     }
 
     /// The most members a Structured Field inner list may have (default 256).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Parser, ErrorKind, Limits};
+    ///
+    /// let p = Parser::new(Limits::DEFAULT.max_inner_list_members(2));
+    /// assert!(p.list(b"(a b), c").is_ok());
+    /// assert_eq!(p.list(b"(a b c)").unwrap_err().kind(), ErrorKind::TooManyMembers);
+    /// ```
     #[must_use]
     pub const fn max_inner_list_members(self, n: u16) -> Self {
         Self {
@@ -107,12 +148,33 @@ impl Limits {
     }
 
     /// The most parameters an item or a field may have (default 256).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{param, ErrorKind, Limits};
+    ///
+    /// let one = Limits::DEFAULT.max_params(1);
+    /// assert_eq!(param::parse(b";a=1", &one)?.0.len(), 1);
+    /// assert_eq!(param::parse(b";a=1;b=2", &one).unwrap_err().kind(), ErrorKind::TooManyMembers);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn max_params(self, n: u16) -> Self {
         Self { params: n, ..self }
     }
 
     /// The most members a Structured Field dictionary may have (default 1024).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Parser, ErrorKind, Limits};
+    ///
+    /// let p = Parser::new(Limits::DEFAULT.max_dictionary_members(1));
+    /// assert!(p.dictionary(b"a=1").is_ok());
+    /// assert_eq!(p.dictionary(b"a=1, b=2").unwrap_err().kind(), ErrorKind::TooManyMembers);
+    /// ```
     #[must_use]
     pub const fn max_dictionary_members(self, n: u16) -> Self {
         Self {
@@ -122,12 +184,32 @@ impl Limits {
     }
 
     /// The longest Structured Field key (default 256).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Parser, ErrorKind, Limits};
+    ///
+    /// let p = Parser::new(Limits::DEFAULT.max_key_len(3));
+    /// assert!(p.dictionary(b"abc=1").is_ok());
+    /// assert_eq!(p.dictionary(b"abcd=1").unwrap_err().kind(), ErrorKind::TooLong);
+    /// ```
     #[must_use]
     pub const fn max_key_len(self, n: u16) -> Self {
         Self { key_len: n, ..self }
     }
 
     /// The longest Structured Field string, decoded (default 1024).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Parser, ErrorKind, Limits};
+    ///
+    /// let p = Parser::new(Limits::DEFAULT.max_string_len(3));
+    /// assert!(p.item(b"\"a\\\"b\"").is_ok());
+    /// assert_eq!(p.item(b"\"abcd\"").unwrap_err().kind(), ErrorKind::TooLong);
+    /// ```
     #[must_use]
     pub const fn max_string_len(self, n: u16) -> Self {
         Self {
@@ -137,6 +219,16 @@ impl Limits {
     }
 
     /// The longest Structured Field token (default 512).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Parser, ErrorKind, Limits};
+    ///
+    /// let p = Parser::new(Limits::DEFAULT.max_token_len(4));
+    /// assert!(p.item(b"gzip").is_ok());
+    /// assert_eq!(p.item(b"deflate").unwrap_err().kind(), ErrorKind::TooLong);
+    /// ```
     #[must_use]
     pub const fn max_token_len(self, n: u16) -> Self {
         Self {
@@ -146,6 +238,16 @@ impl Limits {
     }
 
     /// The longest Structured Field byte sequence, decoded (default 16384).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{sfv::Parser, ErrorKind, Limits};
+    ///
+    /// let p = Parser::new(Limits::DEFAULT.max_byte_seq_len(3));
+    /// assert!(p.item(b":AQID:").is_ok());
+    /// assert_eq!(p.item(b":AQIDBA==:").unwrap_err().kind(), ErrorKind::TooLong);
+    /// ```
     #[must_use]
     pub const fn max_byte_seq_len(self, n: u32) -> Self {
         Self {
@@ -155,6 +257,17 @@ impl Limits {
     }
 
     /// The most empty list elements accepted in one field (default 16).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{list, ErrorKind, Limits};
+    ///
+    /// let one = Limits::DEFAULT.max_empty_elements(1);
+    /// assert_eq!(list::parse(b"a, , b", &one)?.len(), 2);
+    /// assert_eq!(list::parse(b"a, , , b", &one).unwrap_err().kind(), ErrorKind::TooManyEmptyElements);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn max_empty_elements(self, n: u16) -> Self {
         Self {
@@ -164,6 +277,16 @@ impl Limits {
     }
 
     /// The deepest comment nesting accepted (default 8).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{text::parse_comment, ErrorKind, Limits};
+    ///
+    /// let flat = Limits::DEFAULT.max_comment_depth(1);
+    /// assert!(parse_comment(b"(a)", &flat).is_ok());
+    /// assert_eq!(parse_comment(b"(a(b))", &flat).unwrap_err().kind(), ErrorKind::CommentTooDeep);
+    /// ```
     #[must_use]
     pub const fn max_comment_depth(self, n: u8) -> Self {
         Self {
@@ -173,6 +296,18 @@ impl Limits {
     }
 
     /// The most ranges a `Range` field may request (default 16).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{range, ByteRange, Limits, RangeOutcome};
+    ///
+    /// let h = range::parse(b"bytes=0-9, 20-29", &Limits::DEFAULT)?;
+    /// let mut out = [ByteRange { start: 0, end: 0 }; 4];
+    /// assert_eq!(range::resolve(&h, 100, false, &Limits::DEFAULT, &mut out), RangeOutcome::Ranges(2));
+    /// assert_eq!(range::resolve(&h, 100, false, &Limits::DEFAULT.max_ranges(1), &mut out), RangeOutcome::Ignore);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn max_ranges(self, n: u16) -> Self {
         Self { ranges: n, ..self }
@@ -180,6 +315,17 @@ impl Limits {
 
     /// The most RFC 2231 sections in one parameter (default 32). Values above
     /// 32, the size of the reassembly array, are stored as 32.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{mail, ErrorKind, Limits};
+    ///
+    /// let two = Limits::DEFAULT.max_rfc2231_sections(2);
+    /// assert!(mail::parse_mime_params(b"; t*0=a; t*1=b", &two).is_ok());
+    /// let err = mail::parse_mime_params(b"; t*0=a; t*1=b; t*2=c", &two).unwrap_err();
+    /// assert_eq!(err.kind(), ErrorKind::TooManySections);
+    /// ```
     #[must_use]
     pub const fn max_rfc2231_sections(self, n: u8) -> Self {
         let n = if n > MAX_RFC2231_SECTIONS {
@@ -194,6 +340,19 @@ impl Limits {
     }
 
     /// The most RFC 2047 encoded words in one field (default 64).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{mail, ErrorKind, Limits};
+    ///
+    /// let one = Limits::DEFAULT.max_encoded_words(1);
+    /// let mut buf = [0u8; 16];
+    /// assert_eq!(mail::decode_words(b"=?utf-8?q?a?=", &one, &mut buf)?, "a");
+    /// let err = mail::decode_words(b"=?utf-8?q?a?= =?utf-8?q?b?=", &one, &mut buf).unwrap_err();
+    /// assert_eq!(err.kind(), ErrorKind::TooManyMembers);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn max_encoded_words(self, n: u16) -> Self {
         Self {
@@ -203,12 +362,35 @@ impl Limits {
     }
 
     /// The most hops in a forwarded chain (default 16).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{forwarded, ErrorKind, Limits};
+    ///
+    /// let lines = [&b"192.0.2.1, 198.51.100.2"[..]];
+    /// assert!(forwarded::parse_x_forwarded_for(&lines, &Limits::DEFAULT).is_ok());
+    /// let err = forwarded::parse_x_forwarded_for(&lines, &Limits::DEFAULT.max_hops(1)).unwrap_err();
+    /// assert_eq!(err.kind(), ErrorKind::TooManyHops);
+    /// ```
     #[must_use]
     pub const fn max_hops(self, n: u8) -> Self {
         Self { hops: n, ..self }
     }
 
     /// Whether HTTP-date accepts second `60` (read as 59). Off by default.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{HttpDate, Limits};
+    ///
+    /// let leap = b"Sun, 06 Nov 1994 08:49:60 GMT";
+    /// assert!(HttpDate::parse_at_with(leap, 0, &Limits::DEFAULT).is_err());
+    /// let d = HttpDate::parse_at_with(leap, 0, &Limits::DEFAULT.allow_leap_second(true))?;
+    /// assert_eq!(d, HttpDate::parse_imf_fixdate(b"Sun, 06 Nov 1994 08:49:59 GMT")?);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn allow_leap_second(self, yes: bool) -> Self {
         Self {
@@ -219,6 +401,18 @@ impl Limits {
 
     /// What parameter parsers do with a repeated name (default
     /// [`DuplicatePolicy::Refuse`]).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{param, DuplicatePolicy, Limits};
+    ///
+    /// assert!(param::parse(b";a=1;a=2", &Limits::DEFAULT).is_err());
+    /// let last = Limits::DEFAULT.duplicate_params(DuplicatePolicy::Last);
+    /// let (p, _) = param::parse(b";a=1;a=2", &last)?;
+    /// assert!(p.get("a").is_some_and(|v| v.eq_bytes(b"2")));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn duplicate_params(self, p: DuplicatePolicy) -> Self {
         Self {

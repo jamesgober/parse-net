@@ -30,6 +30,18 @@ use crate::{
 };
 
 /// A host: a registered name, an IP address, or a future IP literal.
+///
+/// # Examples
+///
+/// ```
+/// use core::net::Ipv4Addr;
+/// use parse_net::{parse_host_port, Host};
+///
+/// assert_eq!(parse_host_port(b"192.0.2.1")?.host, Host::V4(Ipv4Addr::new(192, 0, 2, 1)));
+/// assert_eq!(parse_host_port(b"example.com")?.host, Host::Name(b"example.com"));
+/// assert_eq!(parse_host_port(b"[v1.fe]")?.host, Host::Future(b"v1.fe"));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Host<'a> {
     /// A registered name (`reg-name`), as sent: case and a trailing dot are
@@ -69,6 +81,16 @@ impl Host<'_> {
     }
 
     /// Whether this is the empty name of an empty `Host` field.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::parse_host_port;
+    ///
+    /// assert!(parse_host_port(b"")?.host.is_empty());
+    /// assert!(!parse_host_port(b"example.com")?.host.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn is_empty(&self) -> bool {
         matches!(self, Host::Name(n) if n.is_empty())
@@ -124,6 +146,17 @@ impl<S: Sink> fmt::Write for SinkWriter<'_, S> {
 }
 
 /// A host and an optional port.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{parse_host_port, Host};
+///
+/// let hp = parse_host_port(b"example.com:")?;
+/// assert_eq!((hp.host, hp.port, hp.empty_port), (Host::Name(b"example.com"), None, true));
+/// assert_eq!(parse_host_port(b"example.com:8080")?.port, Some(8080));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct HostPort<'a> {
     /// The host.

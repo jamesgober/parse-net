@@ -259,6 +259,15 @@ where
 }
 
 /// A validated list. Iterating it cannot fail.
+///
+/// # Examples
+///
+/// ```
+/// let l = parse_net::list(b"gzip, , br")?;
+/// assert_eq!(l.len(), 2);
+/// assert_eq!(l.iter().collect::<Vec<_>>(), [&b"gzip"[..], b"br"]);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct List<'a> {
     value: &'a [u8],
@@ -268,6 +277,17 @@ pub struct List<'a> {
 
 impl<'a> List<'a> {
     /// The elements, in order, each trimmed of OWS.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let l = parse_net::list(b"a, \"b, c\"")?;
+    /// let mut it = l.iter();
+    /// assert_eq!(it.next(), Some(&b"a"[..]));
+    /// assert_eq!(it.next(), Some(&b"\"b, c\""[..]));
+    /// assert_eq!(it.next(), None);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn iter(&self) -> Elements<'a> {
         Elements {
@@ -278,12 +298,27 @@ impl<'a> List<'a> {
     }
 
     /// The number of elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert_eq!(parse_net::list(b"a, , b,")?.len(), 2);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.count as usize
     }
 
     /// Whether the list has no elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// assert!(parse_net::list(b" , ")?.is_empty());
+    /// assert!(!parse_net::list(b"a")?.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.count == 0
@@ -320,6 +355,16 @@ fn top_level_comma(s: &[u8]) -> Option<usize> {
 }
 
 /// The elements of a validated list.
+///
+/// # Examples
+///
+/// ```
+/// let mut e = parse_net::list(b"gzip, br")?.iter();
+/// assert_eq!(e.len(), 2);
+/// assert_eq!(e.next(), Some(&b"gzip"[..]));
+/// assert_eq!(e.len(), 1);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct Elements<'a> {
     rest: &'a [u8],
@@ -356,6 +401,18 @@ impl<'a> Iterator for Elements<'a> {
 impl ExactSizeIterator for Elements<'_> {}
 
 /// Several validated field lines read as one list.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{list, Limits};
+///
+/// let lines: [&[u8]; 2] = [b"gzip", b"br, zstd"];
+/// let c = list::combined(lines, &Limits::DEFAULT)?;
+/// assert_eq!(c.len(), 3);
+/// assert!(c.iter().any(|e| e == b"zstd"));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct CombinedList<'a, I> {
     lines: I,
@@ -365,6 +422,17 @@ pub struct CombinedList<'a, I> {
 
 impl<'a, I: Iterator<Item = &'a [u8]> + Clone> CombinedList<'a, I> {
     /// The elements of every line, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{list, Limits};
+    ///
+    /// let lines: [&[u8]; 2] = [b"gzip", b"br, zstd"];
+    /// let c = list::combined(lines, &Limits::DEFAULT)?;
+    /// assert_eq!(c.iter().collect::<Vec<_>>(), [&b"gzip"[..], b"br", b"zstd"]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn iter(&self) -> CombinedElements<'a, I> {
         CombinedElements {
@@ -379,12 +447,32 @@ impl<'a, I: Iterator<Item = &'a [u8]> + Clone> CombinedList<'a, I> {
     }
 
     /// The number of elements across all lines.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{list, Limits};
+    ///
+    /// let lines: [&[u8]; 3] = [b"a, b", b"", b"c"];
+    /// assert_eq!(list::combined(lines, &Limits::DEFAULT)?.len(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.count
     }
 
     /// Whether no line has an element.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{list, Limits};
+    ///
+    /// let lines: [&[u8]; 2] = [b"", b" , "];
+    /// assert!(list::combined(lines, &Limits::DEFAULT)?.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.count == 0
@@ -392,6 +480,19 @@ impl<'a, I: Iterator<Item = &'a [u8]> + Clone> CombinedList<'a, I> {
 }
 
 /// The elements of a [`CombinedList`].
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{list, Limits};
+///
+/// let lines: [&[u8]; 2] = [b"gzip", b"br"];
+/// let mut it = list::combined(lines, &Limits::DEFAULT)?.iter();
+/// assert_eq!(it.next(), Some(&b"gzip"[..]));
+/// assert_eq!(it.next(), Some(&b"br"[..]));
+/// assert_eq!(it.next(), None);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct CombinedElements<'a, I> {
     lines: I,

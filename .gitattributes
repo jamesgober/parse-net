@@ -12,3 +12,6 @@
 /fuzz             export-ignore
 /.gitignore       export-ignore
 /.editorconfig    export-ignore
+
+# Fuzz seeds are exact bytes (a fold seed holds a real CRLF).
+/fuzz/seeds/** -text

@@ -216,12 +216,32 @@ pub struct MediaRange<'a> {
 
 impl<'a> MediaRange<'a> {
     /// The type, or `*`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{media, Limits};
+    ///
+    /// let r = media::parse_range(b"text/*", &Limits::DEFAULT)?;
+    /// assert_eq!(r.type_(), b"text");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn type_(&self) -> &'a [u8] {
         self.type_
     }
 
     /// The subtype, or `*`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{media, Limits};
+    ///
+    /// assert_eq!(media::parse_range(b"text/*", &Limits::DEFAULT)?.subtype(), b"*");
+    /// assert_eq!(media::parse_range(b"text/csv", &Limits::DEFAULT)?.subtype(), b"csv");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn subtype(&self) -> &'a [u8] {
         self.subtype
@@ -230,6 +250,17 @@ impl<'a> MediaRange<'a> {
     /// Whether this range matches `offer`: the type and subtype match (or
     /// are `*`), and every parameter of the range is present in the offer
     /// with an equal value (case-sensitive, except `charset`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{media, parse_media_type, Limits};
+    ///
+    /// let r = media::parse_range(b"text/html;charset=utf-8", &Limits::DEFAULT)?;
+    /// assert!(r.matches(&parse_media_type(b"text/html; charset=UTF-8")?));
+    /// assert!(!r.matches(&parse_media_type(b"text/html")?));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn matches(&self, offer: &MediaType<'_>) -> bool {
         let type_ok = self.type_ == b"*" || self.type_.eq_ignore_ascii_case(offer.type_());
@@ -246,6 +277,16 @@ impl<'a> MediaRange<'a> {
 
     /// How specific the range is: 4 for a type with parameters, 3 for an
     /// exact type, 2 for `type/*`, 1 for `*/*`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{media, Limits};
+    ///
+    /// let s = |v: &[u8]| media::parse_range(v, &Limits::DEFAULT).map(|r| r.specificity());
+    /// assert_eq!((s(b"*/*")?, s(b"image/*")?, s(b"image/png")?, s(b"image/png;x=1")?), (1, 2, 3, 4));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn specificity(&self) -> u8 {
         if matches!(self.type_, [b'*']) {
@@ -260,12 +301,33 @@ impl<'a> MediaRange<'a> {
     }
 
     /// The weight (`q`), 1 when absent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{media, Limits, QValue};
+    ///
+    /// assert_eq!(media::parse_range(b"text/html;q=0.25", &Limits::DEFAULT)?.weight().thousandths(), 250);
+    /// assert_eq!(media::parse_range(b"text/html", &Limits::DEFAULT)?.weight(), QValue::ONE);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn weight(&self) -> QValue {
         self.weight
     }
 
     /// The media-type parameters: those before `q`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{media, Limits};
+    ///
+    /// let r = media::parse_range(b"text/html;level=1;q=0.5", &Limits::DEFAULT)?;
+    /// assert_eq!(r.params().get("level").and_then(|w| w.as_str()), Some("1"));
+    /// assert!(r.params().get("q").is_none());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn params(&self) -> Params<'a> {
         self.params
@@ -342,19 +404,35 @@ pub fn write(
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MediaType<'a> {
-    type_: &'a [u8],
-    subtype: &'a [u8],
-    params: Params<'a>,
+    pub(crate) type_: &'a [u8],
+    pub(crate) subtype: &'a [u8],
+    pub(crate) params: Params<'a>,
 }
 
 impl<'a> MediaType<'a> {
     /// The type, as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mt = parse_net::parse_media_type(b"Text/HTML")?;
+    /// assert_eq!(mt.type_(), b"Text");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn type_(&self) -> &'a [u8] {
         self.type_
     }
 
     /// The subtype, as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mt = parse_net::parse_media_type(b"Text/HTML; charset=utf-8")?;
+    /// assert_eq!(mt.subtype(), b"HTML");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn subtype(&self) -> &'a [u8] {
         self.subtype
@@ -362,6 +440,16 @@ impl<'a> MediaType<'a> {
 
     /// The structured syntax suffix: the part of the subtype after its last
     /// `+` (`json` of `ld+json`), when there is one.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::parse_media_type;
+    ///
+    /// assert_eq!(parse_media_type(b"image/svg+xml")?.suffix(), Some(&b"xml"[..]));
+    /// assert_eq!(parse_media_type(b"text/plain")?.suffix(), None);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn suffix(&self) -> Option<&'a [u8]> {
         let plus = self.subtype.iter().rposition(|&b| b == b'+')?;
@@ -369,6 +457,15 @@ impl<'a> MediaType<'a> {
     }
 
     /// Whether `type/subtype` equals `essence`, ignoring ASCII case.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mt = parse_net::parse_media_type(b"Application/JSON; charset=utf-8")?;
+    /// assert!(mt.essence_is("application/json"));
+    /// assert!(!mt.essence_is("application"));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn essence_is(&self, essence: &str) -> bool {
         match essence.split_once('/') {
@@ -379,6 +476,14 @@ impl<'a> MediaType<'a> {
 
     /// Whether the type and subtype equal `type_` and `subtype`, ignoring
     /// ASCII case.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mt = parse_net::parse_media_type(b"TEXT/html")?;
+    /// assert!(mt.is("text", "HTML") && !mt.is("text", "plain"));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn is(&self, type_: &str, subtype: &str) -> bool {
         self.type_.eq_ignore_ascii_case(type_.as_bytes())
@@ -386,18 +491,43 @@ impl<'a> MediaType<'a> {
     }
 
     /// The parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mt = parse_net::parse_media_type(b"text/plain; charset=utf-8; format=flowed")?;
+    /// assert_eq!(mt.params().len(), 2);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn params(&self) -> Params<'a> {
         self.params
     }
 
     /// The value of the parameter `name` (ASCII case-insensitive).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mt = parse_net::parse_media_type(b"text/plain; format=flowed")?;
+    /// assert_eq!(mt.param("Format").and_then(|w| w.as_str()), Some("flowed"));
+    /// assert!(mt.param("delsp").is_none());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn param(&self, name: &str) -> Option<Word<'a>> {
         self.params.get(name)
     }
 
     /// The `charset` parameter. Compare it case-insensitively.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mt = parse_net::parse_media_type(b"text/html; charset=\"UTF-8\"")?;
+    /// assert!(mt.charset().is_some_and(|c| c.eq_ignore_ascii_case(b"utf-8")));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn charset(&self) -> Option<Word<'a>> {
         self.params.get("charset")
@@ -410,6 +540,18 @@ impl<'a> MediaType<'a> {
     ///
     /// [`ErrorKind::InvalidBoundary`], with the offset inside the boundary
     /// value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::parse_media_type;
+    ///
+    /// let mt = parse_media_type(b"multipart/form-data; boundary=\"a b\"")?;
+    /// assert_eq!(mt.boundary()?.map(|b| b.as_bytes()), Some(&b"a b"[..]));
+    /// assert_eq!(parse_media_type(b"text/plain")?.boundary()?, None);
+    /// assert!(parse_media_type(b"multipart/mixed; boundary=\"ab \"")?.boundary().is_err());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn boundary(&self) -> Result<Option<Boundary<'a>>> {
         let Some(word) = self.params.get("boundary") else {
             return Ok(None);
@@ -442,6 +584,17 @@ impl<'a> MediaType<'a> {
     }
 
     /// Whether this is `application/json` or has the `+json` suffix.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::parse_media_type;
+    ///
+    /// assert!(parse_media_type(b"application/json")?.is_json());
+    /// assert!(parse_media_type(b"application/problem+json")?.is_json());
+    /// assert!(!parse_media_type(b"text/json")?.is_json());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn is_json(&self) -> bool {
         self.is("application", "json")
@@ -451,12 +604,30 @@ impl<'a> MediaType<'a> {
     }
 
     /// Whether this is `application/x-www-form-urlencoded`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mt = parse_net::parse_media_type(b"application/x-www-form-urlencoded; charset=utf-8")?;
+    /// assert!(mt.is_form_urlencoded());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn is_form_urlencoded(&self) -> bool {
         self.is("application", "x-www-form-urlencoded")
     }
 
     /// Whether this is `multipart/form-data`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::parse_media_type;
+    ///
+    /// assert!(parse_media_type(b"multipart/form-data; boundary=x")?.is_multipart_form_data());
+    /// assert!(!parse_media_type(b"multipart/mixed; boundary=x")?.is_multipart_form_data());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn is_multipart_form_data(&self) -> bool {
         self.is("multipart", "form-data")
@@ -543,6 +714,14 @@ pub struct Boundary<'a>(&'a [u8]);
 
 impl<'a> Boundary<'a> {
     /// The boundary bytes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mt = parse_net::parse_media_type(b"multipart/mixed; boundary=\"simple boundary\"")?;
+    /// assert_eq!(mt.boundary()?.map(|b| b.as_bytes()), Some(&b"simple boundary"[..]));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn as_bytes(&self) -> &'a [u8] {
         self.0

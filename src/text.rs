@@ -318,18 +318,48 @@ impl<'a> Quoted<'a> {
     }
 
     /// The content between the quotes exactly as sent, quoted pairs included.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_quoted;
+    ///
+    /// let (q, _) = parse_quoted(b"\"a\\\"b\"")?;
+    /// assert_eq!(q.raw(), b"a\\\"b");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn raw(&self) -> &'a [u8] {
         self.raw
     }
 
     /// Whether the content contains a quoted pair (`\x`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_quoted;
+    ///
+    /// assert!(parse_quoted(b"\"a\\\"b\"")?.0.has_escapes());
+    /// assert!(!parse_quoted(b"\"ab\"")?.0.has_escapes());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn has_escapes(&self) -> bool {
         self.has_escapes
     }
 
     /// The content when it contains no quoted pair: the value, with no copy.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_quoted;
+    ///
+    /// assert_eq!(parse_quoted(b"\"gzip\"")?.0.as_plain(), Some(&b"gzip"[..]));
+    /// assert_eq!(parse_quoted(b"\"a\\\"b\"")?.0.as_plain(), None);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn as_plain(&self) -> Option<&'a [u8]> {
         if self.has_escapes {
@@ -340,6 +370,16 @@ impl<'a> Quoted<'a> {
     }
 
     /// The length of the value with quoted pairs replaced.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_quoted;
+    ///
+    /// let (q, _) = parse_quoted(b"\"a\\\"b\"")?;
+    /// assert_eq!((q.raw().len(), q.unescaped_len()), (4, 3));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn unescaped_len(&self) -> usize {
         if self.has_escapes {
@@ -350,6 +390,16 @@ impl<'a> Quoted<'a> {
     }
 
     /// The bytes of the value with quoted pairs replaced.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_quoted;
+    ///
+    /// let (q, _) = parse_quoted(b"\"a\\\"b\"")?;
+    /// assert_eq!(q.bytes().collect::<Vec<u8>>(), b"a\"b");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn bytes(&self) -> Unescape<'a> {
         Unescape {
@@ -364,6 +414,17 @@ impl<'a> Quoted<'a> {
     ///
     /// [`ErrorKind::BufferTooSmall`] when `out` is shorter than
     /// [`unescaped_len`](Self::unescaped_len); nothing is written.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_quoted;
+    ///
+    /// let (q, _) = parse_quoted(b"\"a\\\"b\"")?;
+    /// let mut buf = [0u8; 8];
+    /// assert_eq!(q.unescape_into(&mut buf)?, b"a\"b");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn unescape_into<'b>(&self, out: &'b mut [u8]) -> Result<&'b [u8]> {
         let len = self.unescaped_len();
         let Some(dst) = out.get_mut(..len) else {
@@ -376,6 +437,16 @@ impl<'a> Quoted<'a> {
     }
 
     /// Whether the value equals `other`, compared without a buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_quoted;
+    ///
+    /// let (q, _) = parse_quoted(b"\"a\\\"b\"")?;
+    /// assert!(q.eq_bytes(b"a\"b") && !q.eq_bytes(b"a\\\"b"));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn eq_bytes(&self, other: &[u8]) -> bool {
         match self.as_plain() {
@@ -386,6 +457,16 @@ impl<'a> Quoted<'a> {
 
     /// Whether the value equals `other` ignoring ASCII case, compared without
     /// a buffer.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_quoted;
+    ///
+    /// let (q, _) = parse_quoted(b"\"UTF\\-8\"")?;
+    /// assert!(q.eq_ignore_ascii_case(b"utf-8") && !q.eq_ignore_ascii_case(b"utf8"));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn eq_ignore_ascii_case(&self, other: &[u8]) -> bool {
         match self.as_plain() {
@@ -413,6 +494,17 @@ impl fmt::Debug for Quoted<'_> {
 }
 
 /// The unescaped bytes of a [`Quoted`] value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::text::parse_quoted;
+///
+/// let (q, _) = parse_quoted(b"\"a\\\"b\"")?;
+/// let mut it = q.bytes();
+/// assert_eq!((it.next(), it.next(), it.next(), it.next()), (Some(b'a'), Some(b'"'), Some(b'b'), None));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct Unescape<'a> {
     rest: core::slice::Iter<'a, u8>,
@@ -463,6 +555,16 @@ pub enum Word<'a> {
 
 impl<'a> Word<'a> {
     /// The token, or the quoted content when it has no quoted pair.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_word;
+    ///
+    /// assert_eq!(parse_word(b"gzip")?.0.as_plain(), Some(&b"gzip"[..]));
+    /// assert_eq!(parse_word(b"\"a\\\"b\"")?.0.as_plain(), None);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn as_plain(&self) -> Option<&'a [u8]> {
         match self {
@@ -472,12 +574,32 @@ impl<'a> Word<'a> {
     }
 
     /// [`as_plain`](Self::as_plain) when it is valid UTF-8.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_word;
+    ///
+    /// assert_eq!(parse_word(b"\"caf\xc3\xa9\"")?.0.as_str(), Some("caf\u{e9}"));
+    /// assert_eq!(parse_word(b"\"\xff\"")?.0.as_str(), None);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn as_str(&self) -> Option<&'a str> {
         self.as_plain().and_then(|p| core::str::from_utf8(p).ok())
     }
 
     /// Whether the unescaped value equals `other`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_word;
+    ///
+    /// assert!(parse_word(b"\"a b\"")?.0.eq_bytes(b"a b"));
+    /// assert!(parse_word(b"gzip")?.0.eq_bytes(b"gzip") && !parse_word(b"gzip")?.0.eq_bytes(b"GZIP"));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn eq_bytes(&self, other: &[u8]) -> bool {
         match self {
@@ -487,6 +609,16 @@ impl<'a> Word<'a> {
     }
 
     /// Whether the unescaped value equals `other` ignoring ASCII case.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_word;
+    ///
+    /// assert!(parse_word(b"GZIP")?.0.eq_ignore_ascii_case(b"gzip"));
+    /// assert!(parse_word(b"\"Br\"")?.0.eq_ignore_ascii_case(b"br"));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn eq_ignore_ascii_case(&self, other: &[u8]) -> bool {
         match self {
@@ -500,6 +632,18 @@ impl<'a> Word<'a> {
     /// # Errors
     ///
     /// [`ErrorKind::BufferTooSmall`]; nothing is written.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{text::parse_word, ErrorKind};
+    ///
+    /// let (w, _) = parse_word(b"\"a\\\"b\"")?;
+    /// let mut buf = [0u8; 8];
+    /// assert_eq!(w.unescape_into(&mut buf)?, b"a\"b");
+    /// assert_eq!(w.unescape_into(&mut [0u8; 2]).unwrap_err().kind(), ErrorKind::BufferTooSmall);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn unescape_into<'b>(&self, out: &'b mut [u8]) -> Result<&'b [u8]> {
         match self {
             Self::Token(t) => {
@@ -514,6 +658,16 @@ impl<'a> Word<'a> {
     }
 
     /// The length of the unescaped value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_word;
+    ///
+    /// assert_eq!(parse_word(b"\"a\\\"b\"")?.0.len(), 3);
+    /// assert_eq!(parse_word(b"gzip")?.0.len(), 4);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn len(&self) -> usize {
         match self {
@@ -550,6 +704,16 @@ impl<'a> Word<'a> {
     }
 
     /// Whether the unescaped value is empty (only a quoted string can be).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::text::parse_word;
+    ///
+    /// assert!(parse_word(b"\"\"")?.0.is_empty());
+    /// assert!(!parse_word(b"x")?.0.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn is_empty(&self) -> bool {
         match self {
@@ -579,12 +743,32 @@ pub struct Comment<'a> {
 
 impl<'a> Comment<'a> {
     /// The text between the outer parentheses, as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{text::parse_comment, Limits};
+    ///
+    /// let (c, _) = parse_comment(b"(gzip; level 9) x", &Limits::DEFAULT)?;
+    /// assert_eq!(c.raw(), b"gzip; level 9");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn raw(&self) -> &'a [u8] {
         self.raw
     }
 
     /// The deepest nesting reached: 1 for `(a)`, 2 for `(a(b))`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{text::parse_comment, Limits};
+    ///
+    /// assert_eq!(parse_comment(b"(a)", &Limits::DEFAULT)?.0.max_depth(), 1);
+    /// assert_eq!(parse_comment(b"(a(b(c)) d)", &Limits::DEFAULT)?.0.max_depth(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn max_depth(&self) -> u8 {
         self.max_depth

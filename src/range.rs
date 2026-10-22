@@ -33,6 +33,17 @@ use crate::{
 };
 
 /// One `range-spec` of a `bytes` range set.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{range, Limits, RangeSpec};
+///
+/// let h = range::parse(b"bytes=0-9, 50-, -5", &Limits::DEFAULT)?;
+/// let specs: Vec<_> = h.specs().collect();
+/// assert_eq!(specs, [RangeSpec::FromTo(0, 9), RangeSpec::From(50), RangeSpec::Suffix(5)]);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RangeSpec {
     /// `first-` : from `first` to the end.
@@ -44,6 +55,17 @@ pub enum RangeSpec {
 }
 
 /// A resolved byte range, both ends inclusive.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{byte_ranges, ByteRange, RangeOutcome};
+///
+/// let mut out = [ByteRange { start: 0, end: 0 }; 1];
+/// assert_eq!(byte_ranges(b"bytes=-10", 100, &mut out)?, RangeOutcome::Ranges(1));
+/// assert_eq!((out[0], out[0].len()), (ByteRange { start: 90, end: 99 }, 10));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ByteRange {
     /// The first byte.
@@ -71,6 +93,15 @@ impl ByteRange {
     }
 
     /// Whether the range holds no bytes (only possible when `end < start`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::ByteRange;
+    ///
+    /// assert!(ByteRange { start: 5, end: 4 }.is_empty());
+    /// assert!(!ByteRange { start: 5, end: 5 }.is_empty());
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.end < self.start
@@ -78,6 +109,17 @@ impl ByteRange {
 }
 
 /// What to do with a `Range` request.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{byte_ranges, ByteRange, RangeOutcome};
+///
+/// let mut out = [ByteRange { start: 0, end: 0 }; 4];
+/// assert_eq!(byte_ranges(b"bytes=500-", 1000, &mut out)?, RangeOutcome::Ranges(1));
+/// assert_eq!(byte_ranges(b"bytes=1000-", 1000, &mut out)?, RangeOutcome::Unsatisfiable);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RangeOutcome {
@@ -95,6 +137,17 @@ pub enum RangeOutcome {
 }
 
 /// A validated `Range` value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{range, Limits};
+///
+/// let h = range::parse(b"bytes=0-99, 200-299", &Limits::DEFAULT)?;
+/// assert!(h.is_bytes());
+/// assert_eq!(h.specs().count(), 2);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RangeHeader<'a> {
     unit: &'a [u8],
@@ -103,18 +156,47 @@ pub struct RangeHeader<'a> {
 
 impl<'a> RangeHeader<'a> {
     /// Whether the unit is `bytes` (case-insensitive).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{range, Limits};
+    ///
+    /// assert!(range::parse(b"BYTES=0-1", &Limits::DEFAULT)?.is_bytes());
+    /// assert!(!range::parse(b"items=0-1", &Limits::DEFAULT)?.is_bytes());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn is_bytes(&self) -> bool {
         self.unit.eq_ignore_ascii_case(b"bytes")
     }
 
     /// The range unit, as sent.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{range, Limits};
+    ///
+    /// assert_eq!(range::parse(b"items=0-5", &Limits::DEFAULT)?.unit(), b"items");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn unit(&self) -> &'a [u8] {
         self.unit
     }
 
     /// The range specs, in request order; empty unless the unit is `bytes`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{range, Limits, RangeSpec};
+    ///
+    /// assert_eq!(range::parse(b"bytes=-1", &Limits::DEFAULT)?.specs().next(), Some(RangeSpec::Suffix(1)));
+    /// assert_eq!(range::parse(b"items=0-5", &Limits::DEFAULT)?.specs().count(), 0);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn specs(&self) -> impl Iterator<Item = RangeSpec> + use<'a> {
         let bytes = self.is_bytes();
         self.set
@@ -125,12 +207,31 @@ impl<'a> RangeHeader<'a> {
 
     /// The number of members in the range set, whatever the unit (so it can
     /// be nonzero when [`specs`](Self::specs) is empty).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{range, Limits};
+    ///
+    /// let h = range::parse(b"items=0-5, 9-10", &Limits::DEFAULT)?;
+    /// assert_eq!((h.len(), h.specs().count()), (2, 0));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.set.len()
     }
 
     /// Whether the set is empty (never true for a parsed value).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{range, Limits};
+    ///
+    /// assert!(!range::parse(b"bytes=0-0", &Limits::DEFAULT)?.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.set.is_empty()
@@ -369,6 +470,16 @@ pub fn byte_ranges(value: &[u8], length: u64, out: &mut [ByteRange]) -> Result<R
 }
 
 /// A parsed `Content-Range` value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{range::parse_content_range, ContentRange};
+///
+/// let ContentRange::Satisfied { range, complete } = parse_content_range(b"bytes 42-1233/*")? else { unreachable!() };
+/// assert_eq!((range.len(), complete), (1192, None));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ContentRange {
     /// `bytes first-last/complete` or `bytes first-last/*`.
@@ -475,6 +586,19 @@ fn put_content_range(
 ///
 /// [`WriteError::OutOfRange`] when `end < start` or `end >= complete`;
 /// [`WriteError::Full`] (nothing written when the sink reports its room).
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{range::write_content_range, ByteRange, SliceSink, WriteError};
+///
+/// let mut buf = [0u8; 32];
+/// let mut out = SliceSink::new(&mut buf);
+/// write_content_range(ByteRange { start: 0, end: 9 }, None, &mut out)?;
+/// assert_eq!(out.written(), b"bytes 0-9/*");
+/// assert_eq!(write_content_range(ByteRange { start: 0, end: 9 }, Some(5), &mut out), Err(WriteError::OutOfRange));
+/// # Ok::<(), parse_net::WriteError>(())
+/// ```
 pub fn write_content_range(
     r: ByteRange,
     complete: Option<u64>,
@@ -518,6 +642,18 @@ pub fn write_unsatisfied(
 }
 
 /// A parsed `If-Range` value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{range::parse_if_range, HttpDate, IfRange};
+///
+/// let date = b"Wed, 21 Oct 2026 07:28:00 GMT";
+/// let cond = parse_if_range(date)?;
+/// assert_eq!(cond, IfRange::Date(HttpDate::parse_imf_fixdate(date)?));
+/// assert!(cond.matches(None, Some(HttpDate::parse_imf_fixdate(date)?)));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IfRange<'a> {
     /// An HTTP-date.
@@ -561,6 +697,17 @@ impl IfRange<'_> {
 /// # Errors
 ///
 /// The errors of [`EntityTag::parse`] or [`HttpDate::parse_imf_fixdate`].
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{range::parse_if_range, IfRange};
+///
+/// assert!(matches!(parse_if_range(b"\"abc\"")?, IfRange::Tag(t) if t.opaque() == b"abc"));
+/// assert!(matches!(parse_if_range(b"Sun, 06 Nov 1994 08:49:37 GMT")?, IfRange::Date(_)));
+/// assert!(parse_if_range(b"tomorrow").is_err());
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 pub fn parse_if_range(value: &[u8]) -> Result<IfRange<'_>> {
     let v = trim_ows(value);
     if v.starts_with(b"W/") || v.starts_with(b"\"") {

@@ -229,58 +229,276 @@ pub struct Class(u32);
 
 impl Class {
     /// `tchar` (RFC 9110 section 5.6.2).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"no-cache", Class::TCHAR) && !Class::TCHAR.contains(b'('));
+    /// ```
     pub const TCHAR: Self = Self(TCHAR);
     /// `VCHAR`: 0x21 to 0x7E (RFC 5234).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"a=b;c", Class::VCHAR) && !Class::VCHAR.contains(b' '));
+    /// ```
     pub const VCHAR: Self = Self(VCHAR);
     /// `obs-text`: 0x80 to 0xFF (RFC 9110 section 5.5).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"\xc3\xa9", Class::OBS_TEXT) && !Class::OBS_TEXT.contains(b'a'));
+    /// ```
     pub const OBS_TEXT: Self = Self(OBS_TEXT);
     /// `field-vchar / SP / HTAB` (RFC 9110 section 5.5).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"text/html; q=0.9\t", Class::FIELD_TEXT));
+    /// assert!(!Class::FIELD_TEXT.contains(b'\r'));
+    /// ```
     pub const FIELD_TEXT: Self = Self(FIELD_TEXT);
     /// `qdtext` (RFC 9110 section 5.6.4).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"a b,c", Class::QDTEXT));
+    /// assert!(!Class::QDTEXT.contains(b'"') && !Class::QDTEXT.contains(b'\\'));
+    /// ```
     pub const QDTEXT: Self = Self(QDTEXT);
     /// `ctext` (RFC 9110 section 5.6.5).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"compatible; MSIE", Class::CTEXT) && !Class::CTEXT.contains(b'('));
+    /// ```
     pub const CTEXT: Self = Self(CTEXT);
     /// The byte after `\` in a `quoted-pair`: `HTAB / SP / VCHAR / obs-text`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::Class;
+    ///
+    /// assert!(Class::QUOTED_PAIR.contains(b'"') && Class::QUOTED_PAIR.contains(b'\t'));
+    /// assert!(!Class::QUOTED_PAIR.contains(0x7f));
+    /// ```
     pub const QUOTED_PAIR: Self = Self(QUOTED_PAIR);
     /// `etagc` (RFC 9110 section 8.8.3).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"W/xyz", Class::ETAGC) && !Class::ETAGC.contains(b'"'));
+    /// ```
     pub const ETAGC: Self = Self(ETAGC);
     /// `attr-char` (RFC 8187 section 3.2.1).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"utf-8", Class::ATTR_CHAR));
+    /// assert!(!Class::ATTR_CHAR.contains(b'%') && !Class::ATTR_CHAR.contains(b'\''));
+    /// ```
     pub const ATTR_CHAR: Self = Self(ATTR_CHAR);
     /// The MIME `token` characters (RFC 2045 section 5.1); unlike `tchar`,
     /// they include `{` and `}`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"{x}", Class::MIME_TOKEN) && !all(b"{x}", Class::TCHAR));
+    /// assert!(!Class::MIME_TOKEN.contains(b'/'));
+    /// ```
     pub const MIME_TOKEN: Self = Self(MIME_TOKEN);
     /// `unreserved` (RFC 3986 section 2.3).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"a-b_c.d~", Class::UNRESERVED) && !Class::UNRESERVED.contains(b'!'));
+    /// ```
     pub const UNRESERVED: Self = Self(UNRESERVED);
     /// `sub-delims` (RFC 3986 section 2.2).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"!$&'()*+,;=", Class::SUB_DELIM) && !Class::SUB_DELIM.contains(b'/'));
+    /// ```
     pub const SUB_DELIM: Self = Self(SUB_DELIM);
     /// `unreserved / sub-delims / ":" / "@"`: `pchar` without `pct-encoded`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"user:pass@host", Class::PCHAR_NO_PCT));
+    /// assert!(!Class::PCHAR_NO_PCT.contains(b'/') && !Class::PCHAR_NO_PCT.contains(b'%'));
+    /// ```
     pub const PCHAR_NO_PCT: Self = Self(PCHAR_NO_PCT);
     /// `pchar / "/" / "?"` plus `%`: the characters of a request target.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"/a%20b?q=1", Class::URI_TARGET) && !Class::URI_TARGET.contains(b'#'));
+    /// ```
     pub const URI_TARGET: Self = Self(URI_TARGET);
     /// `HEXDIG`, either case.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"0aF9", Class::HEXDIG) && !Class::HEXDIG.contains(b'g'));
+    /// ```
     pub const HEXDIG: Self = Self(HEXDIG);
     /// The first byte of a Structured Field key: `lcalpha / "*"`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::Class;
+    ///
+    /// assert!(Class::SF_KEY_START.contains(b'*') && Class::SF_KEY_START.contains(b'a'));
+    /// assert!(!Class::SF_KEY_START.contains(b'_') && !Class::SF_KEY_START.contains(b'0'));
+    /// ```
     pub const SF_KEY_START: Self = Self(SF_KEY_START);
     /// A Structured Field key byte: `lcalpha / DIGIT / "_" / "-" / "." / "*"`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"max-age_2.*", Class::SF_KEY) && !Class::SF_KEY.contains(b'A'));
+    /// ```
     pub const SF_KEY: Self = Self(SF_KEY);
     /// A Structured Field token byte after the first: `tchar / ":" / "/"`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"text/html:x", Class::SF_TOKEN) && !Class::SF_TOKEN.contains(b'"'));
+    /// ```
     pub const SF_TOKEN: Self = Self(SF_TOKEN);
     /// An unescaped Structured Field string byte: `%x20-21 / %x23-5B / %x5D-7E`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"hello world!", Class::SF_STRING));
+    /// assert!(!Class::SF_STRING.contains(b'\\') && !Class::SF_STRING.contains(b'"'));
+    /// ```
     pub const SF_STRING: Self = Self(SF_STRING);
     /// A `token68` byte (RFC 9110 section 11.2), without the `=` padding.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"abc-._~+/", Class::TOKEN68) && !Class::TOKEN68.contains(b'='));
+    /// ```
     pub const TOKEN68: Self = Self(TOKEN68);
     /// The base64 alphabet (RFC 4648 section 4), without the `=` padding.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"aGk+/w", Class::BASE64));
+    /// assert!(!Class::BASE64.contains(b'=') && !Class::BASE64.contains(b'-'));
+    /// ```
     pub const BASE64: Self = Self(BASE64);
     /// `atext` (RFC 5322 section 3.2.3).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"user+tag", Class::ATEXT) && !Class::ATEXT.contains(b'@'));
+    /// ```
     pub const ATEXT: Self = Self(ATEXT);
     /// `bcharsnospace` (RFC 2046 section 5.1.1).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"----=_Part_0", Class::BCHAR_NOSPACE) && !Class::BCHAR_NOSPACE.contains(b' '));
+    /// ```
     pub const BCHAR_NOSPACE: Self = Self(BCHAR_NOSPACE);
     /// `cookie-octet` (rfc6265bis section 4.1.1), for cookie-net.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"abc123!", Class::COOKIE_OCTET));
+    /// assert!(!Class::COOKIE_OCTET.contains(b';') && !Class::COOKIE_OCTET.contains(b','));
+    /// ```
     pub const COOKIE_OCTET: Self = Self(COOKIE_OCTET);
     /// Cookie attribute value bytes (rfc6265bis section 4.1.1), for cookie-net.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::{all, Class};
+    ///
+    /// assert!(all(b"Mon, 01 Jan", Class::AV_OCTET) && !Class::AV_OCTET.contains(b';'));
+    /// ```
     pub const AV_OCTET: Self = Self(AV_OCTET);
 
     /// Whether `b` is in this class.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::Class;
+    ///
+    /// assert!(Class::HEXDIG.contains(b'a') && !Class::HEXDIG.contains(b'g'));
+    /// ```
     #[inline]
     #[must_use]
     pub const fn contains(self, b: u8) -> bool {
@@ -288,6 +506,15 @@ impl Class {
     }
 
     /// A class holding the bytes of both.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::class::Class;
+    ///
+    /// let c = Class::HEXDIG.union(Class::SUB_DELIM);
+    /// assert!(c.contains(b'f') && c.contains(b'+') && !c.contains(b'g'));
+    /// ```
     #[must_use]
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)

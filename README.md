@@ -41,7 +41,7 @@
 
 ## Features
 
-The list below is the plan for 1.0. What ships in the current version is under [Status](#status-extended).
+The list below is the plan for 1.0. What ships in the current version is under [Status](#status-feature-complete).
 
 ### **Field grammar**
 - **Byte classes** - every ABNF class (`tchar`, `qdtext`, `ctext`, `etagc`, `attr-char`, MIME `token`, RFC 3986, Structured Field keys and tokens) in one 1 KiB table, one load and one mask per byte.
@@ -76,10 +76,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-parse-net = "0.4.0"
+parse-net = "0.5.0"
 
 # Optional features:
-parse-net = { version = "0.4.0", features = [
+parse-net = { version = "0.5.0", features = [
     "alloc",        # owned forms and Sink for Vec<u8>
     "std",          # SystemTime conversions and http_date() with the system clock
 ] }
@@ -164,9 +164,9 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 
 ---
 
-## **Status: extended**
+## **Status: feature complete**
 
-**Current Version:** `0.4.0` - the core plus the web layer and what form-net needs.
+**Current Version:** `0.5.0` - every planned field, for HTTP and for mail.
 **Target:** `1.0.0` stable, per the roadmap in [`dev/ROADMAP.md`](./dev/ROADMAP.md).
 
 **What's complete**:
@@ -183,12 +183,15 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 - **Conditional and range requests** - entity tags with strong and weak comparison, `If-Match`, `If-None-Match`, `Range` resolution that refuses abusive sets, `Content-Range`, `If-Range`.
 - **File names** - RFC 8187 values and `Content-Disposition` with `filename*` preferred, decoded controls refused, path separators and bidi controls reported; every tc2231 case has a verdict.
 - **Caching, proxies, auth, origins** - `Cache-Control`, `Forwarded` and `X-Forwarded-*` with client-address resolution through trusted proxies only, `Authorization` and `WWW-Authenticate` with redacted `Debug`, `Origin` with exact same-origin comparison.
-- **Structured Fields** - RFC 9651 Items, Lists, and Dictionaries with every bare item type, views and a single-pass visitor, passing the httpwg structured-field-tests suite in full.
-- **Proof** - unit tests on every path, property tests (no panic, round trips, writer-parser closure, combined lines), counting-allocator tests for every parse and write, RFC and tc2231 vectors, 27 fuzz targets including three differential oracles against `httpdate`, `mime`, and `sfv`.
+- **Structured Fields** - RFC 9651 Items, Lists, and Dictionaries with every bare item type: views, a single-pass visitor, and a canonical writer, passing the httpwg parsing and serialisation suites in full.
+- **Links** - RFC 8288 `Link` values, with the first `rel` winning and `title*` decoded.
+- **Email** - RFC 5322 dates, header folding and unfolding, RFC 2047 encoded words, MIME parameters with RFC 2231 continuations, `addr-spec`, mailboxes, and message identifiers, for smtp-net and login validation.
+- **Owned forms** - with `alloc`, owned media types, entity tags, host-ports, and Structured Field values that give the same views back.
+- **Proof** - unit tests on every path, property tests (no panic, round trips, writer-parser closure, combined lines), counting-allocator tests for every parse and write, RFC and tc2231 vectors, 34 fuzz targets including three differential oracles against `httpdate`, `mime`, and `sfv`, and an example for every public item.
 
 **What's planned next**:
-- `0.5.0`: `Link`, Structured Field writing, the email lexical layer, owned forms, `docs/ARCHITECTURE.md`.
-- `0.6.0`: benchmarks against the named competitors and `docs/PERFORMANCE.md`.
+- `0.6.0`: benchmarks against the named competitors and `docs/PERFORMANCE.md`; base64 decoding through encode-lib once it is published.
+- `0.7.0`: 24-hour fuzzing of every target, the threat-model tests, `docs/SECURITY.md`, `docs/PLATFORM-NOTES.md`.
 
 **Note on API stability**: the API was locked at `0.2.0` ([`docs/API.md`](./docs/API.md)); names and signatures change only with a recorded decision until `1.0.0` freezes them, with the contract recorded in `docs/STABILITY-1.0.md`.
 
@@ -198,6 +201,7 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 
 - **[API Reference](docs/API.md)** - every public item with examples
 - **[Grammar](docs/GRAMMAR.md)** - each field's ABNF, case rules, and leniencies
+- **[Architecture](docs/ARCHITECTURE.md)** - modules, the byte-class table, views, and algorithms
 - **[Migration](docs/MIGRATION.md)** - moving http-net and ws-net onto parse-net
 - **[Plan](dev/PLAN.md)** - design, threats, and decisions
 - **[Roadmap](dev/ROADMAP.md)** - versions and exit criteria

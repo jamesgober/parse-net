@@ -3,8 +3,19 @@
 //! `must_fail` cases must be refused, `can_fail` cases may be refused, and
 //! every accepted case must match `expected` exactly.
 
-use parse_net::sfv::{self, BareItem, Item, Member, SfParams};
+use parse_net::{
+    SliceSink, WriteError,
+    sfv::{self, BareItem, Item, Member, SfParams, Writer},
+};
 use serde_json::Value;
+
+/// The serialisation-only files.
+const SERIALISATION: &[&str] = &[
+    "key-generated",
+    "number",
+    "string-generated",
+    "token-generated",
+];
 
 /// The files in the suite that test parsing.
 const FILES: &[&str] = &[
@@ -237,19 +248,220 @@ fn member_lines(v: &[u8]) -> Vec<Vec<u8>> {
     }
 }
 
-/// Parses `raw` as `ty` and compares with `expected`; `Err(None)` when the
-/// parser refused it.
-fn run(ty: &str, raw: &[Vec<u8>], expected: Option<&Value>) -> Result<(), Option<String>> {
+type W<'s, 'b> = Writer<'s, SliceSink<'b>>;
+
+fn ser_params(w: &mut W<'_, '_>, p: SfParams<'_>) -> Result<(), WriteError> {
+    for (k, v) in ordered(p.iter()) {
+        w.param(k, &v)?;
+    }
+    Ok(())
+}
+
+fn ser_item(w: &mut W<'_, '_>, i: Item<'_>) -> Result<(), WriteError> {
+    w.bare(&i.bare)?;
+    ser_params(w, i.params)
+}
+
+/// A member after its key (dictionaries) or as the next list member.
+fn ser_member(w: &mut W<'_, '_>, m: Member<'_>) -> Result<(), WriteError> {
+    match m {
+        Member::Item(i) => ser_item(w, i),
+        Member::InnerList(l) => {
+            w.open_inner_list()?;
+            for i in l.iter() {
+                ser_item(w, i)?;
+            }
+            w.close_inner_list()?;
+            ser_params(w, l.params())
+        }
+    }
+}
+
+/// Runs `f` on a writer of `kind` and returns the text, `""` for an empty
+/// List or Dictionary (which is not serialized at all).
+fn serialize(
+    kind: &str,
+    empty: bool,
+    f: impl FnOnce(&mut W<'_, '_>) -> Result<(), WriteError>,
+) -> Result<String, WriteError> {
+    if empty && kind != "item" {
+        return Ok(String::new());
+    }
+    let mut buf = vec![0u8; 1 << 20];
+    let mut out = SliceSink::new(&mut buf);
+    let mut w = match kind {
+        "item" => Writer::item(&mut out),
+        "list" => Writer::list(&mut out),
+        _ => Writer::dictionary(&mut out),
+    };
+    f(&mut w)?;
+    w.finish()?;
+    Ok(String::from_utf8(out.written().to_vec()).expect("ASCII"))
+}
+
+fn canonical_eq(got: Result<String, WriteError>, canonical: Option<&Value>) -> Result<(), String> {
+    let Some(c) = canonical else { return Ok(()) };
+    let want: Vec<&str> = c
+        .as_array()
+        .expect("canonical")
+        .iter()
+        .map(|l| l.as_str().expect("line"))
+        .collect();
+    let want = want.join(", ");
+    match got {
+        Ok(g) if g == want => Ok(()),
+        other => Err(format!("serialized {other:?}, canonical {want:?}")),
+    }
+}
+
+/// Thousandths from a JSON number's text, rounded half to even (RFC 9651
+/// section 4.1.5). The writer takes exact thousandths; rounding is the
+/// caller's (D-057).
+fn thousandths(n: &serde_json::Number) -> i64 {
+    let text = n.to_string();
+    let (neg, text) = text
+        .strip_prefix('-')
+        .map_or((false, text.as_str()), |t| (true, t));
+    let (int, frac) = text.split_once('.').unwrap_or((text, ""));
+    let mut digits: Vec<u8> = frac.bytes().map(|b| b - b'0').collect();
+    digits.resize(digits.len().max(3), 0);
+    let mut t = int.parse::<i64>().expect("int") * 1000
+        + i64::from(digits[0]) * 100
+        + i64::from(digits[1]) * 10
+        + i64::from(digits[2]);
+    let rest = &digits[3..];
+    let half = rest
+        .first()
+        .is_some_and(|&d| d > 5 || (d == 5 && rest[1..].iter().any(|&x| x > 0)));
+    let tie = rest.first() == Some(&5) && rest[1..].iter().all(|&x| x == 0);
+    if half || (tie && t % 2 == 1) {
+        t += 1;
+    }
+    if neg { -t } else { t }
+}
+
+/// Writes a JSON bare item through the typed methods.
+fn json_value(w: &mut W<'_, '_>, v: &Value) -> Result<(), WriteError> {
+    match v {
+        Value::Number(n) if n.is_i64() => w.integer(n.as_i64().expect("i64")).map(|_| ()),
+        Value::Number(n) => w.decimal(thousandths(n)).map(|_| ()),
+        Value::String(s) => w.string(s).map(|_| ()),
+        Value::Bool(b) => w.boolean(*b).map(|_| ()),
+        Value::Object(o) => {
+            let val = &o["value"];
+            match o["__type"].as_str() {
+                Some("token") => w.token(val.as_str().expect("token")).map(|_| ()),
+                Some("date") => w.date(val.as_i64().expect("date")).map(|_| ()),
+                Some("displaystring") => w.display_string(val.as_str().expect("text")).map(|_| ()),
+                other => panic!("no serialisation test needs {other:?}"),
+            }
+        }
+        other => panic!("bare item {other}"),
+    }
+}
+
+fn json_params(w: &mut W<'_, '_>, p: &Value) -> Result<(), WriteError> {
+    for kv in p.as_array().expect("params") {
+        w.param_key(kv[0].as_str().expect("key"))?;
+        json_value(w, &kv[1])?;
+    }
+    Ok(())
+}
+
+fn json_member(w: &mut W<'_, '_>, m: &Value) -> Result<(), WriteError> {
+    if let Some(items) = m[0].as_array() {
+        w.open_inner_list()?;
+        for i in items {
+            json_value(w, &i[0])?;
+            json_params(w, &i[1])?;
+        }
+        w.close_inner_list()?;
+    } else {
+        json_value(w, &m[0])?;
+    }
+    json_params(w, &m[1])
+}
+
+#[test]
+fn test_sfv_serialisation_suite() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/sfv/serialisation-tests");
+    let (mut cases, mut failures) = (0usize, Vec::new());
+    for file in SERIALISATION {
+        let text = std::fs::read_to_string(format!("{dir}/{file}.json")).expect("suite file");
+        let suite: Vec<Value> = serde_json::from_str(&text).expect("json");
+        for case in &suite {
+            cases += 1;
+            let name = format!("{file}: {}", case["name"].as_str().unwrap_or("?"));
+            let ty = case["header_type"].as_str().expect("type");
+            let e = &case["expected"];
+            let got = serialize(
+                ty,
+                e.as_array().is_some_and(Vec::is_empty) && ty != "item",
+                |w| match ty {
+                    "item" => {
+                        json_value(w, &e[0])?;
+                        json_params(w, &e[1])
+                    }
+                    "list" => e
+                        .as_array()
+                        .expect("list")
+                        .iter()
+                        .try_for_each(|m| json_member(w, m)),
+                    _ => e.as_array().expect("dict").iter().try_for_each(|kv| {
+                        w.key(kv[0].as_str().expect("key"))?;
+                        json_member(w, &kv[1])
+                    }),
+                },
+            );
+            let must_fail = case["must_fail"].as_bool().unwrap_or(false);
+            match (got, must_fail) {
+                (Err(_), true) => {}
+                (Ok(g), true) => failures.push(format!("{name}: wrote {g:?}, must fail")),
+                (got, false) => {
+                    if let Err(why) = canonical_eq(got, case.get("canonical")) {
+                        failures.push(format!("{name}: {why}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{} of {cases} failed:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
+    assert_eq!(cases, 547);
+}
+
+/// Parses `raw` as `ty` and compares with `expected`, and the serialized
+/// view with `canonical`; `Err(None)` when the parser refused it.
+fn run(
+    ty: &str,
+    raw: &[Vec<u8>],
+    expected: Option<&Value>,
+    canonical: Option<&Value>,
+) -> Result<(), Option<String>> {
     let joined = raw.join(&b", "[..]);
     let lines: Vec<&[u8]> = raw.iter().map(Vec::as_slice).collect();
     let cmp = |r: Result<(), String>| r.map_err(Some);
     match ty {
         "item" => {
             let i = sfv::parse_item(&joined).map_err(|_| None)?;
+            cmp(canonical_eq(
+                serialize(ty, false, |w| ser_item(w, i)),
+                canonical,
+            ))?;
             expected.map_or(Ok(()), |w| cmp(item_eq(i, w)))
         }
         "list" => {
             let l = sfv::parse_list(&joined).map_err(|_| None)?;
+            cmp(canonical_eq(
+                serialize(ty, l.is_empty(), |w| {
+                    l.iter().try_for_each(|m| ser_member(w, m))
+                }),
+                canonical,
+            ))?;
             let ok = expected.map_or(Ok(()), |w| cmp(members_eq(l.iter(), w)));
             // The multi-line API agrees with the joined value, except that
             // it refuses an empty line, which joining hides only when the
@@ -272,6 +484,15 @@ fn run(ty: &str, raw: &[Vec<u8>], expected: Option<&Value>) -> Result<(), Option
         }
         "dictionary" => {
             let d = sfv::parse_dictionary(&joined).map_err(|_| None)?;
+            cmp(canonical_eq(
+                serialize(ty, d.is_empty(), |w| {
+                    ordered(d.iter()).into_iter().try_for_each(|(k, m)| {
+                        w.key(k)?;
+                        ser_member(w, m)
+                    })
+                }),
+                canonical,
+            ))?;
             let ok = expected.map_or(Ok(()), |w| cmp(dict_eq(d.iter(), w)));
             match sfv::parse_dictionary_lines(&lines) {
                 Ok(dl) => {
@@ -320,7 +541,7 @@ fn test_sfv_conformance_suite() {
                 .collect();
             let must_fail = case["must_fail"].as_bool().unwrap_or(false);
             let can_fail = case["can_fail"].as_bool().unwrap_or(false);
-            let result = run(ty, &raw, case.get("expected"));
+            let result = run(ty, &raw, case.get("expected"), case.get("canonical"));
             accepted += usize::from(result.is_ok());
             match (result, must_fail, can_fail) {
                 (Ok(()), false, _) | (Err(None), true, _) | (Err(None), _, true) => {}

@@ -23,6 +23,16 @@ use crate::{
 };
 
 /// One parameter: a name and a value.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{param, Limits, Param, Word};
+///
+/// let (p, _) = param::parse(b";charset=utf-8", &Limits::DEFAULT)?;
+/// assert_eq!(p.iter().next(), Some(Param { name: b"charset", value: Word::Token(b"utf-8") }));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Param<'a> {
     /// The name as sent (compare it ASCII case-insensitively).
@@ -189,16 +199,38 @@ const fn control_or_invalid(b: u8) -> ErrorKind {
 /// Validated parameters. Iterating them cannot fail.
 ///
 /// `Debug` prints the parameter names only: values can be secrets.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{param, Limits};
+///
+/// let (p, used) = param::parse(b";q=1;level=\"2\"", &Limits::DEFAULT)?;
+/// assert_eq!((p.len(), used), (2, 14));
+/// assert!(p.get("level").is_some_and(|v| v.eq_bytes(b"2")));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Params<'a> {
-    text: &'a [u8],
-    count: u32,
-    policy: DuplicatePolicy,
+    pub(crate) text: &'a [u8],
+    pub(crate) count: u32,
+    pub(crate) policy: DuplicatePolicy,
 }
 
 impl<'a> Params<'a> {
     /// Every parameter, in order (with `First` or `Last`, duplicates
     /// included).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{param, Limits};
+    ///
+    /// let (p, _) = param::parse(b";a=1; B=2", &Limits::DEFAULT)?;
+    /// let names: Vec<&[u8]> = p.iter().map(|p| p.name).collect();
+    /// assert_eq!(names, [&b"a"[..], b"B"]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn iter(&self) -> ParamIter<'a> {
         ParamIter { rest: self.text }
@@ -206,6 +238,17 @@ impl<'a> Params<'a> {
 
     /// The value of the parameter named `name` (ASCII case-insensitive): the
     /// first match, or the last under [`DuplicatePolicy::Last`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{param, Limits};
+    ///
+    /// let (p, _) = param::parse(b";charset=UTF-8", &Limits::DEFAULT)?;
+    /// assert!(p.get("CHARSET").is_some_and(|v| v.eq_bytes(b"UTF-8")));
+    /// assert!(p.get("q").is_none());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Word<'a>> {
         let name = name.as_bytes();
@@ -241,12 +284,31 @@ impl<'a> Params<'a> {
     }
 
     /// The number of parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{param, Limits};
+    ///
+    /// assert_eq!(param::parse(b";a=1;;b=2;", &Limits::DEFAULT)?.0.len(), 2);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.count as usize
     }
 
     /// Whether there are no parameters.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{param, Limits};
+    ///
+    /// assert!(param::parse(b"", &Limits::DEFAULT)?.0.is_empty());
+    /// assert!(!param::parse(b";a=1", &Limits::DEFAULT)?.0.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.count == 0
@@ -254,6 +316,16 @@ impl<'a> Params<'a> {
 
     /// The validated text, from the first `;` to the end of the last
     /// parameter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{param, Limits};
+    ///
+    /// let (p, _) = param::parse(b";a=1 ;b=2 , next", &Limits::DEFAULT)?;
+    /// assert_eq!(p.raw(), b";a=1 ;b=2");
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn raw(&self) -> &'a [u8] {
         self.text
@@ -274,6 +346,19 @@ impl fmt::Debug for Params<'_> {
 }
 
 /// The parameters of a validated [`Params`].
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{param, Limits};
+///
+/// let (p, _) = param::parse(b";a=1;b=2", &Limits::DEFAULT)?;
+/// let mut it = p.iter();
+/// assert_eq!(it.next().map(|p| p.name), Some(&b"a"[..]));
+/// assert_eq!(it.next().map(|p| p.name), Some(&b"b"[..]));
+/// assert!(it.next().is_none());
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Debug)]
 pub struct ParamIter<'a> {
     rest: &'a [u8],

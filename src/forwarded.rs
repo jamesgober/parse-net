@@ -35,18 +35,35 @@ use core::{
 
 use crate::{
     class,
-    error::{ErrorKind, ParseError, Result, err},
-    host::{HostPort, host_port},
+    error::{ErrorKind, ParseError, Result, WriteError, err},
+    host::{Host, HostPort, host_port},
     limits::Limits,
     list,
     scan::control_kind,
     text::{Word, parse_word, skip_ows, trim_ows},
+    write::{CountSink, Sink, reserve},
 };
 
 /// Decides whether an address belongs to a proxy you trust.
 ///
 /// Implemented for every `Fn(IpAddr) -> bool`; a deployment's CIDR sets
 /// (net-io, bouncer-io configuration) implement it directly.
+///
+/// # Examples
+///
+/// ```
+/// use core::net::IpAddr;
+/// use parse_net::Trust;
+///
+/// struct Loopback;
+/// impl Trust for Loopback {
+///     fn is_trusted(&self, addr: IpAddr) -> bool { addr.is_loopback() }
+/// }
+/// assert!(Loopback.is_trusted("127.0.0.1".parse()?));
+/// let proxy: IpAddr = "10.0.0.2".parse()?;
+/// assert!(!(|a: IpAddr| a == proxy).is_trusted("192.0.2.1".parse()?));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub trait Trust {
     /// Whether `addr` is a trusted proxy.
     fn is_trusted(&self, addr: IpAddr) -> bool;
@@ -61,6 +78,20 @@ impl<F: Fn(IpAddr) -> bool> Trust for F {
 /// Which header the deployment reads the chain from: every field line of
 /// it, in order. The two are never merged (merging is a parser
 /// differential: two proxies could disagree on the order).
+///
+/// # Examples
+///
+/// ```
+/// use core::net::IpAddr;
+/// use parse_net::{client_address, ClientAddress, ForwardedSource};
+///
+/// let peer: IpAddr = "10.0.0.1".parse()?;
+/// let lines: [&[u8]; 1] = [b"for=192.0.2.60"];
+/// let source = ForwardedSource::Forwarded(&lines);
+/// assert_eq!(client_address(peer, source, &|a: IpAddr| a == peer, 16)?,
+///            ClientAddress::Forwarded { addr: "192.0.2.60".parse()?, hops: 1 });
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub enum ForwardedSource<'a> {
     /// `Forwarded` field lines.
@@ -70,6 +101,21 @@ pub enum ForwardedSource<'a> {
 }
 
 /// The client address a request is attributed to.
+///
+/// # Examples
+///
+/// ```
+/// use core::net::IpAddr;
+/// use parse_net::{client_address, ClientAddress, ForwardedSource};
+///
+/// let peer: IpAddr = "10.0.0.1".parse()?;
+/// let trusted = |a: IpAddr| a == peer;
+/// let hidden: [&[u8]; 1] = [b"for=unknown"];
+/// assert_eq!(client_address(peer, ForwardedSource::Forwarded(&hidden), &trusted, 16)?, ClientAddress::Unknown { hops: 1 });
+/// let none: [&[u8]; 0] = [];
+/// assert_eq!(client_address(peer, ForwardedSource::XForwardedFor(&none), &trusted, 16)?, ClientAddress::Peer(peer));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ClientAddress {
@@ -94,6 +140,18 @@ pub enum ClientAddress {
 }
 
 /// A node port: a number or an obfuscated identifier.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{forwarded::{self, Node, NodePort}, Limits};
+///
+/// let lines: [&[u8]; 1] = [b"for=\"192.0.2.60:4711\";by=\"_proxy:_p1\""];
+/// let e = forwarded::parse(&lines, &Limits::DEFAULT)?.iter().next().expect("one element");
+/// assert!(matches!(e.for_, Some(Node::Addr(_, Some(NodePort::Number(4711))))));
+/// assert_eq!(e.by, Some(Node::Obfuscated(b"_proxy", Some(NodePort::Obfuscated(b"_p1")))));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NodePort<'a> {
     /// A port number.
@@ -103,6 +161,19 @@ pub enum NodePort<'a> {
 }
 
 /// A `for` or `by` node (RFC 7239 section 6).
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{forwarded::{self, Node}, Limits};
+///
+/// let lines: [&[u8]; 1] = [b"for=unknown, for=\"[2001:db8::1]\", for=_hidden"];
+/// let nodes: Vec<_> = forwarded::parse(&lines, &Limits::DEFAULT)?.iter().map(|e| e.for_).collect();
+/// assert_eq!(nodes[0], Some(Node::Unknown(None)));
+/// assert_eq!(nodes[1], Some(Node::Addr("2001:db8::1".parse()?, None)));
+/// assert_eq!(nodes[2], Some(Node::Obfuscated(b"_hidden", None)));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Node<'a> {
     /// An IP address.
@@ -114,6 +185,16 @@ pub enum Node<'a> {
 }
 
 /// The protocol a request arrived over at the proxy.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::forwarded::{parse_x_forwarded_proto, Proto};
+///
+/// assert_eq!(parse_x_forwarded_proto(b"http")?, Proto::Http);
+/// assert_eq!(parse_x_forwarded_proto(b"https, HTTPS")?, Proto::Https);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Proto {
@@ -124,6 +205,19 @@ pub enum Proto {
 }
 
 /// One `Forwarded` element.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{forwarded::{self, Proto}, Host, Limits};
+///
+/// let lines: [&[u8]; 1] = [b"for=192.0.2.60;proto=https;host=example.com"];
+/// let e = forwarded::parse(&lines, &Limits::DEFAULT)?.iter().next().expect("one element");
+/// assert_eq!(e.proto, Some(Proto::Https));
+/// assert_eq!(e.host.map(|h| h.host), Some(Host::Name(b"example.com")));
+/// assert!(e.by.is_none());
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Element<'a> {
     /// `for=`: the client of this hop.
@@ -295,6 +389,18 @@ fn refused(e: &[u8], at: usize, kind: ErrorKind) -> ParseError {
 }
 
 /// Validated `Forwarded` field lines.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{forwarded, Limits};
+///
+/// let lines: [&[u8]; 2] = [b"for=192.0.2.60", b"for=198.51.100.7;proto=https"];
+/// let elems = forwarded::parse(&lines, &Limits::DEFAULT)?;
+/// assert_eq!(elems.len(), 2);
+/// assert_eq!(elems.iter().filter(|e| e.proto.is_some()).count(), 1);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub struct ForwardedElements<'a> {
     lines: &'a [&'a [u8]],
@@ -303,6 +409,17 @@ pub struct ForwardedElements<'a> {
 
 impl<'a> ForwardedElements<'a> {
     /// The elements, left to right across every line.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{forwarded::{self, Proto}, Limits};
+    ///
+    /// let lines: [&[u8]; 2] = [b"for=192.0.2.60", b"for=198.51.100.7;proto=https"];
+    /// let protos: Vec<_> = forwarded::parse(&lines, &Limits::DEFAULT)?.iter().map(|e| e.proto).collect();
+    /// assert_eq!(protos, [None, Some(Proto::Https)]);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     pub fn iter(&self) -> impl Iterator<Item = Element<'a>> + use<'a> {
         let lines = self.lines;
         lines
@@ -313,12 +430,33 @@ impl<'a> ForwardedElements<'a> {
     }
 
     /// The number of elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{forwarded, Limits};
+    ///
+    /// let lines: [&[u8]; 2] = [b"for=192.0.2.60, for=192.0.2.61", b"for=unknown"];
+    /// assert_eq!(forwarded::parse(&lines, &Limits::DEFAULT)?.len(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.count
     }
 
     /// Whether there are no elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{forwarded, Limits};
+    ///
+    /// let none: [&[u8]; 0] = [];
+    /// assert!(forwarded::parse(&none, &Limits::DEFAULT)?.is_empty());
+    /// assert!(!forwarded::parse(&[&b"for=unknown"[..]], &Limits::DEFAULT)?.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.count == 0
@@ -402,6 +540,18 @@ fn xff_line(line: &[u8]) -> impl Iterator<Item = &[u8]> {
 }
 
 /// A validated `X-Forwarded-For` chain.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{forwarded::parse_x_forwarded_for, Limits};
+///
+/// let lines: [&[u8]; 1] = [b"203.0.113.9, 10.0.0.1:8080"];
+/// let chain = parse_x_forwarded_for(&lines, &Limits::DEFAULT)?;
+/// assert_eq!(chain.len(), 2);
+/// assert_eq!(chain.iter().last(), Some(("10.0.0.1".parse()?, Some(8080))));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug)]
 pub struct XffChain<'a> {
     lines: &'a [&'a [u8]],
@@ -410,6 +560,19 @@ pub struct XffChain<'a> {
 
 impl<'a> XffChain<'a> {
     /// The addresses and ports, left to right across every line.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{forwarded::parse_x_forwarded_for, Limits};
+    ///
+    /// let lines: [&[u8]; 1] = [b"203.0.113.9, [2001:db8::1]:443"];
+    /// let mut it = parse_x_forwarded_for(&lines, &Limits::DEFAULT)?.iter();
+    /// assert_eq!(it.next(), Some(("203.0.113.9".parse()?, None)));
+    /// assert_eq!(it.next(), Some(("2001:db8::1".parse()?, Some(443))));
+    /// assert_eq!(it.next(), None);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     pub fn iter(&self) -> impl Iterator<Item = (IpAddr, Option<u16>)> + use<'a> {
         self.lines
             .iter()
@@ -418,12 +581,33 @@ impl<'a> XffChain<'a> {
     }
 
     /// The number of addresses.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{forwarded::parse_x_forwarded_for, Limits};
+    ///
+    /// let lines: [&[u8]; 2] = [b"203.0.113.9, 198.51.100.7", b"10.0.0.1"];
+    /// assert_eq!(parse_x_forwarded_for(&lines, &Limits::DEFAULT)?.len(), 3);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn len(&self) -> usize {
         self.count
     }
 
     /// Whether there are no addresses.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{forwarded::parse_x_forwarded_for, Limits};
+    ///
+    /// let none: [&[u8]; 0] = [];
+    /// assert!(parse_x_forwarded_for(&none, &Limits::DEFAULT)?.is_empty());
+    /// assert!(!parse_x_forwarded_for(&[&b"10.0.0.1"[..]], &Limits::DEFAULT)?.is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.count == 0
@@ -648,6 +832,20 @@ fn as_malformed(e: ParseError) -> ParseError {
 }
 
 /// [`client_address`] and whether the other header kind was present too.
+///
+/// # Examples
+///
+/// ```
+/// use core::net::IpAddr;
+/// use parse_net::{forwarded::client_address_detailed, ClientAddress, ForwardedSource};
+///
+/// let peer: IpAddr = "10.0.0.1".parse()?;
+/// let xff: [&[u8]; 1] = [b"198.51.100.7"];
+/// let r = client_address_detailed(peer, ForwardedSource::XForwardedFor(&xff), &[], &|a: IpAddr| a == peer, 16)?;
+/// assert_eq!(r.address, ClientAddress::Forwarded { addr: "198.51.100.7".parse()?, hops: 1 });
+/// assert!(!r.other_present);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Resolved {
     /// The client address.
@@ -690,9 +888,214 @@ pub fn client_address_detailed(
     })
 }
 
+/// Writes a node's text: the address (IPv6 in brackets), `unknown`, or the
+/// obfuscated name, then `:` and the port.
+fn put_node(n: &Node<'_>, out: &mut impl Sink) -> core::result::Result<(), WriteError> {
+    let port = match *n {
+        Node::Addr(ip, port) => {
+            let host = match ip {
+                IpAddr::V4(a) => Host::V4(a),
+                IpAddr::V6(a) => Host::V6(a),
+            };
+            HostPort {
+                host,
+                port: None,
+                empty_port: false,
+            }
+            .write_to(out)?;
+            port
+        }
+        Node::Unknown(port) => {
+            out.put(b"unknown")?;
+            port
+        }
+        Node::Obfuscated(name, port) => {
+            if !is_obfuscated(name) {
+                return Err(WriteError::NotToken);
+            }
+            out.put(name)?;
+            port
+        }
+    };
+    match port {
+        None => {}
+        Some(NodePort::Number(p)) => {
+            out.put(b":")?;
+            crate::write::write_decimal_u64(u64::from(p), out)?;
+        }
+        Some(NodePort::Obfuscated(p)) => {
+            if !is_obfuscated(p) {
+                return Err(WriteError::NotToken);
+            }
+            out.put(b":")?;
+            out.put(p)?;
+        }
+    }
+    Ok(())
+}
+
+/// Writes `name=` and the node, quoted when it holds an IPv6 address or a
+/// port (`:` is not a token character, RFC 7239 section 6).
+fn put_pair(
+    name: &[u8],
+    n: &Node<'_>,
+    first: &mut bool,
+    out: &mut impl Sink,
+) -> core::result::Result<(), WriteError> {
+    let quote = matches!(n, Node::Addr(IpAddr::V6(_), _))
+        || matches!(
+            n,
+            Node::Addr(_, Some(_)) | Node::Unknown(Some(_)) | Node::Obfuscated(_, Some(_))
+        );
+    if !*first {
+        out.put(b";")?;
+    }
+    *first = false;
+    out.put(name)?;
+    out.put(b"=")?;
+    if quote {
+        out.put(b"\"")?;
+    }
+    put_node(n, out)?;
+    if quote {
+        out.put(b"\"")?;
+    }
+    Ok(())
+}
+
+fn put_element(e: &Element<'_>, out: &mut impl Sink) -> core::result::Result<(), WriteError> {
+    let mut first = true;
+    if let Some(n) = &e.for_ {
+        put_pair(b"for", n, &mut first, out)?;
+    }
+    if let Some(p) = e.proto {
+        if !first {
+            out.put(b";")?;
+        }
+        first = false;
+        out.put(match p {
+            Proto::Http => b"proto=http",
+            Proto::Https => b"proto=https",
+        })?;
+    }
+    if let Some(n) = &e.by {
+        put_pair(b"by", n, &mut first, out)?;
+    }
+    if let Some(h) = &e.host {
+        if !first {
+            out.put(b";")?;
+        }
+        out.put(b"host=")?;
+        // A port or an IPv6 literal needs quotes; host bytes never need
+        // escapes.
+        let quote = h.port.is_some() || matches!(h.host, Host::V6(_) | Host::Future(_));
+        if quote {
+            out.put(b"\"")?;
+        }
+        h.write_to(out)?;
+        if quote {
+            out.put(b"\"")?;
+        }
+    }
+    Ok(())
+}
+
+/// Writes one `Forwarded` element: `for`, `proto`, `by`, and `host`, in that
+/// order, each when present, with IPv6 addresses and nodes with ports
+/// quoted. For proxies that append their hop.
+///
+/// # Errors
+///
+/// [`WriteError::NotToken`] for an obfuscated name or port that is not `_`
+/// followed by `ALPHA / DIGIT / "." / "_" / "-"`; [`WriteError::Full`]
+/// (nothing written when the sink reports its room).
+///
+/// # Examples
+///
+/// ```
+/// use core::net::IpAddr;
+/// use parse_net::{forwarded::{self, Element, Node, NodePort, Proto}, SliceSink};
+///
+/// let e = Element {
+///     for_: Some(Node::Addr("192.0.2.60".parse::<IpAddr>()?, None)),
+///     by: Some(Node::Addr("2001:db8::17".parse::<IpAddr>()?, Some(NodePort::Number(4711)))),
+///     host: None,
+///     proto: Some(Proto::Https),
+/// };
+/// let mut buf = [0u8; 96];
+/// let mut out = SliceSink::new(&mut buf);
+/// forwarded::write_element(&e, &mut out)?;
+/// assert_eq!(out.written(), b"for=192.0.2.60;proto=https;by=\"[2001:db8::17]:4711\"");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn write_element(e: &Element<'_>, out: &mut impl Sink) -> core::result::Result<(), WriteError> {
+    let mut count = CountSink::new();
+    put_element(e, &mut count)?;
+    reserve(out, count.count())?;
+    put_element(e, out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_write_element_round_trip() {
+        let v6: IpAddr = "2001:db8:cafe::17".parse().unwrap();
+        let cases = [
+            Element {
+                for_: Some(Node::Addr(ip4("192.0.2.43"), None)),
+                by: None,
+                host: None,
+                proto: None,
+            },
+            Element {
+                for_: Some(Node::Addr(v6, Some(NodePort::Number(4711)))),
+                by: Some(Node::Obfuscated(
+                    b"_hidden",
+                    Some(NodePort::Obfuscated(b"_p1")),
+                )),
+                host: Some(crate::parse_host_port(b"example.com:8080").unwrap()),
+                proto: Some(Proto::Http),
+            },
+            Element {
+                for_: Some(Node::Unknown(Some(NodePort::Number(80)))),
+                by: Some(Node::Addr(v6, None)),
+                host: Some(crate::parse_host_port(b"[::1]").unwrap()),
+                proto: Some(Proto::Https),
+            },
+        ];
+        for e in cases {
+            let mut buf = [0u8; 128];
+            let mut out = crate::SliceSink::new(&mut buf);
+            write_element(&e, &mut out).unwrap();
+            let lines = [out.written()];
+            let parsed = parse(&lines, &Limits::DEFAULT).unwrap();
+            assert_eq!(
+                parsed.iter().next(),
+                Some(e),
+                "{:?}",
+                core::str::from_utf8(out.written())
+            );
+        }
+        let bad = Element {
+            for_: Some(Node::Obfuscated(b"hidden", None)),
+            by: None,
+            host: None,
+            proto: None,
+        };
+        let mut buf = [0u8; 8];
+        let mut out = crate::SliceSink::new(&mut buf);
+        assert_eq!(write_element(&bad, &mut out), Err(WriteError::NotToken));
+        let big = Element {
+            for_: Some(Node::Addr(v6, None)),
+            by: None,
+            host: None,
+            proto: None,
+        };
+        assert_eq!(write_element(&big, &mut out), Err(WriteError::Full));
+        assert!(out.is_empty());
+    }
 
     fn ip4(s: &str) -> IpAddr {
         s.parse().unwrap()
