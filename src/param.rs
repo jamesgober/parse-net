@@ -252,7 +252,10 @@ impl<'a> Params<'a> {
     #[must_use]
     pub fn get(&self, name: &str) -> Option<Word<'a>> {
         let name = name.as_bytes();
-        let mut matches = self.iter().filter(|p| p.name.eq_ignore_ascii_case(name));
+        // An exact compare first: names are usually sent in the case asked for.
+        let mut matches = self
+            .iter()
+            .filter(|p| p.name == name || p.name.eq_ignore_ascii_case(name));
         let found = if self.policy == DuplicatePolicy::Last {
             matches.last()
         } else {

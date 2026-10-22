@@ -91,6 +91,34 @@ proptest! {
     }
 
     #[test]
+    fn test_mail_date_fast_path_agrees_with_general(
+        secs in -62_135_596_800i64..253_402_300_799,
+        off in -5999i16..=5999,
+        at in 0usize..31,
+        byte in any::<u8>(),
+        corrupt in any::<bool>(),
+    ) {
+        // A leading space keeps the value valid but sends it down the
+        // general path, so the two must give the same answer.
+        if let Ok(d) = MailDate::new(secs, off) {
+            let (b, n) = d.format();
+            let mut v = b[..n].to_vec();
+            if corrupt {
+                v[at] = byte;
+            }
+            let spaced = [b" ".as_slice(), &v].concat();
+            match (MailDate::parse(&v, false), MailDate::parse(&spaced, false)) {
+                (Ok(a), Ok(b)) => prop_assert_eq!(a, b),
+                (Err(a), Err(b)) => {
+                    prop_assert_eq!(a.kind(), b.kind());
+                    prop_assert_eq!(a.offset() + 1, b.offset().max(1));
+                }
+                (a, b) => prop_assert!(false, "{:?} vs {:?} for {:?}", a, b, String::from_utf8_lossy(&v)),
+            }
+        }
+    }
+
+    #[test]
     fn test_encoded_words_round_trip(text in "\\PC{0,80}", room in 0usize..90) {
         let mut buf = vec![0u8; 8192];
         let mut out = SliceSink::new(&mut buf);

@@ -437,15 +437,7 @@ impl Negotiator {
         I::IntoIter: Clone,
     {
         let lines = lines.into_iter();
-        // Validate every member once, so a malformed header is caught before
-        // any selection.
-        let checked = list::combined(lines.clone(), &self.limits).and_then(|l| {
-            for e in l.iter() {
-                media::parse_range(e, &self.limits).map(|_| ())?;
-            }
-            Ok(l)
-        });
-        let members = match checked {
+        let members = match list::combined(lines, &self.limits) {
             Ok(l) => l,
             Err(e) => return self.malformed(e, offers.len()),
         };
@@ -455,12 +447,18 @@ impl Negotiator {
             for (slot, offer) in parsed.iter_mut().zip(group) {
                 *slot = media::parse(offer.as_bytes(), &Limits::DEFAULT).ok();
             }
+            let parsed = parsed.get(..group.len()).unwrap_or(&[]);
             let mut best = [Best::default(); GROUP];
+            // The first group's pass also validates every member, so a
+            // malformed header is caught before any offer is chosen, in the
+            // same walk that scores the offers.
             for element in members.iter() {
-                let Ok(range) = media::parse_range(element, &self.limits) else {
-                    continue;
+                let range = match media::parse_range(element, &self.limits) {
+                    Ok(r) => r,
+                    Err(e) if group_index == 0 => return self.malformed(e, offers.len()),
+                    Err(_) => continue,
                 };
-                for (b, offer) in best.iter_mut().zip(&parsed) {
+                for (b, offer) in best.iter_mut().zip(parsed) {
                     if let Some(offer) = offer {
                         if range.matches(offer) {
                             b.offer(u16::from(range.specificity()), range.weight());
@@ -477,6 +475,14 @@ impl Negotiator {
             ) {
                 if chosen.is_none_or(|(_, w)| weight.0 > w) {
                     chosen = Some((index, weight.0));
+                }
+            }
+        }
+        if offers.is_empty() {
+            // No group ran, so validate the members on their own.
+            for element in members.iter() {
+                if let Err(e) = media::parse_range(element, &self.limits) {
+                    return self.malformed(e, 0);
                 }
             }
         }

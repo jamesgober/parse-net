@@ -46,67 +46,74 @@ pub struct Directive<'a> {
     pub value: Option<Word<'a>>,
 }
 
-/// One directive at `v[i..]`: `token [ "=" ( token / quoted-string ) ]`.
-/// Returns it and the index after it.
-fn directive_at(v: &[u8], i: usize) -> Result<(Directive<'_>, usize)> {
-    let rest = v.get(i..).unwrap_or(&[]);
-    let n = rest.iter().take_while(|&&b| class::is_tchar(b)).count();
+/// Skips SP and HTAB.
+#[inline]
+fn skip_ws(mut s: &[u8]) -> &[u8] {
+    while let [b' ' | b'\t', rest @ ..] = s {
+        s = rest;
+    }
+    s
+}
+
+/// One directive at the front of `s`: `token [ "=" ( token / quoted-string ) ]`.
+/// Returns it and what follows; error offsets are relative to `s`.
+fn directive(s: &[u8]) -> Result<(Directive<'_>, &[u8])> {
+    let n = s
+        .iter()
+        .position(|&b| !class::is_tchar(b))
+        .unwrap_or(s.len());
     if n == 0 {
-        return Err(bad(v, i));
+        return Err(bad(s, 0));
     }
-    let name = rest.get(..n).unwrap_or(&[]);
-    if rest.get(n) != Some(&b'=') {
-        return Ok((Directive { name, value: None }, i + n));
-    }
-    let at = i + n + 1;
-    let (w, used) = parse_word(v.get(at..).unwrap_or(&[])).map_err(|x| match x.kind() {
-        ErrorKind::Empty => bad(v, at),
-        _ => x.shifted(at),
+    let (name, after) = s.split_at(n);
+    let [b'=', value @ ..] = after else {
+        return Ok((Directive { name, value: None }, after));
+    };
+    let (w, used) = parse_word(value).map_err(|x| match x.kind() {
+        ErrorKind::Empty => bad(s, n + 1),
+        _ => x.shifted(n + 1),
     })?;
     Ok((
         Directive {
             name,
             value: Some(w),
         },
-        at + used,
+        value.get(used..).unwrap_or(&[]),
     ))
 }
 
 /// Validates a `Cache-Control` value in one pass over `v` (OWS already
 /// trimmed), calling `f` for each directive; returns the count. Empty list
-/// elements are skipped up to `max_empty_elements`.
+/// elements are skipped up to `max_empty_elements`. The cursor is a
+/// shrinking slice; offsets are computed only for an error.
 fn walk<'a>(v: &'a [u8], limits: &Limits, mut f: impl FnMut(Directive<'a>)) -> Result<usize> {
-    let (mut i, mut count, mut empty) = (0usize, 0usize, 0usize);
+    let at = |rest: &[u8]| v.len() - rest.len();
+    let (mut rest, mut count, mut empty) = (v, 0usize, 0usize);
     loop {
-        while matches!(v.get(i), Some(b' ' | b'\t')) {
-            i += 1;
-        }
-        match v.get(i) {
-            None => return Ok(count),
-            Some(b',') => {
+        rest = skip_ws(rest);
+        match rest {
+            [] => return Ok(count),
+            [b',', tail @ ..] => {
                 empty += 1;
                 if empty > usize::from(limits.empty_elements) {
-                    return Err(ParseError::new(ErrorKind::TooManyEmptyElements, i));
+                    return Err(ParseError::new(ErrorKind::TooManyEmptyElements, at(rest)));
                 }
-                i += 1;
+                rest = tail;
                 continue;
             }
-            Some(_) => {}
+            _ => {}
         }
-        let (d, end) = directive_at(v, i)?;
+        let (d, tail) = directive(rest).map_err(|e| e.shifted(at(rest)))?;
         count += 1;
         if count > usize::from(limits.list_members) {
-            return Err(ParseError::new(ErrorKind::TooManyMembers, i));
+            return Err(ParseError::new(ErrorKind::TooManyMembers, at(rest)));
         }
         f(d);
-        i = end;
-        while matches!(v.get(i), Some(b' ' | b'\t')) {
-            i += 1;
-        }
-        match v.get(i) {
-            None => return Ok(count),
-            Some(b',') => {}
-            Some(_) => return Err(bad(v, i)),
+        rest = skip_ws(tail);
+        match rest {
+            [] => return Ok(count),
+            [b',', tail @ ..] => rest = tail,
+            _ => return Err(bad(rest, 0).shifted(at(rest))),
         }
     }
 }
@@ -163,7 +170,7 @@ impl<'a> Directives<'a> {
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     pub fn iter(&self) -> impl Iterator<Item = Directive<'a>> + use<'a> {
-        DirectiveIter { s: self.text, i: 0 }
+        DirectiveIter { s: self.text }
     }
 
     /// The number of directives.
@@ -201,21 +208,18 @@ impl<'a> Directives<'a> {
 /// The directives of a validated [`Directives`].
 struct DirectiveIter<'a> {
     s: &'a [u8],
-    i: usize,
 }
 
 impl<'a> Iterator for DirectiveIter<'a> {
     type Item = Directive<'a>;
 
     fn next(&mut self) -> Option<Directive<'a>> {
-        while matches!(self.s.get(self.i), Some(b' ' | b'\t' | b',')) {
-            self.i += 1;
+        let mut rest = self.s;
+        while let [b' ' | b'\t' | b',', tail @ ..] = rest {
+            rest = tail;
         }
-        if self.i >= self.s.len() {
-            return None;
-        }
-        let (d, end) = directive_at(self.s, self.i).ok()?;
-        self.i = end;
+        let (d, tail) = directive(rest).ok()?;
+        self.s = tail;
         Some(d)
     }
 }
@@ -338,28 +342,36 @@ pub struct RequestDirectives {
 /// Reads a `delta-seconds` argument, token or quoted (RFC 9111 section 5.2:
 /// recipients accept both forms).
 fn seconds(value: Option<Word<'_>>, invalid: &mut bool) -> Option<u32> {
-    let mut buf = [0u8; 32];
-    let digits = match value {
-        Some(Word::Token(t)) => t,
-        Some(q @ Word::Quoted(_)) => match q.unescape_into(&mut buf) {
-            Ok(d) => d,
-            Err(_) => {
-                *invalid = true;
-                return None;
+    // Senders must not quote delta-seconds (RFC 9111 section 5.2), but
+    // recipients read both forms; a quoted pair is read through the
+    // unescaping iterator, so no buffer is needed.
+    let n = match value {
+        Some(Word::Token(t)) => parse_u32_saturating(t).ok(),
+        Some(Word::Quoted(q)) => match q.as_plain() {
+            Some(p) => parse_u32_saturating(p).ok(),
+            None => {
+                let mut n: Option<u32> = None;
+                for b in q.bytes() {
+                    if !b.is_ascii_digit() {
+                        n = None;
+                        break;
+                    }
+                    n = Some(
+                        n.unwrap_or(0)
+                            .saturating_mul(10)
+                            .saturating_add(u32::from(b - b'0'))
+                            .min(crate::num::DELTA_SECONDS_MAX),
+                    );
+                }
+                n
             }
         },
-        None => {
-            *invalid = true;
-            return None;
-        }
+        None => None,
     };
-    match parse_u32_saturating(digits) {
-        Ok(n) => Some(n),
-        Err(_) => {
-            *invalid = true;
-            None
-        }
+    if n.is_none() {
+        *invalid = true;
     }
+    n
 }
 
 /// A flag directive: no argument expected; one (other than a field list for
@@ -399,9 +411,17 @@ fn number(
     *slot = seconds(value, invalid);
 }
 
+/// Whether the token `n` equals `lower`, a lowercase name of letters and
+/// `-`, ignoring ASCII case. Among token bytes, `b | 0x20` maps exactly `A-Z`
+/// onto `a-z` and leaves `-` alone (the only other byte it maps onto `-` is
+/// CR, which is not a token byte), so one OR per byte suffices.
+fn is_name(n: &[u8], lower: &[u8]) -> bool {
+    n.len() == lower.len() && n.iter().zip(lower).all(|(&b, &p)| b | 0x20 == p)
+}
+
 /// The index of a response directive name, dispatched on length first.
 fn response_slot(n: &[u8]) -> Option<usize> {
-    let is = |s: &[u8]| n.eq_ignore_ascii_case(s);
+    let is = |s: &[u8]| is_name(n, s);
     match n.len() {
         6 if is(b"public") => Some(5),
         7 if is(b"max-age") => Some(0),
@@ -458,7 +478,7 @@ impl ResponseBuilder {
 
 /// The index of a request directive name, dispatched on length first.
 fn request_slot(n: &[u8]) -> Option<usize> {
-    let is = |s: &[u8]| n.eq_ignore_ascii_case(s);
+    let is = |s: &[u8]| is_name(n, s);
     match n.len() {
         7 if is(b"max-age") => Some(0),
         8 if is(b"no-cache") => Some(3),
