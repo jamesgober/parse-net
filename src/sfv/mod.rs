@@ -27,6 +27,9 @@
 //! ```
 
 mod parse;
+mod write;
+
+pub use write::Writer;
 
 use parse::{Cursor, Events, Nothing};
 

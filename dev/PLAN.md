@@ -524,7 +524,7 @@ parse-net never decides policy: it reports facts strictly. What to do with a dup
 | `response_cache_control` | `public, max-age=31536000, immutable` | 60 ns | `headers::CacheControl` [est. 150 ns] |
 | `client_address` | 3-hop XFF, IPv4 | 60 ns | no crate |
 | `mail::encode_words` | 40-byte UTF-8 subject | 200 ns | to be chosen at 0.6 |
-| `MailDate::parse` | `Tue, 21 Oct 2026 17:38:00 +0200` | 40 ns | `mailparse::dateparse` [est. 150 ns] |
+| `MailDate::parse` | `Wed, 21 Oct 2026 17:38:00 +0200` | 40 ns | `mailparse::dateparse` [est. 150 ns] |
 
 Every competitor number is an estimate until measured in 0.6. Each comparable row must be at least 20% faster than the best Rust competitor measured, at equal or stronger strictness, or it is a defect with a plan.
 

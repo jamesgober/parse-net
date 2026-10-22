@@ -1205,19 +1205,19 @@ RFC 5322 section 3.3 `date-time`.
 
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
-| DAT-11 | `new`, `write_to`, `format` | P1, 2, 0.5 | `Tue, 21 Oct 2026 17:38:00 +0200`: always writes the weekday, a two-digit day, four-digit year, seconds, and a numeric zone; the offset is within plus or minus 99:59 | `new`: `OutOfRange` (year outside 1 to 9999 in local time, offset beyond 99:59); `write_to`: `Full` |
+| DAT-11 | `new`, `write_to`, `format` | P1, 2, 0.5 | `Wed, 21 Oct 2026 17:38:00 +0200`: always writes the weekday, a two-digit day, four-digit year, seconds, and a numeric zone; the offset is within plus or minus 99:59 | `new`: `OutOfRange` (year outside 1 to 9999 in local time, offset beyond 99:59); `write_to`: `Full` |
 | DAT-12 | `parse` (strict) | P2, 2, 0.5 | optional weekday (must match), 1 or 2 digit day, 4 digit year, optional seconds, CFWS between tokens (comments skipped, depth-limited), `+hhmm` / `-hhmm` with minutes below 60; `-0000` sets `offset_unknown`; second `60` accepted and read as 59 with `leap_second` set ([D-006](../dev/PLAN.md#16-decision-log)) | `InvalidDate`, `WeekdayMismatch`, `TrailingData`, `UnbalancedComment`, `CommentTooDeep` |
 | DAT-13 | `parse` with `obsolete = true` | P3, 2, 0.5 | RFC 5322 section 4.3: two- and three-digit years (two-digit below 50 are 20xx, others 19xx; three-digit years add 1900), `UT`, `GMT`, `EST`/`EDT`, `CST`/`CDT`, `MST`/`MDT`, `PST`/`PDT`, and the military zones (read as `-0000`, as the RFC says) | as DAT-12 |
 
 ```rust
 use parse_net::MailDate;
 
-let d = MailDate::parse(b"Tue, 21 Oct 2026 17:38:00 +0200", false)?;
+let d = MailDate::parse(b"Wed, 21 Oct 2026 17:38:00 +0200", false)?;
 assert_eq!(d.offset_minutes(), 120);
 let mut buf = [0u8; 64];
 let mut out = parse_net::SliceSink::new(&mut buf);
 d.write_to(&mut out).expect("room");
-assert_eq!(out.written(), b"Tue, 21 Oct 2026 17:38:00 +0200");
+assert_eq!(out.written(), b"Wed, 21 Oct 2026 17:38:00 +0200");
 assert!(MailDate::parse(b"21 Oct 26 17:38 EDT", false).is_err());
 assert_eq!(MailDate::parse(b"21 Oct 26 17:38 EDT", true)?.offset_minutes(), -240);
 # Ok::<(), parse_net::ParseError>(())

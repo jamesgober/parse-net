@@ -23,6 +23,10 @@ use crate::{
     write::Sink,
 };
 
+mod mail_date;
+
+pub use mail_date::MailDate;
+
 /// Whether `year` is a leap year in the proleptic Gregorian calendar.
 ///
 /// # Examples

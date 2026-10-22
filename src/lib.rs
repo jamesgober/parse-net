@@ -117,7 +117,9 @@ pub mod ext_value;
 pub mod forwarded;
 pub mod host;
 mod limits;
+pub mod link;
 pub mod list;
+pub mod mail;
 pub mod media;
 pub mod negotiate;
 pub mod num;
@@ -137,7 +139,7 @@ pub use cache::{
 };
 #[cfg(feature = "std")]
 pub use date::http_date;
-pub use date::{Civil, DateFormat, HttpDate, http_date_at};
+pub use date::{Civil, DateFormat, HttpDate, MailDate, http_date_at};
 pub use disposition::{
     ContentDisposition, DispositionType, Filename, parse_content_disposition, write_attachment,
 };
@@ -147,6 +149,7 @@ pub use ext_value::{Charset, ExtValue, write_ext_value};
 pub use forwarded::{ClientAddress, ForwardedSource, Trust, client_address};
 pub use host::{Host, HostPort, parse_host_port};
 pub use limits::{DuplicatePolicy, Limits};
+pub use link::{LinkValue, Links, parse_link};
 pub use list::{List, list};
 pub use media::{Boundary, MediaRange, MediaType, parse_media_type};
 pub use negotiate::{QValue, best_charset, best_encoding, best_language, best_media};

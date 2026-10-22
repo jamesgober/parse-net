@@ -30,6 +30,8 @@ pub enum Charset {
     Utf8,
     /// ISO-8859-1, decoded only (D-010).
     Iso8859_1,
+    /// US-ASCII, decoded only: a decoded byte above 0x7F is refused (D-058).
+    UsAscii,
 }
 
 /// A validated extended value.
@@ -90,6 +92,8 @@ impl<'a> ExtValue<'a> {
             Charset::Utf8
         } else if charset_text.eq_ignore_ascii_case(b"ISO-8859-1") {
             Charset::Iso8859_1
+        } else if charset_text.eq_ignore_ascii_case(b"US-ASCII") {
+            Charset::UsAscii
         } else {
             return err(ErrorKind::UnsupportedCharset, 0);
         };
@@ -159,7 +163,7 @@ impl<'a> ExtValue<'a> {
     pub fn max_decoded_len(&self) -> usize {
         let n = self.raw_bytes().count();
         match self.charset {
-            Charset::Utf8 => n,
+            Charset::Utf8 | Charset::UsAscii => n,
             Charset::Iso8859_1 => n.saturating_mul(2),
         }
     }
@@ -199,7 +203,7 @@ pub(crate) fn decode_checked(
     let mut slots = dst.iter_mut();
     for b in bytes {
         match charset {
-            Charset::Utf8 => {
+            Charset::Utf8 | Charset::UsAscii => {
                 if let Some(s) = slots.next() {
                     *s = b;
                 }
@@ -261,6 +265,17 @@ pub(crate) fn decoded_text_len(bytes: impl Iterator<Item = u8>, charset: Charset
                     return err(ErrorKind::ControlInDecoded, i);
                 }
                 len += if b < 0x80 { 1 } else { 2 };
+            }
+        }
+        Charset::UsAscii => {
+            for (i, b) in bytes.enumerate() {
+                if b >= 0x80 {
+                    return err(ErrorKind::InvalidByte, i);
+                }
+                if is_control_point(u32::from(b)) {
+                    return err(ErrorKind::ControlInDecoded, i);
+                }
+                len += 1;
             }
         }
     }
@@ -340,6 +355,11 @@ mod tests {
         assert_eq!(decode(b"UTF-8'en'a").unwrap(), "a");
         assert_eq!(decode(b"ISO-8859-1''%E9").unwrap(), "\u{e9}");
         assert_eq!(decode(b"iso-8859-1''caf%e9").unwrap(), "caf\u{e9}");
+        assert_eq!(decode(b"us-ascii'en'a%20b").unwrap(), "a b");
+        assert_eq!(
+            decode(b"US-ASCII''caf%e9").unwrap_err().kind(),
+            ErrorKind::InvalidByte
+        );
         assert_eq!(decode(b"UTF-8''%C3%A9").unwrap(), "\u{e9}");
         // The same bytes read under the other charset are refused or differ.
         assert_eq!(
