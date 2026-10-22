@@ -13,6 +13,30 @@
 
 ---
 
+## [0.2.0] - 2026-10-21
+
+The design lock: the public API through 1.0, written down before the code. No
+parsing code yet.
+
+### Added
+
+- `docs/API.md`: every public item from `0.3.0` to `1.0.0` with its id, grade,
+  tier, shipping version, signature, behaviour, every `ErrorKind` it can
+  return, examples, and the edge cases its tests cover; the `ErrorKind` table
+  with what each variant refuses and what to do; the `Limits` defaults and
+  their RFC sources; one coverage checklist per consumer (http-net, ws-net,
+  cookie-net, form-net, smtp-net).
+- `dev/PLAN.md` decisions D-026 to D-036 made at the design lock (ISO weekday
+  numbering, a public `ParseError::new`, no second quoting mode for
+  `multipart/form-data`, `WriteError::InvalidSequence`, the Structured Field
+  Date range, `@` checked first in `Host`, `mail::unfold` validating first,
+  `If-Range` dates as IMF-fixdate, the RFC 5322 obsolete-year rule, and the
+  names added beyond the specification's sketch).
+
+### Changed
+
+- `dev/ROADMAP.md`: 0.1.0 marked done; 0.2.0 items checked.
+
 ## [0.1.0] - 2026-10-21
 
 The scaffold and the plan. No parsing code yet.
@@ -37,5 +61,6 @@ The scaffold and the plan. No parsing code yet.
   (0.1 to 1.0 with exit criteria).
 - `fuzz/` crate skeleton; targets arrive with the parsers they cover.
 
-[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jamesgober/parse-net/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jamesgober/parse-net/releases/tag/v0.1.0

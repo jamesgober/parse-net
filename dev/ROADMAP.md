@@ -6,25 +6,26 @@
 >
 > **Release routine after every version:** finish the version (every item done, version bumped everywhere, CHANGELOG rolled, `docs/release/vX.Y.Z.md` written, README and `docs/API.md` checked against the build); local gate on Windows and WSL, stable and 1.85; commit and push (the scaffold to `main`, later versions on a `feature/` branch with a pull request, squash-merged after CI passes); wait for green CI; tag `vX.Y.Z`; GitHub release from the release notes (pre-release for 0.x); `cargo doc` clean in both feature modes; `cargo publish`; verify crates.io and docs.rs.
 
-## v0.1.0 - Scaffold
+## v0.1.0 - Scaffold (DONE, 2026-10-21)
 
 Exit: CI green on every platform; crate on crates.io; docs.rs build green.
 
-- [ ] Repository in the customs-sec layout; `Cargo.toml` (edition 2024, MSRV 1.85, no dependencies, features `alloc`, `std`, `encode-lib` declared empty until used).
-- [ ] `src/lib.rs` with `VERSION` (ROOT-1), `no_std`, `forbid(unsafe_code)`, the lint set (D-025).
-- [ ] CI: Linux, macOS, Windows on stable and 1.85 (fmt, clippy and tests in three feature modes, examples, docs in both modes); bare-metal `thumbv7em-none-eabi` build; zero-dependency check; package; audit and deny.
-- [ ] `dev/PLAN.md` from the specification with the decision log; `dev/DIRECTIVES.md`; this file.
-- [ ] README, CHANGELOG, `docs/API.md`, `docs/release/v0.1.0.md`; `fuzz/` crate skeleton.
-- [ ] Publish 0.1.0 to claim the name.
+- [x] Repository in the customs-sec layout; `Cargo.toml` (edition 2024, MSRV 1.85, no dependencies, features `alloc`, `std`, `encode-lib` declared empty until used).
+- [x] `src/lib.rs` with `VERSION` (ROOT-1), `no_std`, `forbid(unsafe_code)`, the lint set (D-025).
+- [x] CI: Linux, macOS, Windows on stable and 1.85 (fmt, clippy and tests in three feature modes, examples, docs in both modes); bare-metal `thumbv7em-none-eabi` build; zero-dependency check; package; audit and deny.
+- [x] `dev/PLAN.md` from the specification with the decision log; `dev/DIRECTIVES.md`; this file.
+- [x] README, CHANGELOG, `docs/API.md`, `docs/release/v0.1.0.md`; `fuzz/` crate skeleton.
+- [x] Publish 0.1.0 to claim the name (crates.io and docs.rs green).
 
 ## v0.2.0 - Design lock
 
 Exit: James approves `docs/API.md`; no `todo` in the API document.
 
-- [ ] `docs/API.md` written for every item in PLAN section 8, with signatures, behaviour, every `ErrorKind` each item can return, and examples, in the metrics-lib format.
-- [ ] One checklist per consumer (http-net, ws-net, cookie-net, form-net, smtp-net) proving the API covers what each needs, kept in `docs/API.md`.
-- [ ] The edge-case lists placed beside each item (PLAN 11.7).
-- [ ] Open decisions closed or kept open with a date (all PN-1 to PN-18 are closed in the decision log).
+- [x] `docs/API.md` written for every item in PLAN section 8, with signatures, behaviour, every `ErrorKind` each item can return, and examples, in the metrics-lib format.
+- [x] One checklist per consumer (http-net, ws-net, cookie-net, form-net, smtp-net) proving the API covers what each needs, kept in `docs/API.md`.
+- [x] The edge-case lists placed beside each item (PLAN 11.7).
+- [x] Open decisions closed or kept open with a date (all PN-1 to PN-18 are closed in the decision log; design-lock decisions D-026 to D-036 added).
+- [ ] James approves `docs/API.md`.
 
 ## v0.3.0 - Core (what http-net, ws-net, and cookie-net need)
 
