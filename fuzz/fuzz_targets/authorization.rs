@@ -27,16 +27,12 @@ fuzz_target!(|data: &[u8]| {
     });
     match r {
         Ok(c) => {
-            let shown = format!("{c:?}");
-            if let AuthPayload::Token68(t) = c.payload() {
-                // `Debug` prints the scheme, so a token that also occurs in
-                // the scheme proves nothing.
-                let scheme = String::from_utf8_lossy(c.scheme());
-                let t = String::from_utf8_lossy(t);
-                if t.len() >= 8 && !scheme.contains(&*t) {
-                    assert!(!shown.contains(&*t), "Debug printed the credential");
-                }
-            }
+            // `Debug` prints the scheme and nothing else: an exact match,
+            // since a token can occur in the fixed text (`Credenti` in
+            // `Credentials`, found by the 0.7 run).
+            let scheme = core::str::from_utf8(c.scheme()).unwrap_or("?");
+            let want = format!("Credentials {{ scheme: {scheme:?}, .. }}");
+            assert_eq!(format!("{c:?}"), want, "Debug printed more than the scheme");
         }
         Err(e) => common::check_error(&e),
     }
