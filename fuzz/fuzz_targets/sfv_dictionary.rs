@@ -111,11 +111,17 @@ fuzz_target!(|data: &[u8]| {
                 assert!(v.is_ok());
                 assert_eq!(d.iter().count(), d.len());
                 let mut seen = Count::default();
-                for (k, m) in d.iter() {
+                for (n, (k, m)) in d.iter().enumerate() {
                     walk_member(m, &mut buf);
                     count_member(m, &mut seen);
-                    let last = d.iter().filter(|(x, _)| *x == k).last().map(|(_, m)| m);
-                    assert_eq!(d.get(k), last);
+                    // The reference scan walks the whole dictionary, so it
+                    // runs for the first keys only: on every key it made the
+                    // harness quadratic (1.5 s for 1019 members, a timeout in
+                    // the 0.7 run). `index_into` below checks every key.
+                    if n < 32 {
+                        let last = d.iter().filter(|(x, _)| *x == k).last().map(|(_, m)| m);
+                        assert_eq!(d.get(k), last);
+                    }
                 }
                 assert_eq!(visited, seen);
                 let index = d.index_into(&mut slots).expect("1024 slots");
