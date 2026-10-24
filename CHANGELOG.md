@@ -11,6 +11,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The complexity tests check timing on an optimised build only (the CI job
+  `Complexity (release)`, at the 1.2 bound); an unoptimised build checks the
+  limit errors and prints the times. The 2.0 bound for debug builds failed
+  on a macOS runner on a single-loop walker (D-073).
+- The weekly differential fuzz workflow builds for
+  `x86_64-unknown-linux-gnu`: the installed cargo-fuzz is a musl build and
+  defaulted to its own target, where the address sanitizer cannot link.
+
 ---
 
 ## [0.7.0] - 2026-10-24
