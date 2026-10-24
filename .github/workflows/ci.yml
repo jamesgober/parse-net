@@ -58,8 +58,8 @@ jobs:
 
   complexity:
     # The complexity tests hold an optimised build to the 1.2 bound of
-    # dev/PLAN.md section 11.6; the test jobs above run them unoptimised
-    # with a looser bound (D-073).
+    # dev/PLAN.md section 11.6; the test jobs above run them unoptimised,
+    # where only the limit errors are checked (D-073).
     name: Complexity (release)
     runs-on: ubuntu-latest
     steps:
