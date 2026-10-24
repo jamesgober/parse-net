@@ -56,6 +56,19 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
 
+  complexity:
+    # The complexity tests hold an optimised build to the 1.2 bound of
+    # dev/PLAN.md section 11.6; the test jobs above run them unoptimised
+    # with a looser bound (D-073).
+    name: Complexity (release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Linear time at 1 KiB, 64 KiB, and 1 MiB
+        run: cargo test --release --test complexity
+
   no-std:
     name: Bare metal (thumbv7em-none-eabi / ${{ matrix.rust }})
     runs-on: ubuntu-latest

@@ -7,7 +7,10 @@
 //! Timing is the best of several runs; a case that misses the bound is
 //! measured again (up to three times) before it fails, so a busy machine
 //! does not fail the test while a quadratic walker (16 times the ratio from
-//! 64 KiB to 1 MiB) always does.
+//! 64 KiB to 1 MiB) always does. The 1.2 bound holds for an optimised build
+//! (CI runs `cargo test --release --test complexity`); an unoptimised build
+//! on a shared machine varies more, so it is held to 2.0, which a quadratic
+//! walker still misses eightfold (D-073).
 
 use std::{
     hint::black_box,
@@ -20,6 +23,9 @@ use parse_net::{
 };
 
 const SIZES: [usize; 3] = [1 << 10, 1 << 16, 1 << 20];
+
+/// The most time may grow over the size ratio.
+const BOUND: f64 = if cfg!(debug_assertions) { 2.0 } else { 1.2 };
 
 /// Every limit at its maximum, so a walker reads as far as the input goes.
 const FULL: Limits = Limits::DEFAULT
@@ -533,7 +539,7 @@ fn test_complexity_linear() {
         let passed = (0..3).any(|_| {
             let (a, b, t) = ratios(&c, &inputs);
             last = Some((a, b, t));
-            a <= 1.2 && b <= 1.2
+            a <= BOUND && b <= BOUND
         });
         let (a, b, t) = last.unwrap();
         println!(
