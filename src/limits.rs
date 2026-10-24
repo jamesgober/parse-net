@@ -11,7 +11,7 @@
 /// |---|---|---|
 /// | list members | 1024 | RFC 9651 section 3.1 minimum |
 /// | inner list members | 256 | RFC 9651 section 3.1.1 minimum |
-/// | parameters per item or field | 256 | RFC 9651 section 3.1.2 minimum |
+/// | parameters per item or field | 256 (RFC 9110 parameters under `DuplicatePolicy::Refuse`: at most 64, [`param::MAX_CHECKED_PARAMS`](crate::param::MAX_CHECKED_PARAMS)) | RFC 9651 section 3.1.2 minimum |
 /// | dictionary members | 1024 | RFC 9651 section 3.2 minimum |
 /// | key length | 256 | RFC 9651 minimum is 64 |
 /// | string length (decoded) | 1024 | RFC 9651 section 3.3.3 minimum |
@@ -148,6 +148,10 @@ impl Limits {
     }
 
     /// The most parameters an item or a field may have (default 256).
+    ///
+    /// RFC 9110 parameters read under [`DuplicatePolicy::Refuse`] stop at
+    /// [`MAX_CHECKED_PARAMS`](crate::param::MAX_CHECKED_PARAMS) (64) whatever
+    /// this says: the repeat check keeps their names on the stack (D-072).
     ///
     /// # Examples
     ///

@@ -230,7 +230,8 @@ impl<'a> Iterator for UnfoldIter<'a> {
 ///
 /// [`WriteError::NotToken`] for a name outside `ftext`;
 /// [`WriteError::Forbidden`] for CR, LF, or NUL in `value`;
-/// [`WriteError::OutOfRange`] for a word that cannot fit in 998 bytes;
+/// [`WriteError::OutOfRange`] for a word (with the whitespace that ends the
+/// value, after the last word) that cannot fit in 998 bytes;
 /// [`WriteError::Full`] (nothing written when the sink reports its room).
 ///
 /// # Examples
@@ -286,7 +287,12 @@ fn put_fold(
             .count();
         let (word, tail) = tail.split_at(word_len);
         if word.is_empty() {
-            // Trailing whitespace stays on the line it ends.
+            // Trailing whitespace stays on the line it ends: a fold before
+            // it would leave a line of only whitespace. It counts toward
+            // the 998 bytes like any word.
+            if col + ws.len() > HARD_LIMIT {
+                return Err(WriteError::OutOfRange);
+            }
             out.put(ws)?;
             return Ok(());
         }
@@ -393,6 +399,22 @@ mod tests {
         two.push(b' ');
         two.extend_from_slice(&[b'w'; 998]);
         assert_eq!(fold("S", &two, &mut out), Err(WriteError::OutOfRange));
+        // Found by the 0.7 fuzz run: whitespace after the last word was
+        // written past 998 bytes. `Subject: ` and 989 bytes fill the line.
+        let mut tail = vec![b'w'; 989];
+        tail.push(b'\t');
+        assert_eq!(
+            fold("Subject", &tail, &mut out),
+            Err(WriteError::OutOfRange)
+        );
+        let mut fits = vec![b'w'; 988];
+        fits.push(b'\t');
+        assert_eq!(folded("Subject", &fits).len(), 998);
+        // Earlier words fold away; the last line still counts its tail.
+        let mut many = b"a b ".to_vec();
+        many.extend_from_slice(&[b'w'; 997]);
+        many.extend_from_slice(b"  ");
+        assert_eq!(fold("S", &many, &mut out), Err(WriteError::OutOfRange));
     }
 
     #[test]

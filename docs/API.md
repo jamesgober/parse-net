@@ -376,7 +376,7 @@ The work and size bounds every parser enforces. Every bound is checked before th
 |---|---|---|
 | list members | 1024 | RFC 9651 section 3.1 minimum |
 | inner list members | 256 | RFC 9651 section 3.1.1 minimum |
-| parameters per item or field | 256 | RFC 9651 section 3.1.2 minimum |
+| parameters per item or field | 256 (RFC 9110 parameters under `Refuse`: at most `param::MAX_CHECKED_PARAMS`, 64; D-072) | RFC 9651 section 3.1.2 minimum |
 | dictionary members | 1024 | RFC 9651 section 3.2 minimum |
 | key length | 256 | RFC 9651 minimum is 64; a longer key from a conforming sender is not refused |
 | string length (decoded) | 1024 | RFC 9651 section 3.3.3 minimum |
@@ -2167,7 +2167,7 @@ The grammar smtp-net needs to write mail and gate-net needs to validate login ad
 | MAIL-3 | `fold` | P1, 1, 0.5 | writes `Name: value` and CRLF-SP folds at whitespace so lines stay within 78 columns where possible; never a line of only whitespace; never over 998 | `NotToken` for a name outside `ftext`; `Forbidden { at }` for CR, LF, NUL in `value`; `OutOfRange` for a word longer than 998 - the folding indent; `Full` |
 | MAIL-4 | `encode_words` (Q) | P1, 1, 0.5 | RFC 2047: printable ASCII text without `=?` is written as it is; otherwise `=?UTF-8?Q?...?=` words of at most 75 bytes, split only on UTF-8 character boundaries, separated by CRLF SP; the first word fits in `room_first_line` | `Forbidden { at }` for a control character; `Full` |
 | MAIL-5 | `encode_words_b` | P2, 1, 0.6 (D-062) | `encode-lib`: the B encoding, used when Q would be longer | as MAIL-4 |
-| MAIL-6 | `decode_words` | P2, 2, 0.5 | decodes encoded words in unstructured text into `out`; whitespace between adjacent encoded words is dropped (RFC 2047 section 6.2); text outside encoded words copied; `_` is a space in Q; words inside quoted strings are not decoded (section 5); B needs `encode-lib` | `UnsupportedCharset`, `InvalidEncodedWord`, `ControlInDecoded` (CR, LF, NUL), `InvalidUtf8`, `TooManyMembers` beyond `max_encoded_words`, `BufferTooSmall` |
+| MAIL-6 | `decode_words` | P2, 2, 0.5 | decodes encoded words in unstructured text into `out`; whitespace between adjacent encoded words is dropped (RFC 2047 section 6.2); text outside encoded words copied; `_` is a space in Q; words inside quoted strings are not decoded (section 5); B needs `encode-lib` | `UnsupportedCharset`, `InvalidEncodedWord`, `ControlInDecoded` (any decoded control: C0 including HTAB, DEL, C1, as in ext-values; D-071), `InvalidUtf8`, `TooManyMembers` beyond `max_encoded_words`, `BufferTooSmall` |
 | MAIL-7 | `parse_mime_params`, `MimeParams` | P1, 3, 0.5 | RFC 2045 section 5.1 with the MIME `token` class (allows `{` and `}`); case-insensitive names; CFWS between parameters | `NotToken`, `MissingValue`, `DuplicateParameter`, `UnterminatedQuote`, `TooManyMembers` |
 | MAIL-8 | RFC 2231 (`get`, `decode_into`, `Continuation`) | P1, 2, 0.5 | the reassembly in [PLAN 7.12](../dev/PLAN.md#712-rfc-2231-reassembly-without-allocation): sections `name*0`, `name*1*`, ... numbered from 0 without gaps or duplicates; a charset only on section 0; decoded in order into `out` | `SectionGap`, `TooManySections`, EXT-1 and EXT-2 errors, `BufferTooSmall` |
 | MAIL-9 | `write_mime_param` | P1, 1, 0.5 | `; name=token`, `; name="quoted"`, or, for non-ASCII or long values, `; name*=UTF-8''...` split into `name*0*`, `name*1*` sections so no line passes 78 columns | `NotToken` (name), `Forbidden { at }` (control), `Full` |

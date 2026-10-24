@@ -21,8 +21,18 @@ fuzz_target!(|data: &[u8]| {
         if let (Ok(a), Ok(b)) = (len, out) {
             assert_eq!(a, b);
         }
-        let _ = pct::decode_utf8_into(data, &mut scratch);
-        let _ = pct::decode_lower_only_into(data, &mut scratch);
+        for e in [
+            len.err(),
+            out.err(),
+            pct::validate(data).err(),
+            pct::decode_utf8_into(data, &mut scratch).err(),
+            pct::decode_lower_only_into(data, &mut scratch).err(),
+        ]
+        .iter()
+        .flatten()
+        {
+            common::check_error(e);
+        }
         out
     });
     if let Ok(n) = decoded {

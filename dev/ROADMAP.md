@@ -88,16 +88,15 @@ Exit: every comparable row of PLAN 10.1 at least 20% faster than the best Rust c
 - [x] `docs/PERFORMANCE.md`.
 - [x] Exit: 10 of 12 compared rows at least 20% faster; `parse_media_type` (17%) and `response_cache_control` (19%) have a recorded plan (D-069); no regression against 0.5.
 
-## v0.7.0 - Hardening
+## v0.7.0 - Hardening (DONE, 2026-10-24)
 
 Exit: no open fuzz or differential finding marked "ours wrong"; threat table fully tested.
 
-- [ ] From 0.6 (D-069): the slice-cursor rewrite of `param::parse` and `parse_word`, bringing `parse_media_type` and `response_cache_control` to the 20% target.
-- [ ] From 0.5 (D-062): the `encode-lib` helpers, if encode-lib is published.
-
-- [ ] Every fuzz target 24 hours clean; differential targets running weekly.
-- [ ] Attack tests T1 to T25 all present and passing; complexity tests (PLAN 11.6).
-- [ ] `docs/SECURITY.md`, `docs/PLATFORM-NOTES.md`.
+- [x] From 0.6 (D-069): the slice-cursor rewrite of `param::parse` and the validated reads; `parse_media_type` (30%) and `response_cache_control` (31%) meet the 20% target.
+- [ ] From 0.5 (D-062): the `encode-lib` helpers. encode-lib is still not published; they wait for the first release after it appears (D-002).
+- [x] Every fuzz target 24 hours clean; differential targets weekly in CI (D-073).
+- [x] Attack tests T1 to T25 all present and passing (`tests/threats.rs` and the tests it lists); complexity tests for every walker (`tests/complexity.rs`). They and the fuzz run found the quadratic repeated-name check (D-072), the decoded controls `decode_words` let through (D-071), a 999-byte line from `mail::fold`, and the entity-tag list bug fixed in 0.6.1.
+- [x] `docs/SECURITY.md`, `docs/PLATFORM-NOTES.md`.
 
 ## v0.8.0 - Alpha
 

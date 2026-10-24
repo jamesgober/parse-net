@@ -76,10 +76,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-parse-net = "0.6.1"
+parse-net = "0.7.0"
 
 # Optional features:
-parse-net = { version = "0.6.1", features = [
+parse-net = { version = "0.7.0", features = [
     "alloc",        # owned forms and Sink for Vec<u8>
     "std",          # SystemTime conversions and http_date() with the system clock
 ] }
@@ -166,7 +166,7 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 
 ## **Status: feature complete**
 
-**Current Version:** `0.6.1` - every planned field, for HTTP and for mail, benchmarked against the crates that do the same work.
+**Current Version:** `0.7.0` - every planned field, for HTTP and for mail, benchmarked against the crates that do the same work, every threat tested, and every fuzz target run for 24 hours.
 **Target:** `1.0.0` stable, per the roadmap in [`dev/ROADMAP.md`](./dev/ROADMAP.md).
 
 **What's complete**:
@@ -189,11 +189,12 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 - **Owned forms** - with `alloc`, owned media types, entity tags, host-ports, and Structured Field values that give the same views back.
 - **Proof** - unit tests on every path, property tests (no panic, round trips, writer-parser closure, combined lines), counting-allocator tests for every parse and write, RFC and tc2231 vectors, 34 fuzz targets including three differential oracles against `httpdate`, `mime`, and `sfv`, and an example for every public item.
 
-- **Performance** - faster than the competing Rust crates on every compared operation (17% to 79% faster; 10 of 12 rows at least 20%), without allocating: see [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- **Performance** - at least 20% faster than the competing Rust crates on every compared operation (21% to 81%), without allocating: see [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- **Hardening** - an attack test for every threat in the model, every walker checked for linear time at 1 KiB, 64 KiB, and 1 MiB, and every fuzz target run for 24 hours: see [docs/SECURITY.md](docs/SECURITY.md).
 
 **What's planned next**:
-- `0.7.0`: 24-hour fuzzing of every target, the threat-model tests, complexity tests, `docs/SECURITY.md`, `docs/PLATFORM-NOTES.md`.
 - `0.8.0`: http-net and ws-net releases built on parse-net.
+- `0.9.0`: beta and release candidates, then the 1.0 audit.
 
 **Note on API stability**: the API was locked at `0.2.0` ([`docs/API.md`](./docs/API.md)); names and signatures change only with a recorded decision until `1.0.0` freezes them, with the contract recorded in `docs/STABILITY-1.0.md`.
 
@@ -205,6 +206,8 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 - **[Grammar](docs/GRAMMAR.md)** - each field's ABNF, case rules, and leniencies
 - **[Architecture](docs/ARCHITECTURE.md)** - modules, the byte-class table, views, and algorithms
 - **[Performance](docs/PERFORMANCE.md)** - benchmarks against the competing crates, and the method
+- **[Security](docs/SECURITY.md)** - the threat model, its tests, and how to report a vulnerability
+- **[Platform notes](docs/PLATFORM-NOTES.md)** - features, `no_std` and bare-metal builds, stack use
 - **[Migration](docs/MIGRATION.md)** - moving http-net and ws-net onto parse-net
 - **[Plan](dev/PLAN.md)** - design, threats, and decisions
 - **[Roadmap](dev/ROADMAP.md)** - versions and exit criteria

@@ -102,6 +102,41 @@ pub fn skip_ows(s: &[u8]) -> usize {
     s.iter().take_while(|&&b| is_ows(b)).count()
 }
 
+/// The length of the longest token prefix of `s` (0 when `s` does not start
+/// with a `tchar`).
+#[inline]
+pub(crate) fn token_len(s: &[u8]) -> usize {
+    s.iter()
+        .position(|&b| !class::is_tchar(b))
+        .unwrap_or(s.len())
+}
+
+/// The word at the front of text a parser has already validated: the view
+/// and the bytes used. Nothing is checked again; quoted strings are only
+/// scanned for their closing quote.
+#[inline]
+pub(crate) fn validated_word(s: &[u8]) -> (Word<'_>, usize) {
+    let Some((&b'"', body)) = s.split_first() else {
+        let n = token_len(s);
+        return (Word::Token(s.get(..n).unwrap_or(&[])), n);
+    };
+    let mut has_escapes = false;
+    let mut rest = body;
+    loop {
+        match rest {
+            [b'"', ..] | [] => break,
+            [b'\\', _, tail @ ..] => {
+                has_escapes = true;
+                rest = tail;
+            }
+            [_, tail @ ..] => rest = tail,
+        }
+    }
+    let len = body.len() - rest.len();
+    let raw = body.get(..len).unwrap_or(&[]);
+    (Word::Quoted(Quoted { raw, has_escapes }), len + 2)
+}
+
 /// The longest token prefix of `s`, and its length.
 ///
 /// The rest of `s` is the caller's to check.
@@ -120,7 +155,7 @@ pub fn skip_ows(s: &[u8]) -> usize {
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn parse_token(s: &[u8]) -> Result<(&[u8], usize)> {
-    let n = s.iter().take_while(|&&b| class::is_tchar(b)).count();
+    let n = token_len(s);
     if n == 0 {
         return err(ErrorKind::Empty, 0);
     }
