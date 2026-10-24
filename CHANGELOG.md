@@ -11,6 +11,10 @@
 
 ## [Unreleased]
 
+---
+
+## [0.7.0] - 2026-10-24
+
 Hardening: every walker checked against adversarial input, every threat
 tested, every fuzz target run for 24 hours.
 
@@ -22,7 +26,8 @@ tested, every fuzz target run for 24 hours.
   had none, and where the others live.
 - `tests/complexity.rs`: every walker fed 1 KiB, 64 KiB, and 1 MiB of
   adversarial input; the default limits give the expected limit error, and
-  with every limit raised the time grows with the input (D-073).
+  with every limit raised the time grows with the input, within 1.2 of the
+  size ratio in a release build (a CI job) and 2.0 in a debug build (D-073).
 - `docs/SECURITY.md` (the threat model, tests, costs, reporting) and
   `docs/PLATFORM-NOTES.md` (features, `no_std`, stack use).
 - A weekly CI workflow runs the differential fuzz targets for 30 minutes
@@ -44,11 +49,20 @@ tested, every fuzz target run for 24 hours.
 - `param::parse` walks a shrinking slice; `Params::get` and the parameter
   iterator read validated text without validating it again;
   `parse_u32_saturating` reads up to nine digits without saturating steps.
-  `parse_media_type` with `charset` went from 32.0 ns to 21.7 ns (43% faster
-  than `mime`) and `response_cache_control` from 47.8 ns to 40.9 ns (33%
-  faster than `headers`), meeting the 20% target (D-069).
+  `parse_media_type` with `charset` went from 32.0 ns to 26.1 ns (30% faster
+  than `mime`) and `response_cache_control` from 47.8 ns to 41.2 ns (31%
+  faster than `headers`), so every compared row meets the 20% target
+  (D-069).
 - The `homepage` key, which repeated `repository`, is gone from the
   manifest.
+
+### Fixed
+
+- `mail::fold` wrote whitespace that ends a value past the 998-byte line
+  limit when the last word filled the line (a 989-byte word and a TAB after
+  `Subject: ` made 999 bytes). It is refused with `OutOfRange`, like a word
+  that does not fit: a fold before it would leave a line of only
+  whitespace. Found by the 24-hour fuzz run.
 
 ### Testing
 
@@ -341,7 +355,8 @@ The scaffold and the plan. No parsing code yet.
   (0.1 to 1.0 with exit criteria).
 - `fuzz/` crate skeleton; targets arrive with the parsers they cover.
 
-[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/jamesgober/parse-net/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/jamesgober/parse-net/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jamesgober/parse-net/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jamesgober/parse-net/compare/v0.4.0...v0.5.0

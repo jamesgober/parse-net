@@ -16,43 +16,54 @@ strictness.
 
 | Operation | Input | parse-net | Competitor | Faster | Target |
 |---|---|---|---|---|---|
-| `scan::check_field_value` | 64-byte `User-Agent` text | 5.4 ns | 26.0 ns (bytewise loop, http-net's former code) | 79% | met |
-| `HttpDate::parse_imf_fixdate` | `Sun, 06 Nov 1994 08:49:37 GMT` | 16.3 ns | 36.9 ns (`httpdate` 1.0.3) | 56% | met |
-| `HttpDate::format` | | 19.7 ns | 51.4 ns (`httpdate`, allocates a `String`) | 62% | met |
-| `MailDate::parse` | `Wed, 21 Oct 2026 17:38:00 +0200` | 22.0 ns | 54.0 ns (`mailparse` 0.15.0) | 59% | met |
-| `sfv::parse_list` | 10 tokens with one parameter each | 387 ns | 1058 ns (`sfv` 0.16.0, owned) | 63% | met |
-| `sfv::parse_dictionary` | 5 members of mixed types | 163 ns | 443 ns (`sfv`, owned) | 63% | met |
-| `if_none_match` | 3 tags | 18.1 ns | 32.4 ns (`headers` 0.4.2) | 44% | met |
-| `best_media` | Chrome's navigation `Accept`, 3 offers | 461 ns | 705 ns (`mime` and a selection loop) | 35% | met |
-| `byte_ranges` | `bytes=0-499` | 27.8 ns | 36.1 ns (`headers`) | 23% | met |
-| `parse_content_disposition` and `filename` | `attachment; filename="a.txt"; filename*=UTF-8''%E2%82%AC.txt` | 158 ns | 206 ns (`content_disposition` 0.4.0; `mailparse` 207 ns) | 23% | met |
-| `response_cache_control` | `public, max-age=31536000, immutable` | 47.8 ns | 58.7 ns (`headers`) | 19% | plan below |
-| `parse_media_type` and `charset` | `text/html; charset=utf-8` | 32.0 ns | 38.4 ns (`mime` 0.3.17) | 17% | plan below |
-| `client_address` | 3-hop `X-Forwarded-For`, IPv4 | 110 ns | no Rust crate resolves through trusted proxies | n/a | estimate was 60 ns |
-| `mail::encode_words` | 36-byte UTF-8 subject (PLAN row: 40 bytes) | 187 ns | no allocation-free Rust encoder | n/a | estimate 200 ns: met |
+| `scan::check_field_value` | 64-byte `User-Agent` text | 4.9 ns | 25.9 ns (bytewise loop, http-net's former code) | 81% | met |
+| `HttpDate::parse_imf_fixdate` | `Sun, 06 Nov 1994 08:49:37 GMT` | 16.0 ns | 36.3 ns (`httpdate` 1.0.3) | 56% | met |
+| `HttpDate::format` | | 18.8 ns | 47.1 ns (`httpdate`, allocates a `String`) | 60% | met |
+| `MailDate::parse` | `Wed, 21 Oct 2026 17:38:00 +0200` | 21.4 ns | 51.9 ns (`mailparse` 0.15.0) | 59% | met |
+| `sfv::parse_list` | 10 tokens with one parameter each | 382 ns | 1047 ns (`sfv` 0.16.0, owned) | 64% | met |
+| `sfv::parse_dictionary` | 5 members of mixed types | 157 ns | 429 ns (`sfv`, owned) | 63% | met |
+| `if_none_match` | 3 tags | 16.7 ns | 32.4 ns (`headers` 0.4.2) | 48% | met |
+| `best_media` | Chrome's navigation `Accept`, 3 offers | 476 ns | 731 ns (`mime` and a selection loop) | 35% | met |
+| `response_cache_control` | `public, max-age=31536000, immutable` | 41.2 ns | 59.8 ns (`headers`) | 31% | met (0.7) |
+| `parse_media_type` and `charset` | `text/html; charset=utf-8` | 26.1 ns | 37.4 ns (`mime` 0.3.17) | 30% | met (0.7) |
+| `parse_content_disposition` and `filename` | `attachment; filename="a.txt"; filename*=UTF-8''%E2%82%AC.txt` | 133 ns | 175 ns (`mailparse`; `content_disposition` 0.4.0 202 ns) | 24% | met |
+| `byte_ranges` | `bytes=0-499` | 27.5 ns | 34.8 ns (`headers`) | 21% | met |
+| `client_address` | 3-hop `X-Forwarded-For`, IPv4 | 101 ns | no Rust crate resolves through trusted proxies | n/a | estimate was 60 ns |
+| `mail::encode_words` | 36-byte UTF-8 subject (PLAN row: 40 bytes) | 185 ns | no allocation-free Rust encoder | n/a | estimate 200 ns: met |
 
 parse-net validates every byte of the field in these rows (where it has been
 compared, it is the stricter side: `mime` accepts values parse-net refuses,
 `tests/differential/verdicts.md`), and none of its numbers include an
-allocation.
+allocation. The numbers are from one run of the whole suite at 0.7.0, on a
+machine other build sessions may have been using at the same time; both
+sides of each row ran under the same conditions.
 
-### The two rows below target
+## What 0.7 changed
 
-Both are within a few percent of the target, and both spend their remaining
-time in shared code:
+The two rows below the target at 0.6 (D-069) met it once the parameter
+walker shared by media types, `Content-Disposition`, and RFC 2231
+parameters, and the number reader shared with `Cache-Control`, were
+rewritten:
 
-- `parse_media_type` and `charset`: of 877 instructions per call, about 300
-  are `charset()` walking the parameter text again, because a view does not
-  store parameter positions (that would grow every `MediaType` from 56
-  bytes). Plan: rewrite `param::parse` and its iterator over a shrinking slice,
-  as 0.6 did for `Cache-Control` (which cut that walker's instructions by
-  15%); it is shared by media types, `Content-Disposition`, and RFC 2231
-  parameters, so the change is scheduled with the 0.7 hardening work, where
-  the full fuzz and complexity suites run over it.
-- `response_cache_control`: 925 instructions per call, down from 1084; the
-  rest is directive parsing (about 107 instructions per directive) and the
-  result struct. Plan: the same slice-cursor work in `parse_word`, which this
-  row and the parameter walker share.
+| Operation | 0.6 | 0.7 | Instructions per call, 0.6 to 0.7 |
+|---|---|---|---|
+| `parse_media_type` and `charset` | 32.0 ns (17% faster than `mime`) | 26.1 ns (30% faster) | 885 to 705 |
+| `response_cache_control` | 47.8 ns (19% faster than `headers`) | 41.2 ns (31% faster) | 922 to 884 |
+| `parse_content_disposition` and `filename` | 158 ns | 133 ns | 4,112 to 3,909 |
+
+- `param::parse` walks a shrinking slice and computes an offset only for an
+  error.
+- `Params::get` (and so `charset()`) compares the name asked for in place,
+  then reads the value without validating it again; the parameter iterator
+  does the same. Each is checked against the checked reads by a property
+  test.
+- `parse_u32_saturating` reads up to nine digits, which cannot overflow, in
+  a loop without saturating steps.
+
+The repeated-name check also changed (D-072): it compares names from a
+table of up to 64 offsets instead of reading the earlier parameters again,
+which was quadratic. The rows above have one or two parameters, so the
+change shows in the complexity tests, not here.
 
 ## What 0.6 changed
 
@@ -88,8 +99,8 @@ rows that changed:
   `core`'s exact rules (a property test compares it with `core`).
 
 No benchmark regressed. The one row measured slower than in its 0.5 run,
-`check_field_value` (5.1 ns then, 5.4 ns now), is code 0.6 did not change,
-so the difference is run-to-run variation.
+`check_field_value` (5.1 ns then, 5.4 ns at 0.6), is code 0.6 did not
+change, so the difference is run-to-run variation.
 
 ## `#[inline]`
 

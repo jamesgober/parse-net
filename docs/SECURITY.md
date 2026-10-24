@@ -78,7 +78,8 @@ documentation, each at or above the RFC minimum) and walks its input once.
 The complexity tests check both halves for every walker: under the default
 limits a 1 MiB adversarial input stops with the expected limit error, and
 with every limit at its maximum the time grows with the input, within 1.2 of
-the size ratio.
+the size ratio in an optimised build (a CI job checks it) and within 2.0 in
+an unoptimised one.
 
 One bound is fixed rather than configurable: a parameter list that refuses
 repeated names (RFC 9110 parameters under `DuplicatePolicy::Refuse`,
