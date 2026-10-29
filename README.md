@@ -76,10 +76,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-parse-net = "0.7.0"
+parse-net = "0.8.0"
 
 # Optional features:
-parse-net = { version = "0.7.0", features = [
+parse-net = { version = "0.8.0", features = [
     "alloc",        # owned forms and Sink for Vec<u8>
     "std",          # SystemTime conversions and http_date() with the system clock
 ] }
@@ -166,7 +166,7 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 
 ## **Status: feature complete**
 
-**Current Version:** `0.7.0` - every planned field, for HTTP and for mail, benchmarked against the crates that do the same work, every threat tested, and every fuzz target run for 24 hours.
+**Current Version:** `0.8.0` - every planned field, for HTTP and for mail, benchmarked, hardened, and in use by published consumers: http-net, cookie-net, and form-net.
 **Target:** `1.0.0` stable, per the roadmap in [`dev/ROADMAP.md`](./dev/ROADMAP.md).
 
 **What's complete**:
@@ -193,8 +193,8 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 - **Hardening** - an attack test for every threat in the model, every walker checked for linear time at 1 KiB, 64 KiB, and 1 MiB, and every fuzz target run for 24 hours: see [docs/SECURITY.md](docs/SECURITY.md).
 
 **What's planned next**:
-- `0.8.0`: http-net and ws-net releases built on parse-net.
-- `0.9.0`: beta and release candidates, then the 1.0 audit.
+- `0.9.0`: beta: ws-net, smtp-net, and web-net on parse-net, then a pre-1.0 polish pass (every accepted gap and missed target revisited, a fresh performance and security pass) before the release candidates.
+- `1.0.0`: the full audit in `docs/STABILITY-1.0.md`, released on James's go.
 
 **Note on API stability**: the API was locked at `0.2.0` ([`docs/API.md`](./docs/API.md)); names and signatures change only with a recorded decision until `1.0.0` freezes them, with the contract recorded in `docs/STABILITY-1.0.md`.
 

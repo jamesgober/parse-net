@@ -73,12 +73,12 @@
 //!
 //! ## Status
 //!
-//! Hardened, `0.7.0`: every planned field, measured against the Rust crates
-//! that do the same work (`docs/PERFORMANCE.md`), every threat tested, and
-//! every fuzz target run for 24 hours (`docs/SECURITY.md`). The public API
-//! is written down in `docs/API.md`, each field's grammar in
-//! `docs/GRAMMAR.md`, the
-//! design in `dev/PLAN.md`, and the milestone schedule in `dev/ROADMAP.md`
+//! Alpha, `0.8.0`: every planned field, measured against the Rust crates that
+//! do the same work (`docs/PERFORMANCE.md`), hardened (`docs/SECURITY.md`),
+//! and in use by published consumers (http-net, cookie-net, form-net). The
+//! public API is written down in `docs/API.md`, each field's grammar in
+//! `docs/GRAMMAR.md`, the design in `dev/PLAN.md`, and the milestone schedule
+//! in `dev/ROADMAP.md`
 //! (all in the [repository](https://github.com/jamesgober/parse-net)).
 
 #![doc(html_root_url = "https://docs.rs/parse-net")]

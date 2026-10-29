@@ -98,17 +98,35 @@ Exit: no open fuzz or differential finding marked "ours wrong"; threat table ful
 - [x] Attack tests T1 to T25 all present and passing (`tests/threats.rs` and the tests it lists); complexity tests for every walker (`tests/complexity.rs`). They and the fuzz run found the quadratic repeated-name check (D-072), the decoded controls `decode_words` let through (D-071), a 999-byte line from `mail::fold`, and the entity-tag list bug fixed in 0.6.1.
 - [x] `docs/SECURITY.md`, `docs/PLATFORM-NOTES.md`.
 
-## v0.8.0 - Alpha
+## v0.8.0 - Alpha (DONE, 2026-10-29)
 
 Exit: two consumers in published releases with green CI; no API change requested by them that is still open.
 
-- [ ] http-net and ws-net releases on parse-net published; cookie-net 0.3 and form-net built on it.
+- [x] Consumers published on parse-net, CI green on their `main` branches: http-net 0.8.0 and 0.9.0 (`parse-net ^0.7`, its only runtime dependency), cookie-net 0.3.0 to 0.7.0 and form-net 0.3.0 to 0.5.0 (`^0.6.1`). serve-net and LexerSketch Studio run against http-net on parse-net with no change.
+- [x] No API change requested by a consumer is open. One measurement note: form-net's `FormKind::detect` took 114 ns against its 100 ns estimate on parse-net 0.6.1 (it parses, then looks for repeated names itself, then calls `get` twice); it is in the 0.9 polish list.
+- [ ] Moved to 0.9: ws-net on parse-net (ws-net 0.2.0 still carries its own grammar).
 
 ## v0.9.0 - Beta and release candidates
 
-Exit: four consumers end to end; no breaking change for one full release cycle.
+Exit: four consumers end to end; no breaking change for one full release cycle; the pre-1.0 polish pass below done before any release candidate.
 
-- [ ] smtp-net and web-net built on it; API frozen except for fixes found by consumers; `0.9.x` release candidates.
+- [ ] smtp-net and web-net built on it; ws-net on it (from 0.8); cookie-net and form-net on `^0.7` or later; API frozen except for fixes found by consumers; `0.9.x` release candidates.
+
+### Pre-1.0 polish pass (0.9.x, before the first release candidate)
+
+James's standing rule: go back and fix any issues and tune performance before getting close to release. Nothing accepted, deferred, or missed is silently final; whatever is still open after this pass goes in the 1.0 readiness note for James, with its reason.
+
+- [ ] Revisit every accepted gap, deferred item, known issue, and missed target:
+  - the `encode-lib` helpers (D-002, D-062): `basic_decode_into`, `encode_words_b`, `ByteSeq::decode_into`, `sfv::Writer::bytes`, `B` encoded words, if encode-lib is published by then;
+  - `client_address` at 101 ns against its 60 ns estimate (`docs/PERFORMANCE.md`);
+  - the narrowest benchmark margins, `byte_ranges` (21%) and `Content-Disposition` (24%);
+  - form-net's `FormKind::detect` at 114 ns against 100 ns: re-measure on parse-net 0.7 or later, and if still over, show form-net how to use the `Refuse` error offset instead of its own repeated-name walk;
+  - the fixed 64-parameter table for lists that refuse repeats (D-072): still the right size, or a size consumers need to set;
+  - the bidi set reported by `has_bidi_control` (D-070) and the timing bound of the complexity tests (D-073);
+  - the ambiguous differential verdicts V-5 and V-6 (`tests/differential/verdicts.md`) and the tc2231 deviation classes (D-054);
+  - every P0, P1, and P2 item of PLAN section 8 shipped, or its reason recorded.
+- [ ] A fresh performance pass: the whole benchmark suite on a quiet machine, a callgrind profile of every row, and tuning where it pays; no row below 20% and no regression against 0.7.
+- [ ] The security and edge-case review again: the threat table T1 to T25 against the code as it is, the edge-case lists in `docs/API.md`, every fuzz target 24 hours on the release candidate code, and the differential targets' latest weekly runs.
 
 ## v1.0.0 - Stable
 
