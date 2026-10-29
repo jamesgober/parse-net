@@ -11,6 +11,15 @@
 
 ## [Unreleased]
 
+---
+
+## [0.8.0] - 2026-10-29
+
+Alpha: parse-net in use by published consumers. http-net 0.8.0 and 0.9.0
+depend on parse-net 0.7, cookie-net 0.3.0 to 0.7.0 and form-net 0.3.0 to
+0.5.0 on 0.6.1, all with green CI; none has an API change open. No API
+change.
+
 ### Changed
 
 - The complexity tests check timing on an optimised build only (the CI job
@@ -365,7 +374,8 @@ The scaffold and the plan. No parsing code yet.
   (0.1 to 1.0 with exit criteria).
 - `fuzz/` crate skeleton; targets arrive with the parsers they cover.
 
-[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/jamesgober/parse-net/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jamesgober/parse-net/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/jamesgober/parse-net/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/jamesgober/parse-net/compare/v0.5.0...v0.6.0
