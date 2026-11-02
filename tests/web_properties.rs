@@ -94,7 +94,8 @@ fn split_lines(parts: &[String], cuts: &[bool]) -> Vec<String> {
 fn condition_by_list(v: &[u8]) -> Option<Vec<Vec<u8>>> {
     let l = pn::list::parse(v, &Limits::DEFAULT).ok()?;
     if l.iter().any(|e| e == b"*") {
-        return (l.len() == 1).then(|| vec![b"*".to_vec()]);
+        // `*` stands alone: not as a member of a list, even with empty ones.
+        return (pn::text::trim_ows(v) == b"*").then(|| vec![b"*".to_vec()]);
     }
     l.iter()
         .map(|e| EntityTag::parse(e).ok().map(|t| t.opaque().to_vec()))

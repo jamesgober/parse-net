@@ -260,10 +260,43 @@ impl<'a> Iterator for Elements<'a> {
     }
 }
 
+/// The error for byte `at` of a value, where a control byte keeps its kind.
+fn refused(v: &[u8], at: usize, kind: ErrorKind) -> crate::ParseError {
+    match v.get(at) {
+        Some(&b) if crate::scan::is_control(b) => {
+            crate::ParseError::new(crate::scan::control_kind(b), at)
+        }
+        _ => crate::ParseError::new(kind, at),
+    }
+}
+
+/// A byte position of a range set. A numeral past `u64::MAX` saturates: RFC
+/// 9110 section 14.1.2 tells recipients to read large numerals without
+/// failing, and `u64::MAX` is past the end of any representation.
+fn position(digits: &[u8]) -> Result<u64> {
+    let mut n = 0u64;
+    for (i, &b) in digits.iter().enumerate() {
+        if !b.is_ascii_digit() {
+            return Err(refused(digits, i, ErrorKind::InvalidNumber));
+        }
+        n = n.saturating_mul(10).saturating_add(u64::from(b - b'0'));
+    }
+    Ok(n)
+}
+
+/// Whether the numeral `a` is above `b`, whatever their size.
+fn numeral_above(a: &[u8], b: &[u8]) -> bool {
+    let strip = |s: &'_ [u8]| -> usize { s.iter().take_while(|&&d| d == b'0').count() };
+    let a = a.get(strip(a)..).unwrap_or(&[]);
+    let b = b.get(strip(b)..).unwrap_or(&[]);
+    a.len() > b.len() || (a.len() == b.len() && a > b)
+}
+
 /// Parses one `int-range / suffix-range`.
 fn spec(e: &[u8]) -> Result<RangeSpec> {
     let Some(dash) = e.iter().position(|&b| b == b'-') else {
-        return err(ErrorKind::InvalidRange, e.len());
+        let at = e.iter().position(|&b| crate::scan::is_control(b));
+        return Err(refused(e, at.unwrap_or(e.len()), ErrorKind::InvalidRange));
     };
     let (first, last) = (
         e.get(..dash).unwrap_or(&[]),
@@ -272,13 +305,13 @@ fn spec(e: &[u8]) -> Result<RangeSpec> {
     match (first.is_empty(), last.is_empty()) {
         (true, true) => err(ErrorKind::InvalidRange, 0),
         (true, false) => Ok(RangeSpec::Suffix(
-            parse_u64(last).map_err(|x| x.shifted(dash + 1))?,
+            position(last).map_err(|x| x.shifted(dash + 1))?,
         )),
-        (false, true) => Ok(RangeSpec::From(parse_u64(first)?)),
+        (false, true) => Ok(RangeSpec::From(position(first)?)),
         (false, false) => {
-            let f = parse_u64(first)?;
-            let l = parse_u64(last).map_err(|x| x.shifted(dash + 1))?;
-            if f > l {
+            let f = position(first)?;
+            let l = position(last).map_err(|x| x.shifted(dash + 1))?;
+            if numeral_above(first, last) {
                 return err(ErrorKind::InvalidRange, 0);
             }
             Ok(RangeSpec::FromTo(f, l))
@@ -296,8 +329,10 @@ fn spec(e: &[u8]) -> Result<RangeSpec> {
 ///
 /// [`ErrorKind::NotToken`] for the unit; [`ErrorKind::InvalidRange`] for a
 /// missing `=`, whitespace around it, an empty set, `first > last`, or a
-/// malformed spec; [`ErrorKind::InvalidNumber`], [`ErrorKind::NumberOverflow`];
-/// the list errors.
+/// malformed spec; [`ErrorKind::InvalidNumber`]; a control kind for a control
+/// byte; the list errors. A position past `u64::MAX` is not an error: it
+/// saturates (RFC 9110 section 14.1.2), which is past the end of any
+/// representation.
 ///
 /// # Examples
 ///
@@ -314,10 +349,10 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<RangeHeader<'a>> {
     let v = trim_ows(value);
     let unit_len = v.iter().take_while(|&&b| class::is_tchar(b)).count();
     if unit_len == 0 {
-        return err(ErrorKind::NotToken, lead);
+        return Err(refused(v, 0, ErrorKind::NotToken).shifted(lead));
     }
     if v.get(unit_len) != Some(&b'=') {
-        return err(ErrorKind::InvalidRange, lead + unit_len);
+        return Err(refused(v, unit_len, ErrorKind::InvalidRange).shifted(lead));
     }
     let unit = v.get(..unit_len).unwrap_or(&[]);
     let set_at = unit_len + 1;
@@ -328,8 +363,11 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<RangeHeader<'a>> {
     // One pass over the set: each member is found by its comma, trimmed,
     // and checked; empty members are skipped up to the limit.
     let bytes = unit.eq_ignore_ascii_case(b"bytes");
+    if set_text.is_empty() {
+        return err(ErrorKind::InvalidRange, lead + set_at);
+    }
     let (mut i, mut count, mut empty) = (0usize, 0usize, 0usize);
-    while i < set_text.len() {
+    while i <= set_text.len() {
         let rest = set_text.get(i..).unwrap_or(&[]);
         let end = crate::scan::find_byte(b',', rest).unwrap_or(rest.len());
         let raw = rest.get(..end).unwrap_or(&[]);
@@ -348,12 +386,7 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<RangeHeader<'a>> {
             if bytes {
                 spec(e).map(|_| ()).map_err(|x| x.shifted(at))?;
             } else if let Some(j) = e.iter().position(|&b| !class::is_vchar(b)) {
-                return Err(match e.get(j) {
-                    Some(&b) if crate::scan::is_control(b) => {
-                        crate::ParseError::new(crate::scan::control_kind(b), at + j)
-                    }
-                    _ => crate::ParseError::new(ErrorKind::InvalidRange, at + j),
-                });
+                return Err(refused(e, j, ErrorKind::InvalidRange).shifted(at));
             }
         }
         i += end + 1;
@@ -375,7 +408,9 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<RangeHeader<'a>> {
 /// dropped. More than [`Limits::max_ranges`] ranges, more than two ranges
 /// that overlap another, or more than two ranges that start before the one
 /// before them give [`RangeOutcome::Ignore`] (RFC 9110 section 14.2 allows
-/// ignoring abusive sets). With `coalesce`, overlapping and adjacent ranges
+/// ignoring abusive sets). A non-zero suffix on an empty representation also
+/// gives `Ignore`: it is satisfiable, and a [`ByteRange`] cannot hold an empty
+/// range. With `coalesce`, overlapping and adjacent ranges
 /// are merged into ascending order (this changes the shape of a multipart
 /// response, so it is the caller's choice). An `out` too small for the
 /// ranges gives `Ignore`: the set is never silently truncated.
@@ -423,6 +458,13 @@ pub fn resolve(
         n += 1;
     }
     if n == 0 {
+        // A non-zero suffix is satisfiable on an empty representation (RFC
+        // 9110 section 14.1.2), and a `ByteRange` cannot hold an empty range,
+        // so the whole, empty, representation is served.
+        let empty_suffix = |s| matches!(s, RangeSpec::Suffix(1..));
+        if length == 0 && h.specs().any(empty_suffix) {
+            return RangeOutcome::Ignore;
+        }
         return RangeOutcome::Unsatisfiable;
     }
     let resolved = out.get_mut(..n).unwrap_or(&mut []);
@@ -552,6 +594,7 @@ fn one_spec(value: &[u8]) -> Option<RangeSpec> {
 pub fn byte_ranges(value: &[u8], length: u64, out: &mut [ByteRange]) -> Result<RangeOutcome> {
     if let Some(s) = one_spec(value) {
         return Ok(match (absolute(s, length), out.first_mut()) {
+            (None, _) if length == 0 && matches!(s, RangeSpec::Suffix(1..)) => RangeOutcome::Ignore,
             (None, _) => RangeOutcome::Unsatisfiable,
             (Some(r), Some(slot)) => {
                 *slot = r;
@@ -616,10 +659,20 @@ pub fn parse_content_range(value: &[u8]) -> Result<ContentRange> {
     inner_content_range(v).map_err(|e| e.shifted(lead))
 }
 
+/// A number of a `Content-Range`: an empty one is a malformed shape.
+fn content_number(s: &[u8]) -> Result<u64> {
+    parse_u64(s).map_err(|e| match e.kind() {
+        ErrorKind::Empty => crate::ParseError::new(ErrorKind::InvalidRange, 0),
+        ErrorKind::InvalidNumber => refused(s, e.offset(), ErrorKind::InvalidNumber),
+        _ => e,
+    })
+}
+
 fn inner_content_range(v: &[u8]) -> Result<ContentRange> {
     let unit = v.get(..5).unwrap_or(&[]);
     if !unit.eq_ignore_ascii_case(b"bytes") || v.get(5) != Some(&b' ') {
-        return err(ErrorKind::InvalidRange, 0);
+        let at = v.iter().take(6).position(|&b| crate::scan::is_control(b));
+        return Err(refused(v, at.unwrap_or(0), ErrorKind::InvalidRange));
     }
     let rest = v.get(6..).unwrap_or(&[]);
     let Some(slash) = rest.iter().position(|&b| b == b'/') else {
@@ -631,19 +684,19 @@ fn inner_content_range(v: &[u8]) -> Result<ContentRange> {
     );
     let complete_at = 6 + slash + 1;
     if range_text == b"*" {
-        let complete = parse_u64(complete_text).map_err(|e| e.shifted(complete_at))?;
+        let complete = content_number(complete_text).map_err(|e| e.shifted(complete_at))?;
         return Ok(ContentRange::Unsatisfied { complete });
     }
     let complete = if complete_text == b"*" {
         None
     } else {
-        Some(parse_u64(complete_text).map_err(|e| e.shifted(complete_at))?)
+        Some(content_number(complete_text).map_err(|e| e.shifted(complete_at))?)
     };
     let Some(dash) = range_text.iter().position(|&b| b == b'-') else {
         return err(ErrorKind::InvalidRange, 6);
     };
-    let first = parse_u64(range_text.get(..dash).unwrap_or(&[])).map_err(|e| e.shifted(6))?;
-    let last = parse_u64(range_text.get(dash + 1..).unwrap_or(&[]))
+    let first = content_number(range_text.get(..dash).unwrap_or(&[])).map_err(|e| e.shifted(6))?;
+    let last = content_number(range_text.get(dash + 1..).unwrap_or(&[]))
         .map_err(|e| e.shifted(6 + dash + 1))?;
     if last < first || complete.is_some_and(|c| last >= c) {
         return err(ErrorKind::InvalidRange, 6);
@@ -787,11 +840,42 @@ impl IfRange<'_> {
 }
 
 /// Parses `If-Range`: an entity tag when the value starts with `W/` or `"`,
-/// an IMF-fixdate otherwise.
+/// an HTTP-date otherwise, in any of the three forms (RFC 9110 section 5.6.7).
+/// `now` (Unix seconds) places the two-digit year of an RFC 850 date. Use it
+/// over [`parse_if_range`] when a clock is at hand.
 ///
 /// # Errors
 ///
-/// The errors of [`EntityTag::parse`] or [`HttpDate::parse_imf_fixdate`].
+/// The errors of [`EntityTag::parse`] or [`HttpDate::parse_at`].
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::range::parse_if_range_at;
+///
+/// let now = 1_792_540_800;
+/// let imf = parse_if_range_at(b"Sun, 06 Nov 1994 08:49:37 GMT", now)?;
+/// assert_eq!(parse_if_range_at(b"Sunday, 06-Nov-94 08:49:37 GMT", now)?, imf);
+/// assert_eq!(parse_if_range_at(b"Sun Nov  6 08:49:37 1994", now)?, imf);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
+pub fn parse_if_range_at(value: &[u8], now: i64) -> Result<IfRange<'_>> {
+    let v = trim_ows(value);
+    if v.starts_with(b"W/") || v.starts_with(b"\"") {
+        EntityTag::parse(value).map(IfRange::Tag)
+    } else {
+        HttpDate::parse_at(value, now).map(IfRange::Date)
+    }
+}
+
+/// Parses `If-Range` without a clock: an entity tag when the value starts
+/// with `W/` or `"`, an IMF-fixdate or asctime date otherwise. An RFC 850
+/// date needs the current time to place its year, so it takes
+/// [`parse_if_range_at`]; here it is [`ErrorKind::InvalidDate`].
+///
+/// # Errors
+///
+/// The errors of [`EntityTag::parse`] or [`HttpDate::parse_at`].
 ///
 /// # Examples
 ///
@@ -808,7 +892,10 @@ pub fn parse_if_range(value: &[u8]) -> Result<IfRange<'_>> {
     if v.starts_with(b"W/") || v.starts_with(b"\"") {
         EntityTag::parse(value).map(IfRange::Tag)
     } else {
-        HttpDate::parse_imf_fixdate(value).map(IfRange::Date)
+        match HttpDate::parse_detailed(value, 0)? {
+            (_, crate::DateFormat::Rfc850) => err(ErrorKind::InvalidDate, skip_ows(value)),
+            (d, _) => Ok(IfRange::Date(d)),
+        }
     }
 }
 
@@ -845,8 +932,16 @@ mod tests {
         assert_eq!(k(b"bytes="), ErrorKind::InvalidRange);
         assert_eq!(k(b"bytes=-"), ErrorKind::InvalidRange);
         assert_eq!(
-            k(b"bytes=0-18446744073709551616"),
-            ErrorKind::NumberOverflow
+            parse(b"bytes=0-18446744073709551616", &l)
+                .unwrap()
+                .specs()
+                .next(),
+            Some(RangeSpec::FromTo(0, u64::MAX))
+        );
+        // Past `u64::MAX` the order is still read from the digits.
+        assert_eq!(
+            k(b"bytes=18446744073709551617-18446744073709551616"),
+            ErrorKind::InvalidRange
         );
         assert!(parse(b"bytes=0-18446744073709551615", &l).is_ok());
         assert!(parse(b"bytes=0-1,", &l).is_ok());
@@ -867,10 +962,7 @@ mod tests {
             resolve_str(b"bytes=-0", 10, false).0,
             RangeOutcome::Unsatisfiable
         );
-        assert_eq!(
-            resolve_str(b"bytes=-1", 0, false).0,
-            RangeOutcome::Unsatisfiable
-        );
+        assert_eq!(resolve_str(b"bytes=-1", 0, false).0, RangeOutcome::Ignore);
         assert_eq!(
             resolve_str(b"bytes=-20", 10, false).1,
             [ByteRange { start: 0, end: 9 }]

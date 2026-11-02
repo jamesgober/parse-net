@@ -136,6 +136,11 @@ impl QValue {
         match first {
             b'0' => Ok(Self(thousandths)),
             b'1' if thousandths == 0 => Ok(Self::ONE),
+            // The first byte that puts the value above 1.
+            b'1' => err(
+                ErrorKind::InvalidQValue,
+                2 + frac.iter().position(|&d| d != b'0').unwrap_or(0),
+            ),
             _ => err(ErrorKind::InvalidQValue, 0),
         }
     }
@@ -385,11 +390,13 @@ impl Negotiator {
         }
     }
 
-    fn malformed(&self, e: ParseError, offers: usize) -> Outcome {
-        match self.malformed {
-            MalformedPolicy::Refuse => Outcome::Refused(e),
-            MalformedPolicy::TreatAsAbsent if offers == 0 => Outcome::NoneAcceptable,
-            MalformedPolicy::TreatAsAbsent => Outcome::HeaderIgnored { index: 0 },
+    /// The outcome for a malformed header; `fallback` is the offer an absent
+    /// header would choose.
+    fn malformed(&self, e: ParseError, fallback: Option<usize>) -> Outcome {
+        match (self.malformed, fallback) {
+            (MalformedPolicy::Refuse, _) => Outcome::Refused(e),
+            (MalformedPolicy::TreatAsAbsent, None) => Outcome::NoneAcceptable,
+            (MalformedPolicy::TreatAsAbsent, Some(index)) => Outcome::HeaderIgnored { index },
         }
     }
 
@@ -413,9 +420,13 @@ impl Negotiator {
     /// ```
     #[must_use]
     pub fn media(&self, accept: Option<&[u8]>, offers: &[&str]) -> Outcome {
-        match accept {
-            None => first(offers),
-            Some(v) => self.media_lines([v], offers),
+        match (accept, first_media(offers)) {
+            (None, Some(index)) => Outcome::Chosen {
+                index,
+                weight: QValue::ONE,
+            },
+            (None, None) => Outcome::NoneAcceptable,
+            (Some(v), _) => self.media_lines([v], offers),
         }
     }
 
@@ -437,9 +448,9 @@ impl Negotiator {
         I::IntoIter: Clone,
     {
         let lines = lines.into_iter();
-        let members = match list::combined(lines, &self.limits) {
+        let members = match list::combined(lines.clone(), &self.limits) {
             Ok(l) => l,
-            Err(e) => return self.malformed(e, offers.len()),
+            Err(e) => return self.malformed(e, first_media(offers)),
         };
         let mut chosen: Option<(usize, u16)> = None;
         for (group_index, group) in offers.chunks(GROUP).enumerate() {
@@ -455,7 +466,10 @@ impl Negotiator {
             for element in members.iter() {
                 let range = match media::parse_range(element, &self.limits) {
                     Ok(r) => r,
-                    Err(e) if group_index == 0 => return self.malformed(e, offers.len()),
+                    Err(e) if group_index == 0 => {
+                        let e = locate(e, element, lines.clone());
+                        return self.malformed(e, first_media(offers));
+                    }
                     Err(_) => continue,
                 };
                 for (b, offer) in best.iter_mut().zip(parsed) {
@@ -482,7 +496,7 @@ impl Negotiator {
             // No group ran, so validate the members on their own.
             for element in members.iter() {
                 if let Err(e) = media::parse_range(element, &self.limits) {
-                    return self.malformed(e, 0);
+                    return self.malformed(locate(e, element, lines.clone()), None);
                 }
             }
         }
@@ -557,7 +571,7 @@ impl Negotiator {
         }
         match self.coding_weights(v, offers, true) {
             Ok(outcome) => outcome,
-            Err(e) => self.malformed(e, offers.len()),
+            Err(e) => self.malformed(e, first(offers).index()),
         }
     }
 
@@ -581,7 +595,7 @@ impl Negotiator {
         };
         match self.coding_weights(v, offers, false) {
             Ok(outcome) => outcome,
-            Err(e) => self.malformed(e, offers.len()),
+            Err(e) => self.malformed(e, first(offers).index()),
         }
     }
 
@@ -593,7 +607,7 @@ impl Negotiator {
         offers: &[&str],
         identity_rule: bool,
     ) -> Result<Outcome> {
-        let members = parse_weighted(value, &self.limits)?;
+        let members = strict_weighted(value, &self.limits, false)?;
         let mut chosen: Option<(usize, u16)> = None;
         for (group_index, group) in offers.chunks(GROUP).enumerate() {
             let mut exact = [None::<u16>; GROUP];
@@ -644,9 +658,9 @@ impl Negotiator {
         rank: impl Fn(&[u8], &[u8]) -> Option<u16>,
     ) -> Option<Outcome> {
         let v = value?;
-        let members = match parse_weighted(v, &self.limits) {
+        let members = match strict_weighted(v, &self.limits, true) {
             Ok(m) => m,
-            Err(e) => return Some(self.malformed(e, offers.len())),
+            Err(e) => return Some(self.malformed(e, first(offers).index())),
         };
         let mut chosen: Option<(usize, u16, u16)> = None;
         for (group_index, group) in offers.chunks(GROUP).enumerate() {
@@ -709,6 +723,90 @@ fn first(offers: &[&str]) -> Outcome {
 /// range or a truncation of it (removing a subtag from the end, and a
 /// single-character subtag left before it). An exact match ranks highest,
 /// then longer shortened matches; `*` ranks lowest.
+/// The first offer that is a valid media type: what an absent `Accept` chooses.
+fn first_media(offers: &[&str]) -> Option<usize> {
+    offers
+        .iter()
+        .position(|o| media::parse(o.as_bytes(), &Limits::DEFAULT).is_ok())
+}
+
+/// Places an error found inside `element` in the field: an offset from the
+/// start of its line, and the line.
+fn locate<'a>(e: ParseError, element: &[u8], lines: impl Iterator<Item = &'a [u8]>) -> ParseError {
+    let at = element.as_ptr() as usize;
+    for (n, line) in lines.enumerate() {
+        let start = line.as_ptr() as usize;
+        if (start..=start + line.len()).contains(&at) {
+            return e.shifted(at - start).on_line(n);
+        }
+    }
+    e
+}
+
+/// Where a `language-range` stops being one (RFC 4647 section 2.1:
+/// `1*8ALPHA *( "-" 1*8alphanum ) / "*"`); `None` when it is one.
+fn language_error(range: &[u8]) -> Option<usize> {
+    if range == b"*" {
+        return None;
+    }
+    let (mut at, mut first) = (0usize, true);
+    for label in range.split(|&b| b == b'-') {
+        let good = |b: &u8| {
+            if first {
+                b.is_ascii_alphabetic()
+            } else {
+                b.is_ascii_alphanumeric()
+            }
+        };
+        if let Some(i) = label.iter().position(|b| !good(b)) {
+            return Some(at + i);
+        }
+        if label.is_empty() || label.len() > 8 {
+            return Some(at + label.len().min(8));
+        }
+        first = false;
+        at += label.len() + 1;
+    }
+    None
+}
+
+/// [`parse_weighted`] with the grammar of the fields themselves: a member is
+/// its value and at most a weight, and with `language` the value is a
+/// `language-range`.
+fn strict_weighted<'a>(
+    value: &'a [u8],
+    limits: &Limits,
+    language: bool,
+) -> Result<WeightedList<'a>> {
+    let members = parse_weighted(value, limits)?;
+    for e in members.list.iter() {
+        let n = text::token_len(e);
+        let rest = e.get(n..).unwrap_or(&[]);
+        if language {
+            if let Some(at) = language_error(e.get(..n).unwrap_or(&[])) {
+                return Err(shift_into(
+                    ParseError::new(ErrorKind::Malformed, at),
+                    value,
+                    e,
+                ));
+            }
+        }
+        let (params, _) = param::parse(rest, limits).map_err(|x| x.shifted(n))?;
+        let only_weight = params
+            .iter()
+            .enumerate()
+            .all(|(i, p)| i == 0 && p.name.eq_ignore_ascii_case(b"q"));
+        if !only_weight {
+            return Err(shift_into(
+                ParseError::new(ErrorKind::TrailingData, n),
+                value,
+                e,
+            ));
+        }
+    }
+    Ok(members)
+}
+
 fn lookup_rank(range: &[u8], offer: &[u8]) -> Option<u16> {
     if range == b"*" {
         return Some(0);
@@ -978,7 +1076,8 @@ fn weighted_member<'a>(element: &'a [u8], limits: &Limits) -> Result<Weighted<'a
     let rest = element.get(n..).unwrap_or(&[]);
     let (all, used) = param::parse(rest, limits).map_err(|e| e.shifted(n))?;
     if n + used != element.len() {
-        return err(ErrorKind::NotToken, n + used);
+        let at = n + used + text::skip_ows(element.get(n + used..).unwrap_or(&[]));
+        return err(ErrorKind::NotToken, at);
     }
     let (params, q) = all.split_at_name(b"q");
     let weight = match q {
@@ -986,9 +1085,12 @@ fn weighted_member<'a>(element: &'a [u8], limits: &Limits) -> Result<Weighted<'a
         Some(p) => match p.value {
             Word::Token(t) => QValue::parse(t).map_err(|e| {
                 let at = (t.as_ptr() as usize).saturating_sub(element.as_ptr() as usize);
-                ParseError::new(e.kind(), at)
+                ParseError::new(e.kind(), at + e.offset())
             })?,
-            Word::Quoted(_) => return err(ErrorKind::InvalidQValue, n),
+            Word::Quoted(_) => {
+                let at = (p.name.as_ptr() as usize).saturating_sub(element.as_ptr() as usize);
+                return err(ErrorKind::InvalidQValue, at);
+            }
         },
     };
     Ok(Weighted {

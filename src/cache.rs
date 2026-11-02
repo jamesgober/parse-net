@@ -78,37 +78,57 @@ fn directive(s: &[u8]) -> Result<(Directive<'_>, &[u8])> {
     ))
 }
 
+/// How much of the list limits a field has used, over all of its lines.
+#[derive(Default)]
+struct Budget {
+    count: usize,
+    empty: usize,
+}
+
 /// Validates a `Cache-Control` value in one pass over `v` (OWS already
-/// trimmed), calling `f` for each directive; returns the count. Empty list
-/// elements are skipped up to `max_empty_elements`. The cursor is a
+/// trimmed), calling `f` for each directive and adding to `budget`. Empty
+/// list elements are skipped up to `max_empty_elements`. The cursor is a
 /// shrinking slice; offsets are computed only for an error.
-fn walk<'a>(v: &'a [u8], limits: &Limits, mut f: impl FnMut(Directive<'a>)) -> Result<usize> {
+fn walk<'a>(
+    v: &'a [u8],
+    limits: &Limits,
+    budget: &mut Budget,
+    mut f: impl FnMut(Directive<'a>),
+) -> Result<()> {
     let at = |rest: &[u8]| v.len() - rest.len();
-    let (mut rest, mut count, mut empty) = (v, 0usize, 0usize);
+    let mut rest = v;
+    let mut after_comma = false;
     loop {
         rest = skip_ws(rest);
         match rest {
-            [] => return Ok(count),
-            [b',', tail @ ..] => {
-                empty += 1;
-                if empty > usize::from(limits.empty_elements) {
+            [] if !after_comma => return Ok(()),
+            [] | [b',', ..] => {
+                budget.empty += 1;
+                if budget.empty > usize::from(limits.empty_elements) {
                     return Err(ParseError::new(ErrorKind::TooManyEmptyElements, at(rest)));
                 }
+                let [_, tail @ ..] = rest else {
+                    return Ok(());
+                };
                 rest = tail;
+                after_comma = true;
                 continue;
             }
             _ => {}
         }
         let (d, tail) = directive(rest).map_err(|e| e.shifted(at(rest)))?;
-        count += 1;
-        if count > usize::from(limits.list_members) {
+        budget.count += 1;
+        if budget.count > usize::from(limits.list_members) {
             return Err(ParseError::new(ErrorKind::TooManyMembers, at(rest)));
         }
         f(d);
         rest = skip_ws(tail);
         match rest {
-            [] => return Ok(count),
-            [b',', tail @ ..] => rest = tail,
+            [] => return Ok(()),
+            [b',', tail @ ..] => {
+                rest = tail;
+                after_comma = true;
+            }
             _ => return Err(bad(rest, 0).shifted(at(rest))),
         }
     }
@@ -118,12 +138,13 @@ fn walk<'a>(v: &'a [u8], limits: &Limits, mut f: impl FnMut(Directive<'a>)) -> R
 fn walk_value<'a>(
     value: &'a [u8],
     limits: &Limits,
+    budget: &mut Budget,
     f: impl FnMut(Directive<'a>),
-) -> Result<(&'a [u8], usize)> {
+) -> Result<&'a [u8]> {
     let lead = skip_ows(value);
     let v = trim_ows(value);
-    let count = walk(v, limits, f).map_err(|e| e.shifted(lead))?;
-    Ok((v, count))
+    walk(v, limits, budget, f).map_err(|e| e.shifted(lead))?;
+    Ok(v)
 }
 
 fn bad(e: &[u8], at: usize) -> ParseError {
@@ -239,7 +260,9 @@ impl<'a> Iterator for DirectiveIter<'a> {
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<Directives<'a>> {
-    let (text, count) = walk_value(value, limits, |_| {})?;
+    let mut budget = Budget::default();
+    let text = walk_value(value, limits, &mut budget, |_| {})?;
+    let count = budget.count;
     Ok(Directives { text, count })
 }
 
@@ -513,10 +536,12 @@ impl RequestBuilder {
                     *dup = true;
                 } else {
                     *seen = true;
-                    r.max_stale = Some(match d.value {
-                        None => None,
-                        v => seconds(v, inv),
-                    });
+                    // A bare `max-stale` means any staleness; an argument that
+                    // cannot be read must not widen to that.
+                    r.max_stale = match d.value {
+                        None => Some(None),
+                        v => seconds(v, inv).map(Some),
+                    };
                 }
             }
             2 => number(&mut r.min_fresh, seen, dup, d.value, inv),
@@ -546,7 +571,9 @@ impl RequestBuilder {
 /// ```
 pub fn response_cache_control(value: &[u8]) -> Result<ResponseDirectives> {
     let mut b = ResponseBuilder::default();
-    let _ = walk_value(value, &Limits::DEFAULT, |d| b.push(d))?;
+    let _ = walk_value(value, &Limits::DEFAULT, &mut Budget::default(), |d| {
+        b.push(d)
+    })?;
     Ok(b.r)
 }
 
@@ -566,7 +593,9 @@ pub fn response_cache_control(value: &[u8]) -> Result<ResponseDirectives> {
 /// ```
 pub fn request_cache_control(value: &[u8]) -> Result<RequestDirectives> {
     let mut b = RequestBuilder::default();
-    let _ = walk_value(value, &Limits::DEFAULT, |d| b.push(d))?;
+    let _ = walk_value(value, &Limits::DEFAULT, &mut Budget::default(), |d| {
+        b.push(d)
+    })?;
     Ok(b.r)
 }
 
@@ -592,9 +621,10 @@ where
     I: IntoIterator<Item = &'a [u8]>,
     I::IntoIter: Clone,
 {
-    let mut b = ResponseBuilder::default();
+    let (mut b, mut budget) = (ResponseBuilder::default(), Budget::default());
     for (n, line) in lines.into_iter().enumerate() {
-        let _ = walk_value(line, &Limits::DEFAULT, |d| b.push(d)).map_err(|e| e.on_line(n))?;
+        let _ = walk_value(line, &Limits::DEFAULT, &mut budget, |d| b.push(d))
+            .map_err(|e| e.on_line(n))?;
     }
     Ok(b.r)
 }
@@ -621,9 +651,10 @@ where
     I: IntoIterator<Item = &'a [u8]>,
     I::IntoIter: Clone,
 {
-    let mut b = RequestBuilder::default();
+    let (mut b, mut budget) = (RequestBuilder::default(), Budget::default());
     for (n, line) in lines.into_iter().enumerate() {
-        let _ = walk_value(line, &Limits::DEFAULT, |d| b.push(d)).map_err(|e| e.on_line(n))?;
+        let _ = walk_value(line, &Limits::DEFAULT, &mut budget, |d| b.push(d))
+            .map_err(|e| e.on_line(n))?;
     }
     Ok(b.r)
 }

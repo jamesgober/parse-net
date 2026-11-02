@@ -78,10 +78,13 @@ impl<'a> EntityTag<'a> {
     pub fn parse(value: &'a [u8]) -> Result<Self> {
         let lead = crate::text::skip_ows(value);
         let (tag, used) = parse_prefix(trim_ows(value)).map_err(|e| e.shifted(lead))?;
-        if used != trim_ows(value).len() {
-            return err(ErrorKind::TrailingData, lead + used);
+        match trim_ows(value).get(used) {
+            None => Ok(tag),
+            Some(&b) if crate::scan::is_control(b) => {
+                err(crate::scan::control_kind(b), lead + used)
+            }
+            Some(_) => err(ErrorKind::TrailingData, lead + used),
         }
-        Ok(tag)
     }
 
     /// A strong tag with the given opaque bytes.
@@ -229,8 +232,12 @@ fn parse_prefix(s: &[u8]) -> Result<(EntityTag<'_>, usize)> {
         [b'W', b'/', ..] => (true, 2),
         _ => (false, 0),
     };
-    if s.get(start) != Some(&b'"') {
-        return err(ErrorKind::InvalidEntityTag, start);
+    match s.get(start) {
+        Some(b'"') => {}
+        Some(&b) if crate::scan::is_control(b) => {
+            return err(crate::scan::control_kind(b), start);
+        }
+        _ => return err(ErrorKind::InvalidEntityTag, start),
     }
     let body = s.get(start + 1..).unwrap_or(&[]);
     let close = body.iter().position(|&b| !class::is_etagc(b));
@@ -368,36 +375,39 @@ enum Walked {
 /// calling `f` for every tag. Empty list elements are skipped up to
 /// `max_empty_elements`; `*` must stand alone.
 fn walk<'a>(v: &'a [u8], limits: &Limits, mut f: impl FnMut(EntityTag<'a>)) -> Result<Walked> {
-    let (mut i, mut count, mut empty, mut star) = (0usize, 0usize, 0usize, false);
+    if v == b"*" {
+        return Ok(Walked::Any);
+    }
+    let (mut i, mut count, mut empty, mut after_comma) = (0usize, 0usize, 0usize, false);
     loop {
         while matches!(v.get(i), Some(b' ' | b'\t')) {
             i += 1;
         }
         match v.get(i) {
-            None => break,
-            Some(b',') => {
+            None if !after_comma => break,
+            None | Some(b',') => {
                 empty += 1;
                 if empty > usize::from(limits.empty_elements) {
                     return err(ErrorKind::TooManyEmptyElements, i);
                 }
+                if v.get(i).is_none() {
+                    break;
+                }
                 i += 1;
+                after_comma = true;
                 continue;
             }
-            Some(b'*') if !star && count == 0 => {
-                star = true;
-                i += 1;
-            }
-            Some(_) if star => return err(ErrorKind::Malformed, i),
+            Some(b'*') => return err(ErrorKind::Malformed, i),
             Some(_) => {
-                let (tag, used) =
-                    parse_prefix(v.get(i..).unwrap_or(&[])).map_err(|e| match e.kind() {
-                        ErrorKind::InvalidEntityTag
-                            if e.offset() + i >= v.len() && v.get(i) == Some(&b'"') =>
-                        {
-                            ParseError::new(ErrorKind::UnterminatedQuote, v.len())
-                        }
-                        _ => e.shifted(i),
-                    })?;
+                let rest = v.get(i..).unwrap_or(&[]);
+                let (tag, used) = parse_prefix(rest).map_err(|e| {
+                    let open = matches!(rest, [b'"', ..] | [b'W', b'/', b'"', ..]);
+                    if e.kind() == ErrorKind::InvalidEntityTag && open && e.offset() >= rest.len() {
+                        ParseError::new(ErrorKind::UnterminatedQuote, v.len())
+                    } else {
+                        e.shifted(i)
+                    }
+                })?;
                 count += 1;
                 if count > usize::from(limits.list_members) {
                     return err(ErrorKind::TooManyMembers, i);
@@ -411,19 +421,15 @@ fn walk<'a>(v: &'a [u8], limits: &Limits, mut f: impl FnMut(EntityTag<'a>)) -> R
         }
         match v.get(i) {
             None => break,
-            // The separator after a member is consumed here, so the next
-            // pass counts only commas with nothing before them as empty.
-            Some(b',') => i += 1,
+            Some(b',') => {
+                i += 1;
+                after_comma = true;
+            }
             Some(&b) if crate::scan::is_control(b) => return err(crate::scan::control_kind(b), i),
-            Some(_) if star => return err(ErrorKind::Malformed, i),
             Some(_) => return err(ErrorKind::InvalidEntityTag, i),
         }
     }
-    Ok(if star {
-        Walked::Any
-    } else {
-        Walked::Tags(count)
-    })
+    Ok(Walked::Tags(count))
 }
 
 /// Parses `"*" / #entity-tag`.
@@ -602,10 +608,10 @@ mod tests {
         assert_eq!(count(&empties(16)), Ok(2));
         assert_eq!(count(&empties(17)), Err(ErrorKind::TooManyEmptyElements));
         assert_eq!(count(&std::format!("{}\"a\"", ",".repeat(16))), Ok(1));
-        // After a tag the first comma is its separator; 16 more are empty.
-        assert_eq!(count(&std::format!("\"a\"{}", ",".repeat(17))), Ok(1));
+        // N commas after a tag end N empty elements, as in the list walker.
+        assert_eq!(count(&std::format!("\"a\"{}", ",".repeat(16))), Ok(1));
         assert_eq!(
-            count(&std::format!("\"a\"{}", ",".repeat(18))),
+            count(&std::format!("\"a\"{}", ",".repeat(17))),
             Err(ErrorKind::TooManyEmptyElements)
         );
         assert_eq!(count("\"a\",,\"b\","), Ok(2));

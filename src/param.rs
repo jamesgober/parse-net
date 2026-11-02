@@ -412,8 +412,12 @@ impl<'a> Params<'a> {
                 let off = (p.name.as_ptr() as usize).saturating_sub(self.text.as_ptr() as usize);
                 let head = self.text.get(..off).unwrap_or(&[]);
                 let semi = head.iter().rposition(|&b| b == b';').unwrap_or(0);
+                let mut text = self.text.get(..semi).unwrap_or(&[]);
+                while let [rest @ .., b' ' | b'\t'] = text {
+                    text = rest;
+                }
                 let before = Params {
-                    text: self.text.get(..semi).unwrap_or(&[]),
+                    text,
                     count: u32::try_from(index).unwrap_or(u32::MAX),
                     policy: self.policy,
                 };

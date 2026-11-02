@@ -177,7 +177,7 @@ pub fn parse_range<'a>(value: &'a [u8], limits: &Limits) -> Result<MediaRange<'a
         Some(p) => match p.value {
             Word::Token(t) => QValue::parse(t).map_err(|e| {
                 let at = (t.as_ptr() as usize).saturating_sub(value.as_ptr() as usize);
-                ParseError::new(e.kind(), at)
+                ParseError::new(e.kind(), at + e.offset())
             })?,
             Word::Quoted(_) => {
                 let at = (p.name.as_ptr() as usize).saturating_sub(value.as_ptr() as usize);
