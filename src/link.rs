@@ -738,13 +738,15 @@ pub fn write_link(
     if params.iter().any(|(name, _)| !is_token(name.as_bytes())) {
         return Err(WriteError::NotToken);
     }
-    // A `title*` that its own parser would refuse is never written.
-    for (name, value) in params {
-        if name.eq_ignore_ascii_case("title*") && !value.is_empty() {
-            let ext = ExtValue::parse(value.as_bytes());
-            if ext.and_then(|e| e.check_text()).is_err() {
-                return Err(WriteError::forbidden(0));
-            }
+    // A `title*` its own parser would refuse is never written. As there, only
+    // the first with a value counts, and any later one is ignored.
+    let title = params
+        .iter()
+        .find(|(name, value)| name.eq_ignore_ascii_case("title*") && !value.is_empty());
+    if let Some((_, value)) = title {
+        let ext = ExtValue::parse(value.as_bytes());
+        if ext.and_then(|e| e.check_text()).is_err() {
+            return Err(WriteError::forbidden(0));
         }
     }
     let mut count = CountSink::new();

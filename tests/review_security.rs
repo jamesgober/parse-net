@@ -210,6 +210,11 @@ fn w10_write_link_title_star_parses_back() {
     let mut out = SliceSink::new(&mut buf);
     link::write_link(b"/a", &[("title*", "")], &mut out).unwrap();
     assert!(pn::parse_link(out.written(), &Limits::DEFAULT).is_ok());
+    // Only the first counts, as in the parser.
+    let mut buf = [0u8; 64];
+    let mut out = SliceSink::new(&mut buf);
+    link::write_link(b"/a", &[("title*", "UTF-8''"), ("title*", "y")], &mut out).unwrap();
+    assert!(pn::parse_link(out.written(), &Limits::DEFAULT).is_ok());
 }
 
 #[test]
