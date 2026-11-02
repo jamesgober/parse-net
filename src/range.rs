@@ -236,7 +236,6 @@ impl<'a> RangeHeader<'a> {
     }
 }
 
-/// Parses one `int-range / suffix-range`.
 /// The members of a range set: the text between commas, OWS trimmed, empty
 /// members skipped. The set is validated before it is walked.
 struct Elements<'a> {
@@ -261,6 +260,7 @@ impl<'a> Iterator for Elements<'a> {
     }
 }
 
+/// Parses one `int-range / suffix-range`.
 fn spec(e: &[u8]) -> Result<RangeSpec> {
     let Some(dash) = e.iter().position(|&b| b == b'-') else {
         return err(ErrorKind::InvalidRange, e.len());
@@ -495,6 +495,42 @@ fn absolute(s: RangeSpec, length: u64) -> Option<ByteRange> {
     }
 }
 
+/// The run of digits at the front of `s`, at most 19 (which cannot overflow a
+/// `u64`), and what follows it. A longer run leaves a digit in the rest.
+fn digits(s: &[u8]) -> (Option<u64>, &[u8]) {
+    let (mut n, mut rest, mut len) = (0u64, s, 0usize);
+    while let [d @ b'0'..=b'9', tail @ ..] = rest {
+        if len == 19 {
+            break;
+        }
+        n = n * 10 + u64::from(*d - b'0');
+        rest = tail;
+        len += 1;
+    }
+    ((len > 0).then_some(n), rest)
+}
+
+/// `bytes=first-last`, `bytes=first-`, or `bytes=-length`, read by position:
+/// the one shape nearly every request sends. `None` for anything else, or
+/// any failed check; the general path then gives the answer or the error
+/// (D-074).
+fn one_spec(value: &[u8]) -> Option<RangeSpec> {
+    let (first, rest) = digits(value.strip_prefix(b"bytes=")?);
+    let [b'-', rest @ ..] = rest else {
+        return None;
+    };
+    let (last, rest) = digits(rest);
+    if !rest.is_empty() {
+        return None;
+    }
+    match (first, last) {
+        (Some(f), Some(l)) if f <= l => Some(RangeSpec::FromTo(f, l)),
+        (Some(f), None) => Some(RangeSpec::From(f)),
+        (None, Some(l)) => Some(RangeSpec::Suffix(l)),
+        _ => None,
+    }
+}
+
 /// Parses and resolves `Range` against `length` with the default limits and
 /// no coalescing.
 ///
@@ -514,6 +550,16 @@ fn absolute(s: RangeSpec, length: u64) -> Option<ByteRange> {
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn byte_ranges(value: &[u8], length: u64, out: &mut [ByteRange]) -> Result<RangeOutcome> {
+    if let Some(s) = one_spec(value) {
+        return Ok(match (absolute(s, length), out.first_mut()) {
+            (None, _) => RangeOutcome::Unsatisfiable,
+            (Some(r), Some(slot)) => {
+                *slot = r;
+                RangeOutcome::Ranges(1)
+            }
+            (Some(_), None) => RangeOutcome::Ignore,
+        });
+    }
     let h = parse(value, &Limits::DEFAULT)?;
     Ok(resolve(&h, length, false, &Limits::DEFAULT, out))
 }

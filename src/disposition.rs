@@ -130,21 +130,21 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<ContentDisposition<
             _ => ParseError::new(ErrorKind::TrailingData, lead + at),
         });
     }
-    for p in params.iter() {
-        if p.name.eq_ignore_ascii_case(b"filename*") {
-            let at = lead
-                + (p.name.as_ptr() as usize).saturating_sub(v.as_ptr() as usize)
-                + p.name.len()
-                + 1;
-            let Word::Token(t) = p.value else {
-                return err(ErrorKind::InvalidCharset, at);
-            };
-            let ext = ExtValue::parse(t).map_err(|e| e.shifted(at))?;
-            // An undecodable `filename*` refuses the field, so no component
-            // falls back to `filename` where another would not (T7).
-            ext.check_text()
-                .map_err(|e| ParseError::new(e.kind(), at))?;
-        }
+    if let Some(word) = params.get("filename*") {
+        // Repeats are refused, so this is the only one.
+        let offset = |s: &[u8]| (s.as_ptr() as usize).saturating_sub(v.as_ptr() as usize);
+        let t = match word {
+            Word::Token(t) => t,
+            Word::Quoted(q) => {
+                return err(ErrorKind::InvalidCharset, lead + offset(q.raw()) - 1);
+            }
+        };
+        let at = lead + offset(t);
+        let ext = ExtValue::parse(t).map_err(|e| e.shifted(at))?;
+        // An undecodable `filename*` refuses the field, so no component
+        // falls back to `filename` where another would not (T7).
+        ext.check_text()
+            .map_err(|e| ParseError::new(e.kind(), at))?;
     }
     let kind = if type_.eq_ignore_ascii_case(b"inline") {
         DispositionType::Inline
@@ -252,7 +252,7 @@ impl<'a> ContentDisposition<'a> {
     #[must_use]
     pub fn filename_ext(&self) -> Option<ExtValue<'a>> {
         match self.params.get("filename*")? {
-            Word::Token(t) => ExtValue::parse(t).ok(),
+            Word::Token(t) => ExtValue::from_validated(t),
             Word::Quoted(_) => None,
         }
     }

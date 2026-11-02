@@ -111,6 +111,34 @@ impl<'a> ExtValue<'a> {
     /// assert_eq!(ExtValue::parse(b"UTF-8''a%2").unwrap_err().kind(), ErrorKind::InvalidPercentEncoding);
     /// ```
     pub fn parse(value: &'a [u8]) -> Result<Self> {
+        let (head, encoded_at) = Self::head(value)?;
+        let mut i = 0usize;
+        while let Some(&b) = head.encoded.get(i) {
+            if b == b'%' {
+                match (head.encoded.get(i + 1), head.encoded.get(i + 2)) {
+                    (Some(&h), Some(&l)) if class::is_hexdig(h) && class::is_hexdig(l) => i += 3,
+                    _ => return err(ErrorKind::InvalidPercentEncoding, encoded_at + i),
+                }
+            } else if class::is_attr_char(b) {
+                i += 1;
+            } else if crate::scan::is_control(b) {
+                return err(control_kind(b), encoded_at + i);
+            } else {
+                return err(ErrorKind::InvalidByte, encoded_at + i);
+            }
+        }
+        Ok(head)
+    }
+
+    /// An extended value whose text [`parse`](Self::parse) already accepted:
+    /// the value bytes are not checked again.
+    pub(crate) fn from_validated(value: &'a [u8]) -> Option<Self> {
+        Self::head(value).ok().map(|(head, _)| head)
+    }
+
+    /// Reads and checks the charset and language; returns the value with its
+    /// `value-chars` unchecked, and where they start.
+    fn head(value: &'a [u8]) -> Result<(Self, usize)> {
         let Some(q1) = value.iter().position(|&b| b == b'\'') else {
             return err(ErrorKind::InvalidCharset, value.len());
         };
@@ -138,28 +166,15 @@ impl<'a> ExtValue<'a> {
         {
             return err(ErrorKind::InvalidCharset, q1 + 1 + i);
         }
-        let encoded_at = q1 + 1 + q2 + 1;
         let encoded = after.get(q2 + 1..).unwrap_or(&[]);
-        let mut i = 0usize;
-        while let Some(&b) = encoded.get(i) {
-            if b == b'%' {
-                match (encoded.get(i + 1), encoded.get(i + 2)) {
-                    (Some(&h), Some(&l)) if class::is_hexdig(h) && class::is_hexdig(l) => i += 3,
-                    _ => return err(ErrorKind::InvalidPercentEncoding, encoded_at + i),
-                }
-            } else if class::is_attr_char(b) {
-                i += 1;
-            } else if crate::scan::is_control(b) {
-                return err(control_kind(b), encoded_at + i);
-            } else {
-                return err(ErrorKind::InvalidByte, encoded_at + i);
-            }
-        }
-        Ok(Self {
-            charset,
-            language,
-            encoded,
-        })
+        Ok((
+            Self {
+                charset,
+                language,
+                encoded,
+            },
+            q1 + 1 + q2 + 1,
+        ))
     }
 
     /// The declared charset.
