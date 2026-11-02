@@ -81,6 +81,11 @@ const fn is_mime_charset_char(b: u8) -> bool {
         )
 }
 
+/// An RFC 2231 `attribute-char`: a MIME token character but `*`, `'`, and `%`.
+pub(crate) fn is_mime_attribute_char(b: u8) -> bool {
+    class::is_mime_token_char(b) && !matches!(b, b'*' | b'\'' | b'%')
+}
+
 /// Whether a decoded code point is a control: C0, DEL, or C1.
 const fn is_control_point(c: u32) -> bool {
     c < 0x20 || (c >= 0x7f && c <= 0x9f)
@@ -111,6 +116,16 @@ impl<'a> ExtValue<'a> {
     /// assert_eq!(ExtValue::parse(b"UTF-8''a%2").unwrap_err().kind(), ErrorKind::InvalidPercentEncoding);
     /// ```
     pub fn parse(value: &'a [u8]) -> Result<Self> {
+        Self::parse_with(value, class::is_attr_char)
+    }
+
+    /// As [`parse`](Self::parse), for mail: RFC 2231's `attribute-char` also
+    /// allows the bytes RFC 8187 took out, such as `{` and `}`.
+    pub(crate) fn parse_mime(value: &'a [u8]) -> Result<Self> {
+        Self::parse_with(value, is_mime_attribute_char)
+    }
+
+    fn parse_with(value: &'a [u8], in_value: fn(u8) -> bool) -> Result<Self> {
         let (head, encoded_at) = Self::head(value)?;
         let mut i = 0usize;
         while let Some(&b) = head.encoded.get(i) {
@@ -119,7 +134,7 @@ impl<'a> ExtValue<'a> {
                     (Some(&h), Some(&l)) if class::is_hexdig(h) && class::is_hexdig(l) => i += 3,
                     _ => return err(ErrorKind::InvalidPercentEncoding, encoded_at + i),
                 }
-            } else if class::is_attr_char(b) {
+            } else if in_value(b) {
                 i += 1;
             } else if crate::scan::is_control(b) {
                 return err(control_kind(b), encoded_at + i);

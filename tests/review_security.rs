@@ -228,14 +228,15 @@ fn w12_pct_encode_never_emits_crlf() {
 fn w13_write_challenge_65_params_parses_back() {
     let names: Vec<String> = (0..65).map(|i| format!("p{i}")).collect();
     let params: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "v")).collect();
-    let mut v = Vec::new();
+    let mut buf = [0u8; 1024];
+    let mut out = SliceSink::new(&mut buf);
     // The parser reads 64 (D-072), so the writer stops there too.
     assert_eq!(
-        auth::write_challenge("Basic", &params, &mut v),
+        auth::write_challenge("Basic", &params, &mut out),
         Err(pn::WriteError::OutOfRange)
     );
-    auth::write_challenge("Basic", &params[..64], &mut v).unwrap();
-    assert!(auth::parse_challenges(&v, &Limits::DEFAULT).is_ok());
+    auth::write_challenge("Basic", &params[..64], &mut out).unwrap();
+    assert!(auth::parse_challenges(out.written(), &Limits::DEFAULT).is_ok());
 }
 
 // ---- forwarded -------------------------------------------------------------

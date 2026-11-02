@@ -294,6 +294,16 @@ pub fn parse_comment<'a>(s: &'a [u8], limits: &Limits) -> Result<(Comment<'a>, u
 /// Scans the comment that starts at `s[start]` (an opening `(`). Returns the
 /// offset just past its closing `)` and the deepest nesting seen.
 pub(crate) fn comment_end(s: &[u8], start: usize, limits: &Limits) -> Result<(usize, u8)> {
+    comment_walk(s, start, limits, false)
+}
+
+/// As [`comment_end`], for mail, where a comment may hold `CRLF WSP` folds
+/// (RFC 5322 section 3.2.2).
+pub(crate) fn comment_end_folded(s: &[u8], start: usize, limits: &Limits) -> Result<(usize, u8)> {
+    comment_walk(s, start, limits, true)
+}
+
+fn comment_walk(s: &[u8], start: usize, limits: &Limits, folds: bool) -> Result<(usize, u8)> {
     let limit = u16::from(limits.comment_depth);
     let mut depth: u16 = 0;
     let mut max: u16 = 0;
@@ -323,6 +333,14 @@ pub(crate) fn comment_end(s: &[u8], start: usize, limits: &Limits) -> Result<(us
                 Some(&e) => return err(pair_refused(e), i + 1),
             },
             _ if class::is_ctext(b) => i += 1,
+            b'\r'
+                if folds
+                    && s.get(i + 1) == Some(&b'\n')
+                    && matches!(s.get(i + 2), Some(b' ' | b'\t')) =>
+            {
+                let _lf = bytes.next();
+                i += 2;
+            }
             _ => return err(refused(b), i),
         }
     }

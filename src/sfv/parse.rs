@@ -89,7 +89,6 @@ pub(crate) fn key<'a>(c: &mut Cursor<'a>, limits: &Limits) -> Result<&'a str> {
 
 /// Section 4.2.4: an Integer or a Decimal.
 fn number(c: &mut Cursor<'_>) -> Result<BareItem<'static>> {
-    let start = c.i;
     let negative = c.peek() == Some(b'-');
     if negative {
         c.bump();
@@ -126,7 +125,7 @@ fn number(c: &mut Cursor<'_>) -> Result<BareItem<'static>> {
         c.bump();
     }
     if frac_digits == 0 {
-        return Err(ParseError::new(ErrorKind::InvalidNumber, start));
+        return Err(ParseError::new(ErrorKind::InvalidNumber, c.i));
     }
     let thousandths = int * 1000 + frac * 10_i64.pow(3 - frac_digits);
     Ok(BareItem::Decimal(Decimal(if negative {
@@ -279,6 +278,9 @@ fn display_string<'a>(c: &mut Cursor<'a>, limits: &Limits) -> Result<DisplayStri
                     return Err(ParseError::new(ErrorKind::InvalidUtf8, at));
                 }
                 decoded += 1;
+                if decoded > usize::from(limits.string_len) {
+                    return Err(ParseError::new(ErrorKind::TooLong, start));
+                }
                 continue;
             }
             Some(b) if (0x20..=0x7e).contains(&b) => b,

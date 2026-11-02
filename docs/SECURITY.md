@@ -77,9 +77,10 @@ Every parse is bounded by [`Limits`](API.md) (defaults in the `Limits`
 documentation, each at or above the RFC minimum) and walks its input once.
 The complexity tests check both halves for every walker: under the default
 limits a 1 MiB adversarial input stops with the expected limit error, and
-with every limit at its maximum the time grows with the input, within 1.2 of
-the size ratio, checked on an optimised build (a CI job); an unoptimised
-build checks the limit errors only, since its timings are not stable.
+with every limit at its maximum the time grows with the input, within 2.0 of
+the size ratio (a quadratic walker misses that eightfold), checked on an
+optimised build by a CI job; an unoptimised build checks the limit errors
+only, since its timings are not stable (D-073).
 
 One bound is fixed rather than configurable: a parameter list that refuses
 repeated names (RFC 9110 parameters under `DuplicatePolicy::Refuse`,

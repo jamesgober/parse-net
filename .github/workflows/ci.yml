@@ -57,7 +57,7 @@ jobs:
           RUSTDOCFLAGS: "-D warnings"
 
   complexity:
-    # The complexity tests hold an optimised build to the 1.2 bound of
+    # The complexity tests hold an optimised build to the time bound of
     # dev/PLAN.md section 11.6; the test jobs above run them unoptimised,
     # where only the limit errors are checked (D-073).
     name: Complexity (release)
