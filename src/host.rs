@@ -123,10 +123,16 @@ impl Host<'_> {
 
     fn put(&self, out: &mut impl Sink) -> core::result::Result<(), WriteError> {
         match self {
-            Host::Name(n) => out.put(n)?,
+            Host::Name(n) => {
+                check_reg_name(n)?;
+                out.put(n)?;
+            }
             Host::V4(a) => write!(SinkWriter(out), "{a}").map_err(|_| WriteError::Full)?,
             Host::V6(a) => write!(SinkWriter(out), "[{a}]").map_err(|_| WriteError::Full)?,
             Host::Future(f) => {
+                if ip_literal(f).is_err() {
+                    return Err(WriteError::forbidden(0));
+                }
                 out.put(b"[")?;
                 out.put(f)?;
                 out.put(b"]")?;
@@ -134,6 +140,20 @@ impl Host<'_> {
         }
         Ok(())
     }
+}
+
+/// Refuses what no parsed name holds: the fields of [`Host`] are public, and
+/// a writer must not carry CR, LF, or any other byte outside a reg-name.
+fn check_reg_name(n: &[u8]) -> core::result::Result<(), WriteError> {
+    let mut i = 0usize;
+    while let Some(&b) = n.get(i) {
+        match (b, n.get(i + 1), n.get(i + 2)) {
+            (b'%', Some(&h), Some(&l)) if class::is_hexdig(h) && class::is_hexdig(l) => i += 3,
+            _ if REG_NAME.contains(b) => i += 1,
+            _ => return Err(WriteError::forbidden(i)),
+        }
+    }
+    Ok(())
 }
 
 /// Lets `core::fmt` write into a [`Sink`].
@@ -289,8 +309,8 @@ pub fn parse_uri_host_port(value: &[u8]) -> Result<HostPort<'_>> {
 pub fn parse_host(value: &[u8]) -> Result<Host<'_>> {
     let hp = parse_host_port(value)?;
     if hp.port.is_some() || hp.empty_port {
-        let at = skip_ows(value) + value.iter().rposition(|&b| b == b':').unwrap_or(0);
-        return err(ErrorKind::InvalidHost, at.min(value.len()));
+        let at = value.iter().rposition(|&b| b == b':').unwrap_or(0);
+        return err(ErrorKind::InvalidHost, at);
     }
     Ok(hp.host)
 }
@@ -407,6 +427,70 @@ fn is_numeric_label(label: &[u8]) -> bool {
     }
 }
 
+/// Which number a label of decoded bytes could be, as far as it has been read.
+#[derive(Clone, Copy)]
+struct NumericLabel {
+    len: usize,
+    decimal: bool,
+    hex: bool,
+}
+
+impl NumericLabel {
+    const EMPTY: Self = Self {
+        len: 0,
+        decimal: true,
+        hex: true,
+    };
+
+    fn push(&mut self, b: u8) {
+        self.decimal &= b.is_ascii_digit();
+        self.hex &= match self.len {
+            0 => b == b'0',
+            1 => matches!(b, b'x' | b'X'),
+            _ => class::is_hexdig(b),
+        };
+        self.len += 1;
+    }
+
+    const fn is_number(&self) -> bool {
+        self.decimal && self.len > 0 || self.hex && self.len >= 2
+    }
+}
+
+/// [`is_numeric_label`] and the digits-and-dots rule over the percent-decoded
+/// bytes of a validated reg-name: `%2e` separates labels, as it does for a
+/// browser. No allocation: one pass with the last two labels' state.
+fn decoded_is_numeric(name: &[u8]) -> bool {
+    let (mut label, mut previous) = (NumericLabel::EMPTY, NumericLabel::EMPTY);
+    let (mut digits_dots, mut i) = (true, 0usize);
+    while let Some(&b) = name.get(i) {
+        let byte = match (b, name.get(i + 1), name.get(i + 2)) {
+            (b'%', Some(&h), Some(&l)) => {
+                i += 2;
+                match (class::hex_value(h), class::hex_value(l)) {
+                    (Some(h), Some(l)) => (h << 4) | l,
+                    _ => b,
+                }
+            }
+            _ => b,
+        };
+        i += 1;
+        digits_dots &= byte.is_ascii_digit() || byte == b'.';
+        if byte == b'.' {
+            previous = label;
+            label = NumericLabel::EMPTY;
+        } else {
+            label.push(byte);
+        }
+    }
+    digits_dots
+        || if label.len == 0 {
+            previous.is_number()
+        } else {
+            label.is_number()
+        }
+}
+
 /// `unreserved / sub-delims`: the reg-name bytes other than `pct-encoded`.
 const REG_NAME: class::Class = class::Class::UNRESERVED.union(class::Class::SUB_DELIM);
 
@@ -418,6 +502,7 @@ fn reg_name_or_ipv4(v: &[u8]) -> Result<(Host<'_>, usize)> {
     let mut digits_dots = true;
     let mut label_start = 0usize;
     let mut prev_label_start = 0usize;
+    let mut escaped = false;
     while let Some(&b) = v.get(i) {
         if REG_NAME.contains(b) {
             if b == b'.' {
@@ -435,6 +520,7 @@ fn reg_name_or_ipv4(v: &[u8]) -> Result<(Host<'_>, usize)> {
                 _ => return err(ErrorKind::InvalidPercentEncoding, i),
             }
             digits_dots = false;
+            escaped = true;
         } else if crate::scan::is_control(b) {
             return err(control_kind(b), i);
         } else {
@@ -442,6 +528,11 @@ fn reg_name_or_ipv4(v: &[u8]) -> Result<(Host<'_>, usize)> {
         }
     }
     let name = v.get(..i).unwrap_or(&[]);
+    // A browser decodes first, so `127.0.0.%31` is an address there, and
+    // only the canonical plain form may be one here (D-040).
+    if escaped && decoded_is_numeric(name) {
+        return err(ErrorKind::InvalidAddress, 0);
+    }
     // The last label, ignoring one trailing dot.
     let last = if name.last() == Some(&b'.') {
         name.get(prev_label_start..i - 1).unwrap_or(&[])

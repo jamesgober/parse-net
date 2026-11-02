@@ -139,6 +139,17 @@ impl Origin<'_> {
     }
 
     fn put(&self, out: &mut impl Sink) -> core::result::Result<(), WriteError> {
+        // The fields are public: refuse what no parsed scheme holds.
+        let in_scheme = |(i, b): (usize, &u8)| {
+            b.is_ascii_alphabetic()
+                || i > 0 && (b.is_ascii_digit() || matches!(b, b'+' | b'-' | b'.'))
+        };
+        if let Some(at) = self.scheme.iter().enumerate().position(|p| !in_scheme(p)) {
+            return Err(WriteError::forbidden(at));
+        }
+        if self.scheme.is_empty() {
+            return Err(WriteError::forbidden(0));
+        }
         let mut scheme = [0u8; 32];
         for chunk in self.scheme.chunks(scheme.len()) {
             let dst = scheme.get_mut(..chunk.len()).unwrap_or(&mut []);

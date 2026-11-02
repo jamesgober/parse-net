@@ -37,7 +37,9 @@ use crate::{
 /// assert!(owned.as_view().is("image", "png"));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+///
+/// `Debug` prints what the view prints: parameter values can be secrets.
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct OwnedMediaType {
     /// The type, the subtype, then the parameter text.
     buf: Vec<u8>,
@@ -45,6 +47,12 @@ pub struct OwnedMediaType {
     subtype_len: usize,
     count: u32,
     policy: DuplicatePolicy,
+}
+
+impl core::fmt::Debug for OwnedMediaType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(&self.as_view(), f)
+    }
 }
 
 impl MediaType<'_> {

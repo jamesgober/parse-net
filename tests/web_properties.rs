@@ -106,6 +106,34 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(2048))]
 
     #[test]
+    fn test_write_element_cannot_forge_a_pair(
+        host in "[a-z0-9.,;=()!$&'*+~_-]{0,12}",
+        port in prop::option::of(1u16..),
+    ) {
+        // Any host the parser accepts, however odd its reg-name, must come
+        // back as itself in one element: no hop or pair forged by its bytes.
+        let text = match port {
+            Some(p) => format!("{host}:{p}"),
+            None => host.clone(),
+        };
+        let Ok(hp) = pn::parse_host_port(text.as_bytes()) else { return Ok(()) };
+        let addr: IpAddr = "198.51.100.7".parse().unwrap();
+        let e = forwarded::Element {
+            for_: Some(forwarded::Node::Addr(addr, None)),
+            by: None,
+            host: Some(hp),
+            proto: None,
+        };
+        let mut buf = [0u8; 128];
+        let mut out = SliceSink::new(&mut buf);
+        forwarded::write_element(&e, &mut out).unwrap();
+        let lines = [out.written()];
+        let parsed = forwarded::parse(&lines, &Limits::DEFAULT).unwrap();
+        prop_assert_eq!(parsed.len(), 1, "{:?}", String::from_utf8_lossy(out.written()));
+        prop_assert_eq!(parsed.iter().next(), Some(e));
+    }
+
+    #[test]
     fn test_byte_ranges_fast_path_agrees_with_general(
         v in prop_oneof![
             "(bytes|BYTES|items)=[0-9]{0,4}-[0-9]{0,4}",

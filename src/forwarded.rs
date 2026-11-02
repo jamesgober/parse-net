@@ -39,8 +39,9 @@ use crate::{
     host::{Host, HostPort, host_port},
     limits::Limits,
     list,
+    param::{MAX_CHECKED_PARAMS, Names},
     scan::control_kind,
-    text::{Word, parse_word, skip_ows, trim_ows},
+    text::{Word, is_token, parse_word, skip_ows, trim_ows},
     write::{CountSink, Sink, reserve},
 };
 
@@ -202,6 +203,32 @@ pub enum Proto {
     Http,
     /// `https`.
     Https,
+    /// `ws`.
+    Ws,
+    /// `wss`.
+    Wss,
+    /// Another URI scheme (RFC 7239 section 5.4 allows any). It cannot be
+    /// written back: [`write_element`] refuses it.
+    Other,
+}
+
+/// The scheme named by `v`; `None` when `v` is not a URI scheme.
+fn proto(v: &[u8]) -> Option<Proto> {
+    const NAMES: [(&[u8], Proto); 4] = [
+        (b"http", Proto::Http),
+        (b"https", Proto::Https),
+        (b"ws", Proto::Ws),
+        (b"wss", Proto::Wss),
+    ];
+    if let Some(&(_, p)) = NAMES.iter().find(|(n, _)| v.eq_ignore_ascii_case(n)) {
+        return Some(p);
+    }
+    let (first, rest) = v.split_first()?;
+    let scheme = first.is_ascii_alphabetic()
+        && rest
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'));
+    scheme.then_some(Proto::Other)
 }
 
 /// One `Forwarded` element.
@@ -229,6 +256,12 @@ pub struct Element<'a> {
     /// `proto=`.
     pub proto: Option<Proto>,
 }
+
+/// Limits for walking text that was already validated.
+const RELAXED: Limits = Limits::DEFAULT
+    .max_list_members(u16::MAX)
+    .max_empty_elements(u16::MAX)
+    .max_comment_depth(u8::MAX);
 
 /// `"_" 1*( ALPHA / DIGIT / "." / "_" / "-" )`.
 fn is_obfuscated(s: &[u8]) -> bool {
@@ -320,7 +353,7 @@ fn node(v: &[u8]) -> Result<Node<'_>> {
         },
         Some(_) => return err(ErrorKind::InvalidAddress, name.len()),
     };
-    if name == b"unknown" {
+    if name.eq_ignore_ascii_case(b"unknown") {
         return Ok(Node::Unknown(port));
     }
     if is_obfuscated(name) {
@@ -345,7 +378,7 @@ fn element(e: &[u8]) -> Result<Element<'_>> {
         host: None,
         proto: None,
     };
-    let mut seen = [false; 4];
+    let (mut names, mut pairs) = (Names::new(), 0usize);
     let mut i = 0usize;
     loop {
         i += skip_ows(e.get(i..).unwrap_or(&[]));
@@ -384,30 +417,25 @@ fn element(e: &[u8]) -> Result<Element<'_>> {
         };
         let value_at = i + usize::from(matches!(w, Word::Quoted(_)));
         i += used;
+        // RFC 7239 section 4: a pair occurs at most once in an element.
+        pairs += 1;
+        if pairs > MAX_CHECKED_PARAMS {
+            return err(ErrorKind::TooManyMembers, name_at);
+        }
+        if names.repeats(e, name_at, name, class::is_tchar) {
+            return err(ErrorKind::DuplicateParameter, name_at);
+        }
         let slot = [&b"for"[..], b"by", b"host", b"proto"]
             .iter()
             .position(|k| name.eq_ignore_ascii_case(k));
-        if let Some(s) = slot {
-            if seen.get(s).copied().unwrap_or(false) {
-                return err(ErrorKind::DuplicateParameter, name_at);
-            }
-            if let Some(flag) = seen.get_mut(s) {
-                *flag = true;
-            }
-        }
         match slot {
             Some(0) => out.for_ = Some(node(v).map_err(|x| x.shifted(value_at))?),
             Some(1) => out.by = Some(node(v).map_err(|x| x.shifted(value_at))?),
             Some(2) => out.host = Some(host_port(v).map_err(|x| x.shifted(value_at))?),
-            Some(3) => {
-                out.proto = Some(if v.eq_ignore_ascii_case(b"http") {
-                    Proto::Http
-                } else if v.eq_ignore_ascii_case(b"https") {
-                    Proto::Https
-                } else {
-                    return err(ErrorKind::Malformed, value_at);
-                });
-            }
+            Some(3) => match proto(v) {
+                Some(p) => out.proto = Some(p),
+                None => return err(ErrorKind::Malformed, value_at),
+            },
             _ => {}
         }
         i += skip_ows(e.get(i..).unwrap_or(&[]));
@@ -462,7 +490,7 @@ impl<'a> ForwardedElements<'a> {
         let lines = self.lines;
         lines
             .iter()
-            .filter_map(|line| list::parse(line, &Limits::DEFAULT).ok())
+            .filter_map(|line| list::parse(line, &RELAXED).ok())
             .flat_map(|l| l.into_iter())
             .filter_map(|e| element(e).ok())
     }
@@ -692,8 +720,9 @@ pub fn parse_x_forwarded_for<'a>(lines: &'a [&'a [u8]], limits: &Limits) -> Resu
     Ok(XffChain { lines, count })
 }
 
-/// Parses `X-Forwarded-Proto`: `http` or `https`, case-insensitive; a
-/// comma list only when every member is the same.
+/// Parses `X-Forwarded-Proto`: a URI scheme, case-insensitive ([`Proto`]
+/// names `http`, `https`, `ws`, and `wss`); a comma list only when every
+/// member is the same.
 ///
 /// # Errors
 ///
@@ -709,23 +738,21 @@ pub fn parse_x_forwarded_for<'a>(lines: &'a [&'a [u8]], limits: &Limits) -> Resu
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn parse_x_forwarded_proto(value: &[u8]) -> Result<Proto> {
-    let mut found: Option<Proto> = None;
+    let mut found: Option<(Proto, &[u8])> = None;
     for m in value.split(|&b| b == b',') {
         let at = (m.as_ptr() as usize).saturating_sub(value.as_ptr() as usize);
         let t = trim_ows(m);
-        let p = if t.eq_ignore_ascii_case(b"http") {
-            Proto::Http
-        } else if t.eq_ignore_ascii_case(b"https") {
-            Proto::Https
-        } else {
+        let Some(p) = proto(t) else {
             return err(ErrorKind::Malformed, at);
         };
-        if found.is_some_and(|f| f != p) {
+        if found.is_some_and(|(_, f)| !f.eq_ignore_ascii_case(t)) {
             return err(ErrorKind::Malformed, at);
         }
-        found = Some(p);
+        found = Some((p, t));
     }
-    found.ok_or(ParseError::new(ErrorKind::Malformed, 0))
+    found
+        .map(|(p, _)| p)
+        .ok_or(ParseError::new(ErrorKind::Malformed, 0))
 }
 
 /// Parses `X-Forwarded-Host`: one `Host` value; a list is refused.
@@ -1032,6 +1059,9 @@ fn put_element(e: &Element<'_>, out: &mut impl Sink) -> core::result::Result<(),
         out.put(match p {
             Proto::Http => b"proto=http",
             Proto::Https => b"proto=https",
+            Proto::Ws => b"proto=ws",
+            Proto::Wss => b"proto=wss",
+            Proto::Other => return Err(WriteError::NotToken),
         })?;
     }
     if let Some(n) = &e.by {
@@ -1042,9 +1072,16 @@ fn put_element(e: &Element<'_>, out: &mut impl Sink) -> core::result::Result<(),
             out.put(b";")?;
         }
         out.put(b"host=")?;
-        // A port or an IPv6 literal needs quotes; host bytes never need
-        // escapes.
-        let quote = h.port.is_some() || matches!(h.host, Host::V6(_) | Host::Future(_));
+        // A value that is not a token needs quotes: a port, an IPv6 literal,
+        // an empty name, or a name with `,`, `;`, `=`, `(`, or `)`, all legal
+        // in a reg-name and all able to end the pair or forge another. The
+        // quoted bytes need no escapes: no host holds `"` or `\`.
+        let quote = h.port.is_some()
+            || match h.host {
+                Host::V4(_) => false,
+                Host::V6(_) | Host::Future(_) => true,
+                Host::Name(n) => !is_token(n),
+            };
         if quote {
             out.put(b"\"")?;
         }
@@ -1063,7 +1100,9 @@ fn put_element(e: &Element<'_>, out: &mut impl Sink) -> core::result::Result<(),
 /// # Errors
 ///
 /// [`WriteError::NotToken`] for an obfuscated name or port that is not `_`
-/// followed by `ALPHA / DIGIT / "." / "_" / "-"`; [`WriteError::Full`]
+/// followed by `ALPHA / DIGIT / "." / "_" / "-"`, or for [`Proto::Other`];
+/// [`WriteError::Forbidden`] for a host name with a byte no name holds;
+/// [`WriteError::Full`]
 /// (nothing written when the sink reports its room).
 ///
 /// # Examples
@@ -1208,7 +1247,7 @@ mod tests {
         assert_eq!(k(b"for=1.2.3"), ErrorKind::InvalidAddress);
         assert_eq!(k(b"for=01.2.3.4"), ErrorKind::InvalidAddress);
         assert_eq!(k(b"for=\"[::1]:99999\""), ErrorKind::InvalidPort);
-        assert_eq!(k(b"proto=ftp"), ErrorKind::Malformed);
+        assert_eq!(k(b"proto=1x"), ErrorKind::Malformed);
         assert_eq!(k(b"for"), ErrorKind::MissingValue);
         assert_eq!(k(b"for=\"a\\\"b\""), ErrorKind::InvalidQuotedPair);
         assert_eq!(k(b"for=1.2.3.4 x"), ErrorKind::ExpectedSeparator);
@@ -1400,7 +1439,10 @@ mod tests {
     fn test_x_forwarded_proto_and_host() {
         assert_eq!(parse_x_forwarded_proto(b"http, HTTP"), Ok(Proto::Http));
         assert!(parse_x_forwarded_proto(b"").is_err());
-        assert!(parse_x_forwarded_proto(b"wss").is_err());
+        assert_eq!(parse_x_forwarded_proto(b"wss"), Ok(Proto::Wss));
+        assert_eq!(parse_x_forwarded_proto(b"ftp"), Ok(Proto::Other));
+        assert!(parse_x_forwarded_proto(b"ftp, sftp").is_err());
+        assert!(parse_x_forwarded_proto(b"1x").is_err());
         assert!(parse_x_forwarded_host(b"[::1]:8080").is_ok());
         assert_eq!(
             parse_x_forwarded_host(b"a,b").unwrap_err().kind(),
