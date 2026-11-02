@@ -42,7 +42,7 @@ What the caller decides, and parse-net only reports:
 
 | Id | Threat | Defence | Tests | Cost |
 |---|---|---|---|---|
-| T1 | header injection through a written value | every writer validates as it writes; CR, LF, NUL, and the other controls are refused, and a refused write leaves the sink as it was | `write::tests::test_writers_refuse_crlf_in_every_position` (every writer, every byte 0x00 to 0x1F and 0x7F) | the field-value scan: 5.4 ns for 64 bytes (`docs/PERFORMANCE.md`) |
+| T1 | header injection through a written value | every writer validates as it writes; CR, LF, NUL, and the other controls are refused, and a refused write leaves the sink as it was | `write::tests::test_writers_refuse_crlf_in_every_position` (every byte 0x00 to 0x1F and 0x7F); `review_security.rs` for `Host`, `Origin`, `write_element`, `write_link`, and `pct::encode`; `review_mail.rs` for `fold` and `check_header_value`; `web_properties.rs`: `test_write_element_cannot_forge_a_pair` | the field-value scan: 5.4 ns for 64 bytes (`docs/PERFORMANCE.md`) |
 | T2 | decoded control bytes re-emitted (`%0D%0A` in an ext-value, `=0D=0A` in an encoded word) | every decoder refuses a decoded control character with `ControlInDecoded`: C0 (HTAB included), DEL, and C1, in ext-values, RFC 2231 parameters, and encoded words (D-071) | `ext_value::tests::test_ext_value_percent_crlf_refused`; `threats.rs`: `test_encoded_word_crlf_refused`, `test_basic_credentials_ctl_refused` | one comparison per decoded byte |
 | T3 | a comma inside a quoted string split by one parser and not another | the list walker is quote- and comment-aware; an unterminated quote refuses the field | `list::tests::test_list_comma_in_quotes_is_one_element`; the property tests split and rejoin lists | none |
 | T4 | a repeated parameter read first by one component and last by another | `DuplicatePolicy::Refuse` by default; RFC rules applied where they differ (`filename` and `filename*` are different names) | `threats.rs`: `test_content_disposition_duplicate_filename_refused`, `test_media_type_duplicate_charset_refused`, `test_repeat_checks_compare_whole_names` | a name table on the stack, at most 64 names per element (D-072) |
@@ -52,7 +52,7 @@ What the caller decides, and parse-net only reports:
 | T8 | several field lines combined differently | the `combined` and `*_lines` functions read every line as one list | `properties.rs`: `test_combined_equals_joined` | none |
 | T9 | quadratic work (nested comments, many parameters, many members, `Accept` members times offers) | counters and limits checked before the work; single-pass walkers; repeated-name checks compare names from a bounded table (D-072) | `complexity.rs`: `test_complexity_linear`, every walker at 1 KiB, 64 KiB, and 1 MiB | a counter per element |
 | T10 | stack exhaustion through nesting | no recursion anywhere; comment depth is a counter | `text::tests::test_comment_depth_limit_plus_one_refused` (depth 10,000) | none |
-| T11 | integer overflow (ranges, delta-seconds, Structured Field integers, `Content-Range`, q-values) | checked arithmetic; saturation only where the RFC says (delta-seconds at 2^31) | `threats.rs`: `test_range_u64_max_plus_one`, `test_delta_seconds_saturates`, `test_sf_integer_16_digits_refused` | none |
+| T11 | integer overflow (ranges, delta-seconds, Structured Field integers, `Content-Range`, q-values) | checked arithmetic; saturation only where the RFC says (delta-seconds at 2^31, `Range` positions at `u64::MAX`; D-075) | `threats.rs`: `test_range_u64_max_plus_one`, `test_delta_seconds_saturates`, `test_sf_integer_16_digits_refused` | none |
 | T12 | range requests that amplify work or output | at most 16 ranges by default; overlapping or disordered sets are answered with `Ignore` | `range::tests::test_range_17_ranges_ignored`, `test_range_three_overlapping_ignored` | `byte_ranges` 28 ns for one range |
 | T13 | client address spoofing through `X-Forwarded-For` | the header is ignored unless the peer is trusted; the chain is walked from the right; a malformed chain fails closed | `forwarded::tests::test_xff_untrusted_peer_ignored`, `test_xff_leftmost_spoof_ignored`, `test_xff_malformed_fails_closed` | `client_address` 110 ns for three hops |
 | T14 | `Forwarded` and `X-Forwarded-For` present and disagreeing | one source chosen by configuration, never merged; the other is reported | `forwarded::tests::test_both_forwarded_headers_reported` | none |
@@ -70,6 +70,18 @@ What the caller decides, and parse-net only reports:
 
 Unit tests are named `module::tests::name` (in `src/`); the others are in
 `tests/`.
+
+## The 0.9 review
+
+Three independent reviews of the whole crate, each proving every finding by
+running it, found 46 defects at 0.8 that the fuzz targets and property tests
+had not: among them a `Host` that forged a `Forwarded` hop through
+`write_element`, `127.0.0.%31` passing as a name, CRLF copied through
+`decode_words`, a quadratic path in `decode_words`, and a malformed
+`max-stale` read as any staleness. All are fixed, and each has a regression
+in `tests/review_core.rs`, `tests/review_security.rs`, or
+`tests/review_mail.rs`. Fuzz targets check what they are written to check;
+that is why the review ran, and why it runs again before 1.0.
 
 ## Resource bounds
 

@@ -239,7 +239,7 @@ Every variant names what was refused. Unless the row says otherwise, the caller'
 | `Nul` | a NUL byte | as `BareCr` |
 | `Control` | another control byte (0x01 to 0x1F except HTAB, or DEL) | as `BareCr` |
 | `UnterminatedQuote` | a quoted string with no closing `"` (also: a quoted string that would have to continue on the next field line) | `text`, `list`, `param` |
-| `InvalidQuotedPair` | the byte after `\` is not `HTAB / SP / VCHAR / obs-text` | `text` |
+| `InvalidQuotedPair` | a quoted pair where the grammar allows none or not that one (`forwarded`, Structured Field strings); after a `\` in `text` a refused byte is a control, which keeps its kind (D-037) | `forwarded`, `sfv` |
 | `UnbalancedComment` | a `(` without its `)`, or a `)` without its `(` | `text::parse_comment`, `list` |
 | `CommentTooDeep` | comment nesting beyond `Limits::max_comment_depth` | `text::parse_comment`, `list` |
 | `TooManyMembers` | more list members, parameters, dictionary members, or encoded words than the limit allows | `list`, `param`, `sfv`, `mail` |
@@ -668,9 +668,9 @@ pub mod text {
 | TXT-2 | `is_ows`, `trim_ows`, `skip_ows` | P0, 3, 0.3 | SP and HTAB only. VT, FF, NBSP, and every other byte are never stripped and later fail validation ([T6](../dev/PLAN.md#9-threats)); `<[u8]>::trim_ascii` is deliberately not used. `skip_ows` returns the count of leading SP and HTAB | none |
 | TXT-3 | `parse_token` | P0, 3, 0.3 | the longest token prefix of `s` and its length (the rest is the caller's) | `Empty` when `s` does not start with a `tchar` |
 | TXT-4 | BWS | P0, 3, 0.3 | "bad whitespace" (OWS a sender must not generate) is accepted where RFC 9110 allows it (`auth-param`, `Link` parameters) and never written | none |
-| TXT-5 | `parse_quoted` | P0, 3, 0.3 | `s[0]` must be `"`; scans `qdtext` and `quoted-pair` to the closing `"`; returns the view and the length including both quotes | `InvalidByte` (offset 0) when `s` does not start with `"`; a control kind for a control byte (the only bytes besides `"` and `\` that are not `qdtext`); `InvalidQuotedPair` when the byte after `\` is not `HTAB / SP / VCHAR / obs-text`; `UnterminatedQuote` at the end of input |
+| TXT-5 | `parse_quoted` | P0, 3, 0.3 | `s[0]` must be `"`; scans `qdtext` and `quoted-pair` to the closing `"`; returns the view and the length including both quotes | `InvalidByte` (offset 0) when `s` does not start with `"`; a control kind for a control byte, the byte after a `\` included (the only bytes besides `"` and `\` that are not `qdtext`); `UnterminatedQuote` at the end of input |
 | TXT-11 | `parse_word` | P0, 3, 0.3 | a quoted string when `s` starts with `"`, a token otherwise | as TXT-3 and TXT-5 |
-| TXT-13 | `parse_comment` | P1, 3, 0.4 | `s[0]` must be `(`; `ctext`, `quoted-pair`, and nested comments, counted, never recursed; returns the view and the length including the outer parentheses | `InvalidByte`, `InvalidQuotedPair`, `UnbalancedComment` (no closing `)`), `CommentTooDeep` (nesting beyond `max_comment_depth`, at the `(` that exceeded it) |
+| TXT-13 | `parse_comment` | P1, 3, 0.4 | `s[0]` must be `(`; `ctext`, `quoted-pair`, and nested comments, counted, never recursed; returns the view and the length including the outer parentheses | `InvalidByte`, a control kind, `UnbalancedComment` (no closing `)`), `CommentTooDeep` (nesting beyond `max_comment_depth`, at the `(` that exceeded it) |
 
 ```rust
 use parse_net::text;
@@ -1048,7 +1048,7 @@ pub mod negotiate {
 | NEG-3 | `best_language` | P1, 1, 0.4 | RFC 4647 section 3.4 lookup: each range in descending q order is matched against the offers case-insensitively, truncating the range one subtag at a time (`en-US` matches an `en` offer); `*` matches any offer at its weight; `q=0` excludes | none |
 | NEG-4 | `best_encoding` | P1, 1, 0.4 | RFC 9110 section 12.5.3: `identity` is acceptable unless `identity;q=0`, or `*;q=0` without an explicit `identity`; an empty field value means only `identity`; `x-gzip` equals `gzip` and `x-compress` equals `compress` (section 8.4.1) | none |
 | NEG-5 | `best_charset` | P2, 1, 0.4 | as `best_encoding` without the `identity` rule | none |
-| NEG-6 | `Negotiator`, `Outcome` | P1, 2, 0.4 | the configurable form. `HeaderIgnored { index }` reports that the header was malformed and treated as absent; with `MalformedPolicy::Refuse` the outcome is `Refused(error)` instead, so the caller can answer 400 | none (reported in `Outcome`) |
+| NEG-6 | `Negotiator`, `Outcome` | P1, 2, 0.4 | the configurable form. `HeaderIgnored { index }` reports that the header was malformed and treated as absent; with `MalformedPolicy::Refuse` the outcome is `Refused(error)` instead, so the caller can answer 400. A member is its value and at most a weight, and a language value is a `language-range` (D-076); `parse_weighted` stays raw. An offer that is not a valid media type is never chosen, in any path | none (reported in `Outcome`) |
 | NEG-7 | `media_lines` | P1, 2, 0.4 | several `Accept` field lines as one list (LST-3) | as NEG-6 |
 | NEG-8 | `parse_accept`, `parse_weighted` | P2, 3, 0.4 | raw access for other selection rules: media ranges with weights; `token *( ";" param )` with weights | LST, PRM, MED-7, NEG-1 errors |
 | NEG-9 | `LanguageMatching::BasicFilter` | P2, 2, 0.4 | RFC 4647 section 3.3.1: a range matches a tag when it equals the tag or is a prefix followed by `-`; the best-weighted offer wins | none |
@@ -1301,6 +1301,7 @@ pub mod range {
     pub fn write_content_range(r: ByteRange, complete: Option<u64>, out: &mut impl Sink) -> Result<(), WriteError>;
     pub fn write_unsatisfied(complete: u64, out: &mut impl Sink) -> Result<(), WriteError>;
     pub fn parse_if_range(value: &[u8]) -> Result<IfRange<'_>, ParseError>;
+    pub fn parse_if_range_at(value: &[u8], now: i64) -> Result<IfRange<'_>, ParseError>; // 0.9
 
     #[derive(Clone, Copy, Debug)]
     pub struct RangeHeader<'a> { /* unit, specs text, count */ }
@@ -1325,13 +1326,13 @@ impl IfRange<'_> {
 
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
-| RNG-1 | `range::parse`, `RangeHeader`, `RangeSpec` | P1, 3, 0.4 | RFC 9110 section 14.1.2: `range-unit "=" range-set`, no whitespace around `=`; the unit compares case-insensitively; other units are kept (`is_bytes` false) and their range set is not interpreted; numbers overflow-checked into `u64` | `InvalidRange` (`first > last`, an empty set, a malformed spec); `NumberOverflow`; LST errors |
+| RNG-1 | `range::parse`, `RangeHeader`, `RangeSpec` | P1, 3, 0.4 | RFC 9110 section 14.1.2: `range-unit "=" range-set`, no whitespace around `=`; the unit compares case-insensitively; other units are kept (`is_bytes` false) and their range set is not interpreted; a number past `u64::MAX` saturates, since a recipient must read large numerals without failing (RFC 9110 section 14.1.2; D-075) | `InvalidRange` (`first > last`, an empty set, a malformed spec); `InvalidNumber`; a control kind; LST errors |
 | RNG-2 | `byte_ranges` | P1, 1, 0.4 | parse and resolve with the defaults, no coalescing. `Ranges(n)`: the first `n` entries of `out` are the satisfiable ranges, in request order; `Unsatisfiable`: answer 416; `Ignore`: serve the whole representation (200); `NotBytes`: another unit (serve 200). When `out` is too small for the ranges, the outcome is `Ignore`, never a silent truncation | as RNG-1 |
-| RNG-3 | `range::resolve` | P1, 2, 0.4 | suffix ranges become absolute; `last` beyond the end is clamped; a range with `first >= length` is dropped; a zero suffix is unsatisfiable; more than `max_ranges` ranges, more than two overlapping ranges, or descending order across more than two ranges give `Ignore` (RFC 9110 section 14.2 allows ignoring abusive sets, [T12](../dev/PLAN.md#9-threats)); with `coalesce`, overlapping and adjacent ranges are merged in ascending order | none (an outcome) |
+| RNG-3 | `range::resolve` | P1, 2, 0.4 | suffix ranges become absolute; `last` beyond the end is clamped; a range with `first >= length` is dropped; a zero suffix is unsatisfiable; a non-zero suffix on an empty representation gives `Ignore` (it is satisfiable, and a `ByteRange` cannot be empty); more than `max_ranges` ranges, more than two overlapping ranges, or descending order across more than two ranges give `Ignore` (RFC 9110 section 14.2 allows ignoring abusive sets, [T12](../dev/PLAN.md#9-threats)); with `coalesce`, overlapping and adjacent ranges are merged in ascending order | none (an outcome) |
 | RNG-4 | `parse_content_range`, `ContentRange` | P1, 2, 0.4 | RFC 9110 section 14.4: `bytes first-last/complete`, `bytes first-last/*`, `bytes */complete` | `InvalidRange` (`last < first`, `last >= complete`, a missing space, another unit); `NumberOverflow` |
 | RNG-5 | `write_content_range` | P1, 2, 0.4 | `bytes 0-499/1234` or `bytes 0-499/*` | `OutOfRange` when `end < start` or `end >= complete`; `Full` |
 | RNG-6 | `write_unsatisfied` | P1, 2, 0.4 | `bytes */1234` | `Full` |
-| RNG-7 | `parse_if_range`, `IfRange::matches` | P1, 2, 0.4 | a value starting with `W/` or `"` is an entity tag, otherwise an HTTP-date (IMF-fixdate only: a sender generating `If-Range` must use it). RFC 9110 section 13.1.5: a tag matches by strong comparison (a weak tag parses, never matches); a date matches when it equals `last_modified` exactly. Not matching means: send the whole representation | ETG-1 or DAT-4 errors |
+| RNG-7 | `parse_if_range`, `parse_if_range_at`, `IfRange::matches` | P1, 2, 0.4 | a value starting with `W/` or `"` is an entity tag, otherwise an HTTP-date in any of the three forms (RFC 9110 section 5.6.7; `parse_if_range` has no clock, so an RFC 850 date needs `parse_if_range_at`; D-035). RFC 9110 section 13.1.5: a tag matches by strong comparison (a weak tag parses, never matches); a date matches when it equals `last_modified` exactly. Not matching means: send the whole representation | ETG-1 or DAT-4 errors |
 | RNG-8 | `ByteRange::len` | P1, 3, 0.4 | `end - start + 1`, saturating at `u64::MAX` (the full `u64` range) | none |
 
 ```rust
@@ -1588,8 +1589,8 @@ RFC 8288 section 3: `link-value = "<" URI-Reference ">" *( OWS ";" OWS link-para
 |---|---|---|---|---|
 | LNK-1 | `parse_link`, `Links`, `LinkValue` | P2, 2, 0.5 | commas inside `<...>` do not split; target bytes are RFC 3986 characters (validated with `%XX`), not resolved (url-lib resolves); a parameter value is optional (`; crossorigin`); BWS around `=` accepted | `InvalidByte` (a target byte outside RFC 3986, a space in the target); `UnterminatedQuote`; `InvalidPercentEncoding`; LST and PRM errors; `TrailingData` |
 | LNK-2 | `rel`, `rels`, `has_rel` | P2, 2, 0.5 | the first `rel` only; later `rel` parameters are ignored (RFC 8288 section 3.3); `rels` splits it on spaces; `has_rel` compares case-insensitively | none |
-| LNK-3 | `title` | P2, 2, 0.5 | `title*` (RFC 8187) when present, else `title` | none |
-| LNK-4 | `write_link` | P2, 2, 0.5 | `<target>; name=value`, values through `write_word`; an empty value writes the name alone (D-061) | `Forbidden { at }` for a target byte that is not an RFC 3986 character (`<`, `>`, SP, a control, non-ASCII) or a broken `%XX`, and for a control in a value; `NotToken`; `Full` |
+| LNK-3 | `title` | P2, 2, 0.5 | `title*` (RFC 8187) when present, token or quoted, else `title`; only the first `title*` counts (RFC 8288 section 3.4.1) | none |
+| LNK-4 | `write_link` | P2, 2, 0.5 | `<target>; name=value`, values through `write_word`; an empty value writes the name alone (D-061) | `Forbidden { at }` for a target byte that is not an RFC 3986 character (`<`, `>`, SP, a control, non-ASCII) or a broken `%XX`, for a control in a value, and for a `title*` its parser would refuse; `NotToken`; `Full` |
 
 ```rust
 use parse_net::{parse_link, Limits};
@@ -1646,7 +1647,7 @@ pub mod forwarded {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub enum NodePort<'a> { Number(u16), Obfuscated(&'a [u8]) }
     #[non_exhaustive] #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-    pub enum Proto { Http, Https }
+    pub enum Proto { Http, Https, Ws, Wss, Other }
 
     pub fn parse_x_forwarded_for<'a>(lines: &'a [&'a [u8]], limits: &Limits) -> Result<XffChain<'a>, ParseError>; // iter: (IpAddr, Option<u16>)
     pub fn parse_x_forwarded_proto(value: &[u8]) -> Result<Proto, ParseError>;
@@ -1658,12 +1659,12 @@ pub mod forwarded {
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
 | FWD-1 | `client_address`, `ClientAddress`, `Trust` | P1, 1, 0.4 | the algorithm in [PLAN 7.6](../dev/PLAN.md#76-trusted-proxy-resolution): an untrusted peer gives `Peer(peer)` and the header is never read; otherwise the whole chain is parsed and walked from the right; the first untrusted address is the client; `unknown` or an obfuscated node gives `Unknown` (nothing left of it can be trusted); all trusted gives the leftmost. Never merges the two header kinds ([T13](../dev/PLAN.md#9-threats)) | `Malformed` anywhere in the chain (fail closed: use the peer); `TooManyHops` beyond `max_hops` |
-| FWD-2 | `forwarded::parse`, `Element`, `Node` | P1, 2, 0.4 | RFC 7239 section 4: `1#forwarded-element`, `forwarded-element = [ forwarded-pair ] *( ";" [ forwarded-pair ] )`; parameter names case-insensitive; values token or quoted; IPv6 must be quoted and bracketed (`for="[2001:db8::1]:4711"`), unquoted IPv6 refused; obfuscated identifiers are `_` then `ALPHA / DIGIT / "." / "_" / "-"`; ports are digits or obfuscated | `DuplicateParameter` (a name twice in one element); `InvalidAddress`; `InvalidPort`; `InvalidHost`; LST and PRM errors |
+| FWD-2 | `forwarded::parse`, `Element`, `Node` | P1, 2, 0.4 | RFC 7239 section 4: `1#forwarded-element`, `forwarded-element = [ forwarded-pair ] *( ";" [ forwarded-pair ] )`; parameter names case-insensitive; values token or quoted; IPv6 must be quoted and bracketed (`for="[2001:db8::1]:4711"`), unquoted IPv6 refused; obfuscated identifiers are `_` then `ALPHA / DIGIT / "." / "_" / "-"`; ports are digits or obfuscated | `DuplicateParameter` (any name twice in one element); `TooManyMembers` past 64 pairs in one element; `InvalidAddress`; `InvalidPort`; `InvalidHost`; LST and PRM errors |
 | FWD-3 | `parse_x_forwarded_for`, `XffChain` | P1, 2, 0.4 | the de facto grammar, documented as such ([D-016](../dev/PLAN.md#16-decision-log)): comma-separated IPv4 or IPv6 literals with OWS; brackets optional around IPv6; an optional `:port` after IPv4 or bracketed IPv6; nothing else | `Malformed` (an empty element, a name, garbage) |
-| FWD-4 | `parse_x_forwarded_proto` | P1, 2, 0.4 | `http` or `https`, case-insensitive; a comma list only when every value is equal | `Malformed` |
+| FWD-4 | `parse_x_forwarded_proto` | P1, 2, 0.4 | a URI scheme, case-insensitive (`Proto` names `http`, `https`, `ws`, `wss`, and `Other`; D-077); a comma list only when every value is equal | `Malformed` |
 | FWD-5 | `parse_x_forwarded_host` | P1, 2, 0.4 | one `HostPort` (HST-1) | `Malformed` for a list; HST errors |
-| FWD-6 | `Element::host`, `Element::proto` | P1, 2, 0.4 | values validated as `Host` (HST-1) and as `http` / `https` | as FWD-2 |
-| FWD-7 | `write_element` | P3, 2, 0.5 | for proxy-net: `for`, `proto`, `by`, `host` in that order, quoting IPv6 and any node with a port; `for=192.0.2.60;proto=https;by=203.0.113.43` | `NotToken` (an obfuscated name or port outside its grammar), `Full` |
+| FWD-6 | `Element::host`, `Element::proto` | P1, 2, 0.4 | values validated as `Host` (HST-1) and as a URI scheme (D-077) | as FWD-2 |
+| FWD-7 | `write_element` | P3, 2, 0.5 | for proxy-net: `for`, `proto`, `by`, `host` in that order, quoting IPv6, any node with a port, and any host that is not a token, so no reg-name can end the pair or forge another; `for=192.0.2.60;proto=https;by=203.0.113.43` | `NotToken` (an obfuscated name or port outside its grammar, or `Proto::Other`), `Forbidden { at }` (a host byte no parsed host holds), `Full` |
 | FWD-8 | `client_address_detailed`, `Resolved` | P2, 2, 0.4 | as FWD-1, and `other_present` reports whether the other header kind's lines (`other_lines`) are non-empty, so the caller can log a likely spoofing attempt ([T14](../dev/PLAN.md#9-threats)) | as FWD-1 |
 
 ```rust
@@ -1748,9 +1749,9 @@ RFC 9110 section 11: `credentials = auth-scheme [ 1*SP ( token68 / #auth-param )
 | ATH-1 | `bearer` | P1, 1, 0.4 | scheme `Bearer` (case-insensitive), `1*SP`, then a `b64token` (RFC 6750 section 2.1: the token68 characters plus trailing `=`); `Ok(None)` for another scheme | `InvalidByte`, `TrailingData` (a second word), `Empty` (scheme alone) |
 | ATH-2 | `basic` | P1, 1, 0.4 | scheme `Basic`; the token68 text (base64, alphabet checked, not decoded) | `InvalidBase64`, as ATH-1 |
 | ATH-3 | `basic_decode_into` | P2, 1, 0.6 (D-062) | `encode-lib`: decodes into `out` and splits at the first `:` (RFC 7617 section 2) into user and password; a decoded control byte is refused | `ControlInDecoded`, `InvalidBase64`, `BufferTooSmall` |
-| ATH-4 | `parse_credentials`, `Credentials`, `AuthPayload` | P1, 2, 0.4 | one credential per field; parameter names unique ([T21](../dev/PLAN.md#9-threats)); BWS around `=` accepted; `Debug` prints the scheme only: credentials are secrets | `NotToken`, `DuplicateParameter`, `TrailingData`, PRM errors |
+| ATH-4 | `parse_credentials`, `Credentials`, `AuthPayload` | P1, 2, 0.4 | one credential per field; parameter names unique ([T21](../dev/PLAN.md#9-threats)); BWS around `=` accepted; empty list elements read, leading ones included; `Debug` prints the scheme only, and not even that with no payload (a bare value may be a key sent without a scheme): credentials are secrets | `NotToken`, `DuplicateParameter`, `TrailingData`, PRM errors |
 | ATH-5 | `parse_challenges`, `Challenge` | P1, 2, 0.5 | the one-pass algorithm in [PLAN 7.10](../dev/PLAN.md#710-www-authenticate), which resolves where one challenge ends and the next begins; a token68 ends at `,` or the end, trailing `=` included | `DuplicateParameter` (a name twice in one challenge), `NotToken`, `ExpectedSeparator`, LST errors |
-| ATH-6 | `write_challenge` | P1, 2, 0.4 | `Bearer realm="api", error="invalid_token"`; `realm` always quoted (RFC 9110 section 11.5); other values through `write_word`; a name given twice is refused (D-052) | `NotToken`, `DuplicateName`, `Forbidden`, `Full` |
+| ATH-6 | `write_challenge` | P1, 2, 0.4 | `Bearer realm="api", error="invalid_token"`; `realm` always quoted (RFC 9110 section 11.5); other values through `write_word`; a name given twice is refused (D-052), and more than 64 parameters, which the parser would refuse (D-072) | `NotToken`, `DuplicateName`, `OutOfRange`, `Forbidden`, `Full` |
 | ATH-7 | `write_challenge_token68` | P2, 2, 0.5 | `Negotiate <token68>` | `Forbidden` for a byte outside token68, `Full` |
 
 ```rust
@@ -1809,7 +1810,7 @@ RFC 9110 section 7.2 citing RFC 3986 section 3.2.2: `Host = uri-host [ ":" port 
 | HST-1b | `host::parse_uri_host_port` | P0, 3, 0.3 | the same grammar with nothing stripped, for an authority-form or absolute-form request target, a URL authority, or any context that is not a field value: whitespace is refused like any other byte outside the grammar. Stripping there would accept `CONNECT  example.com:443` (two spaces), which the request-line grammar refuses ([D-044](../dev/PLAN.md#16-decision-log)) | as HST-1 |
 | HST-2 | `Host::eq_ignore_ascii_case` | P0, 2, 0.3 | names compare ASCII case-insensitively; IP literals compare by value (`[::1]` equals `[0:0::1]`) | none |
 | HST-3 | `Host::write_to`, `HostPort::write_to` | P1, 2, 0.3 | names as given, IPv6 bracketed in its RFC 5952 form, a port after `:` | `Full` |
-| HST-4 | numeric names | P0, 1, 0.3 | a name made only of digits and dots, or whose last label is a number in the WHATWG sense (decimal digits, or `0x` and hex digits), must be a canonical IPv4 address; anything else (`1.2.3`, `256.1.1.1`, `01.2.3.4`, `127.1`, `0x7f.0.0.1`, `example.123`, `1.2.3.4.`) is refused, not read as a name: WHATWG reads such hosts as IPv4 and RFC 3986 as names, and refusing removes the differential ([T15](../dev/PLAN.md#9-threats), [D-040](../dev/PLAN.md#16-decision-log)) | `InvalidAddress` |
+| HST-4 | numeric names | P0, 1, 0.3 | a name made only of digits and dots, or whose last label is a number in the WHATWG sense (decimal digits, or `0x` and hex digits), must be a canonical IPv4 address; anything else (`1.2.3`, `256.1.1.1`, `01.2.3.4`, `127.1`, `0x7f.0.0.1`, `example.123`, `1.2.3.4.`, and the same after percent-decoding, such as `127.0.0.%31` or `127%2e1`) is refused, not read as a name: WHATWG reads such hosts as IPv4 and RFC 3986 as names, and refusing removes the differential ([T15](../dev/PLAN.md#9-threats), [D-040](../dev/PLAN.md#16-decision-log)) | `InvalidAddress` |
 
 `[::ffff:127.0.0.1]` is returned as `V6` (callers see exactly what was sent).
 
@@ -1915,7 +1916,7 @@ The primitive parse-net's own grammars need (RFC 8187 values, RFC 9651 Display S
 | PCT-2 | `decode_into`, `decoded_len` | P0, 3, 0.3 | `%XX` decoded (either case), every other byte copied; `decoded_len` validates and counts | `InvalidPercentEncoding`; `BufferTooSmall` (nothing written) |
 | PCT-3 | `decode_utf8_into` | P0, 3, 0.3 | as `decode_into`, then the decoded bytes must be UTF-8 | `InvalidUtf8`, as PCT-2 |
 | PCT-4 | `decode_lower_only_into` | P1, 3, 0.3 (planned 0.4) | uppercase hex is refused (RFC 9651 section 4.2.10) | `InvalidPercentEncoding`, `BufferTooSmall` |
-| PCT-5 | `encode`, `encoded_len`, `EncodeSet`, `HexCase` | P0, 3, 0.3 | every byte in the set, and every byte above 0x7F whatever the set says, is written as `%XX`; others as they are | `Full` |
+| PCT-5 | `encode`, `encoded_len`, `EncodeSet`, `HexCase` | P0, 3, 0.3 | every byte in the set, and every byte above 0x7F whatever the set says, , and every C0 control and DEL whatever the set says, is written as `%XX`; others as they are | `Full` |
 | PCT-6 | named sets | P1, 3, 0.3 | only the sets parse-net's grammars use | none |
 
 ```rust
@@ -2162,18 +2163,18 @@ The grammar smtp-net needs to write mail and gate-net needs to validate login ad
 
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
-| MAIL-1 | `check_header_value` | P1, 1, 0.5 | no CR, LF, or NUL; no physical line over 998 bytes (RFC 5322 section 2.1.1) | `BareCr`, `LineFeed`, `Nul`, `LineTooLong` |
+| MAIL-1 | `check_header_value` | P1, 1, 0.5 | no control byte but HTAB; no physical line over 998 bytes (RFC 5322 section 2.1.1) | `BareCr`, `LineFeed`, `Nul`, `Control`, `LineTooLong` |
 | MAIL-2 | `unfold` | P2, 2, 0.5 | validates, then iterates the pieces between `CRLF WSP` folds (the CRLF removed, the WSP kept, RFC 5322 section 2.2.3) | `BareCr`, `LineFeed` (a CRLF not followed by WSP, or a lone CR or LF) |
-| MAIL-3 | `fold` | P1, 1, 0.5 | writes `Name: value` and CRLF-SP folds at whitespace so lines stay within 78 columns where possible; never a line of only whitespace; never over 998 | `NotToken` for a name outside `ftext`; `Forbidden { at }` for CR, LF, NUL in `value`; `OutOfRange` for a word longer than 998 - the folding indent; `Full` |
-| MAIL-4 | `encode_words` (Q) | P1, 1, 0.5 | RFC 2047: printable ASCII text without `=?` is written as it is; otherwise `=?UTF-8?Q?...?=` words of at most 75 bytes, split only on UTF-8 character boundaries, separated by CRLF SP; the first word fits in `room_first_line` | `Forbidden { at }` for a control character; `Full` |
+| MAIL-3 | `fold` | P1, 1, 0.5 | writes `Name: value` and folds at whitespace, after the colon too, so lines stay within 78 columns where possible; never a line of only whitespace; never over 998 | `NotToken` for a name outside `ftext`; `Forbidden { at }` for a control byte other than HTAB in `value`; `OutOfRange` for a word that fits on no line, or whitespace ending the value that does not fit after the last word; `Full` |
+| MAIL-4 | `encode_words` (Q) | P1, 1, 0.5 | RFC 2047: printable ASCII text without `=?` that fits a 998-byte line is written as it is; otherwise `=?UTF-8?Q?...?=` words of at most 75 bytes, split only on UTF-8 character boundaries, separated by CRLF SP; the first word fits in `room_first_line` | `Forbidden { at }` for a control character; `Full` |
 | MAIL-5 | `encode_words_b` | P2, 1, 0.6 (D-062) | `encode-lib`: the B encoding, used when Q would be longer | as MAIL-4 |
-| MAIL-6 | `decode_words` | P2, 2, 0.5 | decodes encoded words in unstructured text into `out`; whitespace between adjacent encoded words is dropped (RFC 2047 section 6.2); text outside encoded words copied; `_` is a space in Q; words inside quoted strings are not decoded (section 5); B needs `encode-lib` | `UnsupportedCharset`, `InvalidEncodedWord`, `ControlInDecoded` (any decoded control: C0 including HTAB, DEL, C1, as in ext-values; D-071), `InvalidUtf8`, `TooManyMembers` beyond `max_encoded_words`, `BufferTooSmall` |
-| MAIL-7 | `parse_mime_params`, `MimeParams` | P1, 3, 0.5 | RFC 2045 section 5.1 with the MIME `token` class (allows `{` and `}`); case-insensitive names; CFWS between parameters | `NotToken`, `MissingValue`, `DuplicateParameter`, `UnterminatedQuote`, `TooManyMembers` |
-| MAIL-8 | RFC 2231 (`get`, `decode_into`, `Continuation`) | P1, 2, 0.5 | the reassembly in [PLAN 7.12](../dev/PLAN.md#712-rfc-2231-reassembly-without-allocation): sections `name*0`, `name*1*`, ... numbered from 0 without gaps or duplicates; a charset only on section 0; decoded in order into `out` | `SectionGap`, `TooManySections`, EXT-1 and EXT-2 errors, `BufferTooSmall` |
-| MAIL-9 | `write_mime_param` | P1, 1, 0.5 | `; name=token`, `; name="quoted"`, or, for non-ASCII or long values, `; name*=UTF-8''...` split into `name*0*`, `name*1*` sections so no line passes 78 columns | `NotToken` (name), `Forbidden { at }` (control), `Full` |
+| MAIL-6 | `decode_words` | P2, 2, 0.5 | decodes encoded words in unstructured text into `out`; whitespace between adjacent encoded words is dropped (RFC 2047 section 6.2); text outside encoded words copied, with `CRLF WSP` folds as whitespace; `_` is a space in Q; a word that does not stand between whitespace is ordinary text; words inside quoted strings are not decoded (section 5), and a lone `"` is not a quoted string; B needs `encode-lib` | `UnsupportedCharset`, `InvalidEncodedWord`, `ControlInDecoded` (any decoded control: C0 including HTAB, DEL, C1, as in ext-values; D-071), a control kind for a raw control other than HTAB and the CRLF of a fold (D-078), `InvalidUtf8`, `TooManyMembers` beyond `max_encoded_words`, `BufferTooSmall` |
+| MAIL-7 | `parse_mime_params`, `MimeParams` | P1, 3, 0.5 | RFC 2045 section 5.1 with the MIME `token` class (allows `{` and `}`); case-insensitive names; CFWS between parameters, comments may fold; a quoted value must be unfolded first (`unfold`); at most 64 parameters (D-072) | `NotToken`, `MissingValue`, `DuplicateParameter`, `UnterminatedQuote`, `TooManyMembers` |
+| MAIL-8 | RFC 2231 (`get`, `decode_into`, `Continuation`) | P1, 2, 0.5 | the reassembly in [PLAN 7.12](../dev/PLAN.md#712-rfc-2231-reassembly-without-allocation): sections `name*0`, `name*1*`, ... numbered from 0 without gaps or duplicates; a charset only on section 0; decoded in order into `out`; `attribute-char` keeps `{` and `}`; a section given twice is `SectionGap`; decoded controls, C1 split across sections included, and the US-ASCII rule hold over the whole value | `SectionGap`, `TooManySections`, EXT-1 and EXT-2 errors, `BufferTooSmall` |
+| MAIL-9 | `write_mime_param` | P1, 1, 0.5 | `; name=token`, `; name="quoted"`, or, for non-ASCII or long values, `; name*=UTF-8''...` split into `name*0*`, `name*1*` sections so no line passes 78 columns | `NotToken` (name), `Forbidden { at }` (control), `OutOfRange` (a name that leaves no room on a line, or more than 32 sections), `Full` |
 | MAIL-10 | `parse_addr_spec`, `AddrSpec`, `LocalPart`, `Domain` | P1, 1, 0.5 | RFC 5322 section 3.4.1 without obsolete forms, comments, or folding: `dot-atom` or quoted local part, `@`, `dot-atom` domain or `[domain-literal]`; local part at most 64 octets and the whole address at most 254 (RFC 5321 section 4.5.3.1); non-ASCII accepted only as valid UTF-8 (RFC 6532), never as raw obs-text; `is_ascii` false means SMTPUTF8 is needed | `InvalidAddrSpec` (a leading, trailing, or doubled dot, a missing `@`, a comment), `TooLong`, `InvalidUtf8` |
-| MAIL-11 | `parse_mailbox`, `Mailbox` | P2, 2, 0.5 | `[display-name] "<" addr-spec ">"` or a bare `addr-spec`; the display name is returned raw (phrases or encoded words; decode with `decode_words`) | as MAIL-10, `UnterminatedQuote`, `UnbalancedComment` |
-| MAIL-12 | `parse_msg_id`, `write_msg_id` | P2, 2, 0.5 | `"<" id-left "@" id-right ">"`, `dot-atom-text` on both sides (or a `no-fold-literal` on the right) | `InvalidAddrSpec`; writer: `Forbidden`, `Full` |
+| MAIL-11 | `parse_mailbox`, `Mailbox` | P2, 2, 0.5 | `[display-name] "<" addr-spec ">" [CFWS]` or a bare `addr-spec`; the display name is returned raw (phrases or encoded words; decode with `decode_words`), and is `None` when only comments stand there | as MAIL-10, `UnterminatedQuote`, `UnbalancedComment` |
+| MAIL-12 | `parse_msg_id`, `write_msg_id` | P2, 2, 0.5 | `"<" id-left "@" id-right ">"`, `dot-atom-text` on both sides (or a `no-fold-literal` on the right) | `InvalidAddrSpec`; writer: `Forbidden`, `OutOfRange` (over 998 bytes), `Full` |
 | MAIL-13 | `MailDate` re-export | P1, 1, 0.5 | DAT-11 to DAT-13 | |
 | MAIL-14 | `is_field_name` | P1, 3, 0.5 | `ftext = %d33-57 / %d59-126` (RFC 5322 section 3.6.8), non-empty | none |
 
