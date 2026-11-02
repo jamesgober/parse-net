@@ -204,6 +204,12 @@ fn w10_write_link_title_star_parses_back() {
     assert!(out.written().is_empty());
     link::write_link(b"/a", &[("title*", "UTF-8''hello")], &mut out).unwrap();
     assert!(pn::parse_link(out.written(), &Limits::DEFAULT).is_ok());
+    // An empty value writes the name alone, which parses (found by fuzzing
+    // the first version of this check).
+    let mut buf = [0u8; 64];
+    let mut out = SliceSink::new(&mut buf);
+    link::write_link(b"/a", &[("title*", "")], &mut out).unwrap();
+    assert!(pn::parse_link(out.written(), &Limits::DEFAULT).is_ok());
 }
 
 #[test]

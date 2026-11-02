@@ -740,7 +740,7 @@ pub fn write_link(
     }
     // A `title*` that its own parser would refuse is never written.
     for (name, value) in params {
-        if name.eq_ignore_ascii_case("title*") {
+        if name.eq_ignore_ascii_case("title*") && !value.is_empty() {
             let ext = ExtValue::parse(value.as_bytes());
             if ext.and_then(|e| e.check_text()).is_err() {
                 return Err(WriteError::forbidden(0));

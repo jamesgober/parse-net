@@ -29,7 +29,8 @@ fuzz_target!(|data: &[u8]| {
         match mail::parse_msg_id(data) {
             Ok(id) => {
                 if let (Ok(l), Ok(r)) = (core::str::from_utf8(id.left), core::str::from_utf8(id.right)) {
-                    if l.is_ascii() && r.is_ascii() {
+                    // Past 998 bytes no line can hold it, so it is not written.
+                    if l.is_ascii() && r.is_ascii() && l.len() + r.len() + 3 <= 998 {
                         let mut out = SliceSink::new(&mut buf);
                         mail::write_msg_id(l, r, &mut out).expect("a parsed ASCII id writes");
                         let back = mail::parse_msg_id(out.written()).expect("written id parses");
