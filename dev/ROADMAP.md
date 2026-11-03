@@ -112,21 +112,15 @@ Exit: four consumers end to end; no breaking change for one full release cycle; 
 
 - [ ] smtp-net and web-net built on it; ws-net on it (from 0.8); cookie-net and form-net on `^0.7` or later; API frozen except for fixes found by consumers; `0.9.x` release candidates.
 
-### Pre-1.0 polish pass (0.9.x, before the first release candidate)
+### Pre-1.0 polish pass (DONE at 0.9.0, 2026-11-03)
 
-James's standing rule: go back and fix any issues and tune performance before getting close to release. Nothing accepted, deferred, or missed is silently final; whatever is still open after this pass goes in the 1.0 readiness note for James, with its reason.
+James's standing rule: go back and fix any issues and tune performance before getting close to release. Nothing accepted, deferred, or missed is silently final; whatever is still open goes in [`READINESS-1.0.md`](./READINESS-1.0.md), with its reason.
 
-- [ ] Revisit every accepted gap, deferred item, known issue, and missed target:
-  - the `encode-lib` helpers (D-002, D-062): `basic_decode_into`, `encode_words_b`, `ByteSeq::decode_into`, `sfv::Writer::bytes`, `B` encoded words, if encode-lib is published by then;
-  - `client_address` at 101 ns against its 60 ns estimate (`docs/PERFORMANCE.md`);
-  - the narrowest benchmark margins, `byte_ranges` (21%) and `Content-Disposition` (24%);
-  - form-net's `FormKind::detect` at 114 ns against 100 ns: re-measure on parse-net 0.7 or later, and if still over, show form-net how to use the `Refuse` error offset instead of its own repeated-name walk;
-  - the fixed 64-parameter table for lists that refuse repeats (D-072): still the right size, or a size consumers need to set;
-  - the bidi set reported by `has_bidi_control` (D-070) and the timing bound of the complexity tests (D-073);
-  - the ambiguous differential verdicts V-5 and V-6 (`tests/differential/verdicts.md`) and the tc2231 deviation classes (D-054);
-  - every P0, P1, and P2 item of PLAN section 8 shipped, or its reason recorded.
-- [ ] A fresh performance pass: the whole benchmark suite on a quiet machine, a callgrind profile of every row, and tuning where it pays; no row below 20% and no regression against 0.7.
-- [ ] The security and edge-case review again: the threat table T1 to T25 against the code as it is, the edge-case lists in `docs/API.md`, every fuzz target 24 hours on the release candidate code, and the differential targets' latest weekly runs.
+- [x] Every accepted gap, deferred item, known issue, and missed target revisited; the `encode-lib` helpers stay blocked on encode-lib, and they and the other open items are in the readiness note.
+- [x] A fresh performance pass: every row profiled, `byte_ranges` (21% to 76%), `Content-Disposition` (24% to 42%), and `client_address` tuned, and the cost of D-072 taken back (D-074). Every row is at least 30% ahead.
+- [x] The security and edge-case review again, by three independent reviews: 46 defects found and fixed, each with a regression test; every fuzz target 24 hours on the release code.
+
+Repeat before the first release candidate if the code changes: a fresh benchmark on a quiet machine, the threat table against the code, and the 24-hour run.
 
 ## v1.0.0 - Stable
 

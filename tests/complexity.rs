@@ -1,16 +1,19 @@
 //! Complexity tests (dev/PLAN.md section 11.6, threat T9): every walker, fed
 //! adversarial inputs of 1 KiB, 64 KiB, and 1 MiB, returns the expected
 //! limit error under the default limits and, with every limit raised to its
-//! maximum, takes time that grows no faster than the input (within 1.2 of
+//! maximum, takes time that grows no faster than the input (within 2.0 of
 //! the size ratio).
 //!
 //! Timing is the best of several runs; a case that misses the bound is
-//! measured again (up to three times) before it fails, so a busy machine
+//! measured again (up to five times) before it fails, so a busy machine
 //! does not fail the test while a quadratic walker (16 times the ratio from
-//! 64 KiB to 1 MiB) always does. The bound is checked in an optimised build
-//! only (CI runs `cargo test --release --test complexity`): an unoptimised
-//! build on a shared runner measured up to 2.23 on a single-loop walker, so
-//! there the outcomes are checked and the times are printed (D-073).
+//! 64 KiB to 1 MiB) always does. A megabyte leaves the fast caches, so a
+//! linear walker that writes output measures up to about 1.5 on a busy
+//! machine; 2.0 allows that and still fails a quadratic walker eightfold. The
+//! bound is checked in an optimised build only (CI runs `cargo test --release
+//! --test complexity`): an unoptimised build on a shared runner measured 2.23
+//! on a single loop, so there the outcomes are checked and the times are
+//! printed (D-073).
 
 use std::{
     hint::black_box,
@@ -25,7 +28,7 @@ use parse_net::{
 const SIZES: [usize; 3] = [1 << 10, 1 << 16, 1 << 20];
 
 /// The most time may grow over the size ratio.
-const BOUND: f64 = 1.2;
+const BOUND: f64 = 2.0;
 
 /// Whether this build's timings are checked: an optimised build only.
 const TIMED: bool = !cfg!(debug_assertions);
@@ -50,6 +53,22 @@ type Outcome = Result<(), ErrorKind>;
 
 fn outcome<T>(r: Result<T, pn::ParseError>) -> Outcome {
     r.map(|_| ()).map_err(|e| e.kind())
+}
+
+std::thread_local! {
+    /// One output buffer for every run: a fresh one per call would time the
+    /// page faults of a megabyte, not the walker.
+    static OUT: core::cell::RefCell<Vec<u8>> = core::cell::RefCell::new(vec![0; 1 << 22]);
+}
+
+fn decode(v: &[u8], limits: &Limits) -> Outcome {
+    OUT.with_borrow_mut(|out| outcome(mail::decode_words(v, limits, out)))
+}
+
+fn fold_text(v: &[u8]) -> Outcome {
+    OUT.with_borrow_mut(|out| {
+        mail::fold("Subject", v, &mut pn::SliceSink::new(out)).map_err(|_| ErrorKind::OutOfRange)
+    })
 }
 
 /// A distinct token for every `i`: `x` and base-26 letters.
@@ -114,7 +133,7 @@ fn best_time(f: fn(&[u8]) -> Outcome, v: &[u8]) -> Duration {
     let mut best = Duration::MAX;
     let start = Instant::now();
     let mut samples = 0;
-    while samples < 3 || (samples < 32 && start.elapsed() < Duration::from_millis(60)) {
+    while samples < 5 || (samples < 64 && start.elapsed() < Duration::from_millis(150)) {
         let t = Instant::now();
         for _ in 0..reps {
             let _ = black_box(f(black_box(v)));
@@ -460,7 +479,68 @@ fn cases() -> Vec<Case> {
                 ))
             },
             expect: Err(ErrorKind::TooManyMembers),
-            full: |v| outcome(mail::decode_words(v, &FULL, &mut vec![0; v.len()])),
+            full: |v| decode(v, &FULL),
+        },
+        // Each `=?` starts a candidate that never closes: a scan to the end
+        // of the value per candidate took a minute on 1 MiB.
+        Case {
+            name: "encoded words, candidates that never close",
+            input: |n| build("", |_| "=?a?Q?b ".into(), "", n),
+            default: |v| {
+                outcome(mail::decode_words(
+                    v,
+                    &Limits::DEFAULT,
+                    &mut vec![0; v.len()],
+                ))
+            },
+            expect: Ok(()),
+            full: |v| decode(v, &FULL),
+        },
+        Case {
+            name: "encoded words, candidates and one final close",
+            input: |n| build("", |_| "=?UTF-8?Q?a ".into(), "?=", n),
+            default: |v| {
+                outcome(mail::decode_words(
+                    v,
+                    &Limits::DEFAULT,
+                    &mut vec![0; v.len()],
+                ))
+            },
+            expect: Ok(()),
+            full: |v| decode(v, &FULL),
+        },
+        Case {
+            name: "encoded words, quotes that never close",
+            input: |n| build("", |_| "\" a ".into(), "", n),
+            default: |v| {
+                outcome(mail::decode_words(
+                    v,
+                    &Limits::DEFAULT,
+                    &mut vec![0; v.len()],
+                ))
+            },
+            expect: Ok(()),
+            full: |v| decode(v, &FULL),
+        },
+        Case {
+            name: "encoded words, opening quotes with one final close",
+            input: |n| build("", |_| " \"a".into(), " \"", n),
+            default: |v| {
+                outcome(mail::decode_words(
+                    v,
+                    &Limits::DEFAULT,
+                    &mut vec![0; v.len()],
+                ))
+            },
+            expect: Ok(()),
+            full: |v| decode(v, &FULL),
+        },
+        Case {
+            name: "fold, many words",
+            input: |n| build("", |_| "word ".into(), "w", n),
+            default: fold_text,
+            expect: Ok(()),
+            full: fold_text,
         },
         Case {
             name: "MIME parameters, many",
@@ -539,7 +619,7 @@ fn test_complexity_linear() {
             ));
         }
         let mut last = None;
-        let tries = if TIMED { 3 } else { 1 };
+        let tries = if TIMED { 5 } else { 1 };
         let passed = (0..tries).any(|_| {
             let (a, b, t) = ratios(&c, &inputs);
             last = Some((a, b, t));

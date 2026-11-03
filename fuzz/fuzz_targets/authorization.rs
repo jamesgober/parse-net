@@ -30,8 +30,13 @@ fuzz_target!(|data: &[u8]| {
             // `Debug` prints the scheme and nothing else: an exact match,
             // since a token can occur in the fixed text (`Credenti` in
             // `Credentials`, found by the 0.7 run).
+            // With no payload not even that: the value may be a bare key.
             let scheme = core::str::from_utf8(c.scheme()).unwrap_or("?");
-            let want = format!("Credentials {{ scheme: {scheme:?}, .. }}");
+            let want = if c.payload() == AuthPayload::None {
+                "Credentials { .. }".to_string()
+            } else {
+                format!("Credentials {{ scheme: {scheme:?}, .. }}")
+            };
             assert_eq!(format!("{c:?}"), want, "Debug printed more than the scheme");
         }
         Err(e) => common::check_error(&e),

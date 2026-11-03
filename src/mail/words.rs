@@ -92,7 +92,13 @@ fn put_words(
     out: &mut impl Sink,
 ) -> core::result::Result<(), WriteError> {
     let bytes = text.as_bytes();
-    if bytes.iter().all(|b| (0x20..=0x7e).contains(b)) && !text.contains("=?") {
+    // Plain text goes out as it is while its line stays legal; past that it
+    // is encoded, which breaks it into words.
+    let used = super::SOFT_LIMIT.saturating_sub(room_first_line);
+    if bytes.iter().all(|b| (0x20..=0x7e).contains(b))
+        && !text.contains("=?")
+        && used + bytes.len() <= super::HARD_LIMIT
+    {
         out.put(bytes)?;
         return Ok(());
     }
@@ -137,7 +143,8 @@ fn put_words(
 }
 
 /// Writes `text` for an unstructured header field: as it is when it is
-/// printable ASCII without `=?`, otherwise as RFC 2047 `=?UTF-8?Q?...?=`
+/// printable ASCII without `=?` that fits in a 998-byte line, otherwise as
+/// RFC 2047 `=?UTF-8?Q?...?=`
 /// words of at most 75 bytes, split only between characters, separated by
 /// CRLF SP. The first word fits in `room_first_line` (the columns left after
 /// `Name: `); when not even one character fits there, the words start on a
@@ -190,32 +197,39 @@ struct Encoded<'a> {
     end: usize,
 }
 
-/// An encoded word at `v[i..]`: `=?charset?enc?text?=`. `Ok(None)` when the
-/// bytes do not have that shape (they are then ordinary text).
+/// An encoded word at `v[i..]`: `=?charset?enc?text?=`, standing alone.
+/// `Ok(None)` when the bytes do not have that shape, or do not stand between
+/// whitespace: they are then ordinary text, whatever charset they name. Each
+/// scan stops at the first byte that cannot continue, so failed candidates
+/// never add up to a second pass over the value.
 fn shape(v: &[u8], i: usize) -> Result<Option<Encoded<'_>>> {
     let rest = v.get(i + 2..).unwrap_or(&[]);
-    let Some(q1) = rest.iter().position(|&b| b == b'?') else {
-        return Ok(None);
-    };
-    let charset = rest.get(..q1).unwrap_or(&[]);
-    if charset.is_empty()
-        || !charset
-            .iter()
-            .all(|&b| class::is_mime_token_char(b) && b != b'?')
-    {
+    let q1 = rest
+        .iter()
+        .position(|&b| !class::is_mime_token_char(b))
+        .unwrap_or(rest.len());
+    if q1 == 0 || rest.get(q1) != Some(&b'?') {
         return Ok(None);
     }
+    let charset = rest.get(..q1).unwrap_or(&[]);
     let after = rest.get(q1 + 1..).unwrap_or(&[]);
     let (Some(&enc), Some(b'?')) = (after.first(), after.get(1)) else {
         return Ok(None);
     };
     let text_start = i + 2 + q1 + 3;
     let text_rest = v.get(text_start..).unwrap_or(&[]);
-    let Some(end) = text_rest.windows(2).position(|w| w == b"?=") else {
+    let Some(end) = text_rest
+        .iter()
+        .position(|&b| matches!(b, b'?' | b' ' | b'\t'))
+    else {
         return Ok(None);
     };
+    if text_rest.get(end..end + 2) != Some(b"?=") {
+        return Ok(None);
+    }
     let text = text_rest.get(..end).unwrap_or(&[]);
-    if text.iter().any(|&b| b == b' ' || b == b'\t' || b == b'?') {
+    let after_word = text_start + end + 2;
+    if after_word != v.len() && ws_len(v, after_word) == 0 {
         return Ok(None);
     }
     // RFC 2231 section 5: `charset*language`.
@@ -238,8 +252,67 @@ fn shape(v: &[u8], i: usize) -> Result<Option<Encoded<'_>>> {
         charset: cs,
         base64: b,
         text,
-        end: text_start + end + 2,
+        end: after_word,
     }))
+}
+
+/// The length of the whitespace unit at `v[i]`: SP, HTAB, or a `CRLF WSP`
+/// fold; 0 for anything else.
+fn ws_len(v: &[u8], i: usize) -> usize {
+    match (v.get(i), v.get(i + 1), v.get(i + 2)) {
+        (Some(b' ' | b'\t'), _, _) => 1,
+        (Some(b'\r'), Some(b'\n'), Some(b' ' | b'\t')) => 3,
+        _ => 0,
+    }
+}
+
+/// The text outside encoded words, checked as it is copied: UTF-8 (raw bytes
+/// above 0x7F are RFC 6532 text), with no control character but HTAB.
+struct Text {
+    utf8: Utf8,
+    prev: u8,
+}
+
+impl Text {
+    fn check(&mut self, b: u8, at: usize) -> Result<()> {
+        if b != b'\t' && crate::scan::is_control(b) {
+            return err(crate::scan::control_kind(b), at);
+        }
+        if self.prev == 0xc2 && (0x80..=0x9f).contains(&b) {
+            return err(ErrorKind::Control, at);
+        }
+        if !self.utf8.push(b) {
+            return err(ErrorKind::InvalidUtf8, at);
+        }
+        self.prev = b;
+        Ok(())
+    }
+
+    /// Copies a whitespace run, leaving out the CRLF of its folds.
+    fn run(&mut self, v: &[u8], s: usize, e: usize, emit: &mut impl FnMut(&[u8])) -> Result<()> {
+        let mut i = s;
+        while i < e {
+            let n = ws_len(v, i);
+            let at = i + n - 1;
+            let wsp = v.get(at).copied().unwrap_or(b' ');
+            self.check(wsp, at)?;
+            emit(&[wsp]);
+            i += n;
+        }
+        Ok(())
+    }
+}
+
+/// The index of the `"` closing a quoted string whose body starts at `from`.
+fn closing_quote(v: &[u8], from: usize) -> Option<usize> {
+    let mut i = from;
+    loop {
+        match v.get(i)? {
+            b'\\' => i += 2,
+            b'"' => return Some(i),
+            _ => i += 1,
+        }
+    }
 }
 
 /// Decodes one Q word's text, emitting UTF-8.
@@ -247,19 +320,20 @@ fn decode_q(cs: Charset, text: &[u8], at: usize, emit: &mut impl FnMut(&[u8])) -
     let mut utf8 = Utf8::new();
     let (mut i, mut prev) = (0usize, 0u8);
     while let Some(&b) = text.get(i) {
+        let start = at + i;
         let byte = match b {
             b'_' => b' ',
             b'=' => {
                 let hi = text.get(i + 1).copied().and_then(class::hex_value);
                 let lo = text.get(i + 2).copied().and_then(class::hex_value);
                 let (Some(hi), Some(lo)) = (hi, lo) else {
-                    return err(ErrorKind::InvalidEncodedWord, at + i);
+                    return err(ErrorKind::InvalidEncodedWord, start);
                 };
                 i += 2;
                 (hi << 4) | lo
             }
             0x21..=0x7e => b,
-            _ => return err(ErrorKind::InvalidEncodedWord, at + i),
+            _ => return err(ErrorKind::InvalidEncodedWord, start),
         };
         i += 1;
         // Every control character is refused, as in ext-values: C0 (HTAB
@@ -272,18 +346,18 @@ fn decode_q(cs: Charset, text: &[u8], at: usize, emit: &mut impl FnMut(&[u8])) -
             Charset::Ascii => false,
         };
         if byte < 0x20 || byte == 0x7f || c1 {
-            return err(ErrorKind::ControlInDecoded, at + i - 1);
+            return err(ErrorKind::ControlInDecoded, start);
         }
         prev = byte;
         match cs {
             Charset::Utf8 => {
                 if !utf8.push(byte) {
-                    return err(ErrorKind::InvalidUtf8, at + i - 1);
+                    return err(ErrorKind::InvalidUtf8, start);
                 }
                 emit(&[byte]);
             }
             Charset::Ascii if byte >= 0x80 => {
-                return err(ErrorKind::InvalidEncodedWord, at + i - 1);
+                return err(ErrorKind::InvalidEncodedWord, start);
             }
             Charset::Ascii => emit(&[byte]),
             Charset::Latin1 if byte >= 0x80 => emit(&[0xc0 | (byte >> 6), 0x80 | (byte & 0x3f)]),
@@ -297,34 +371,43 @@ fn decode_q(cs: Charset, text: &[u8], at: usize, emit: &mut impl FnMut(&[u8])) -
     Ok(())
 }
 
-/// Walks `v`, emitting the decoded text.
+/// Walks `v`, emitting the decoded text. Whitespace includes folds, whose
+/// CRLF is dropped, so the folded output of [`encode_words`] reads back. A
+/// quoted string starts at a word boundary and needs its closing `"`: a lone
+/// `"` (`5" disk`) is ordinary text. One pass: every scan ahead either
+/// consumes what it read or stops at the first byte that rules it out.
 fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
+    let mut text = Text {
+        utf8: Utf8::new(),
+        prev: 0,
+    };
     let (mut i, mut words) = (0usize, 0usize);
-    let (mut boundary, mut quoted, mut after_word) = (true, false, false);
+    let (mut boundary, mut after_word) = (true, false);
     let mut held: Option<(usize, usize)> = None;
+    // Inside a quoted string while `i` is below this.
+    let mut quoted_until = 0usize;
+    // Cleared when no closing quote is left, so that scan is not repeated.
+    let mut closes = true;
     while let Some(&b) = v.get(i) {
-        if quoted {
-            emit(&[b]);
-            if b == b'\\' {
-                if let Some(&n) = v.get(i + 1) {
-                    emit(&[n]);
-                    i += 1;
-                }
-            } else if b == b'"' {
-                quoted = false;
+        if i < quoted_until {
+            if ws_len(v, i) == 3 {
+                i += 2;
+                continue;
             }
+            text.check(b, i)?;
+            emit(&[b]);
             i += 1;
             continue;
         }
-        if b == b' ' || b == b'\t' {
+        if ws_len(v, i) > 0 {
             let start = i;
-            while matches!(v.get(i), Some(b' ' | b'\t')) {
-                i += 1;
+            while ws_len(v, i) > 0 {
+                i += ws_len(v, i);
             }
             if after_word {
                 held = Some((start, i));
             } else {
-                emit(v.get(start..i).unwrap_or(&[]));
+                text.run(v, start, i, emit)?;
             }
             boundary = true;
             continue;
@@ -333,44 +416,51 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
             if let Some(Encoded {
                 charset: cs,
                 base64: b64,
-                text,
+                text: word,
                 end,
             }) = shape(v, i)?
             {
-                if end == v.len() || matches!(v.get(end), Some(b' ' | b'\t')) {
-                    words += 1;
-                    if words > usize::from(limits.encoded_words) {
-                        return err(ErrorKind::TooManyMembers, i);
-                    }
-                    if b64 {
-                        // Base64 decoding comes with encode-lib (D-002).
-                        return err(ErrorKind::InvalidEncodedWord, i);
-                    }
-                    // Whitespace between two encoded words is dropped
-                    // (RFC 2047 section 6.2).
-                    held = None;
-                    let text_at = end - 2 - text.len();
-                    decode_q(cs, text, text_at, emit)?;
-                    after_word = true;
-                    boundary = false;
-                    i = end;
-                    continue;
+                if !text.utf8.is_complete() {
+                    return err(ErrorKind::InvalidUtf8, i);
                 }
+                words += 1;
+                if words > usize::from(limits.encoded_words) {
+                    return err(ErrorKind::TooManyMembers, i);
+                }
+                if b64 {
+                    // Base64 decoding comes with encode-lib (D-002).
+                    return err(ErrorKind::InvalidEncodedWord, i);
+                }
+                // Whitespace between two encoded words is dropped
+                // (RFC 2047 section 6.2).
+                held = None;
+                decode_q(cs, word, end - 2 - word.len(), emit)?;
+                after_word = true;
+                boundary = false;
+                i = end;
+                continue;
             }
         }
         if let Some((s, e)) = held.take() {
-            emit(v.get(s..e).unwrap_or(&[]));
+            text.run(v, s, e, emit)?;
         }
         after_word = false;
-        boundary = false;
-        if b == b'"' {
-            quoted = true;
+        if b == b'"' && boundary && closes {
+            match closing_quote(v, i + 1) {
+                Some(close) => quoted_until = close + 1,
+                None => closes = false,
+            }
         }
+        boundary = false;
+        text.check(b, i)?;
         emit(&[b]);
         i += 1;
     }
     if let Some((s, e)) = held {
-        emit(v.get(s..e).unwrap_or(&[]));
+        text.run(v, s, e, emit)?;
+    }
+    if !text.utf8.is_complete() {
+        return err(ErrorKind::InvalidUtf8, v.len());
     }
     Ok(())
 }
@@ -382,7 +472,8 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
 /// and words inside a quoted string are not decoded (section 5). Charsets:
 /// UTF-8, US-ASCII, ISO-8859-1 (transcoded), with an optional RFC 2231
 /// `*language`. `B` words need the `encode-lib` feature, which is not yet
-/// available (D-002).
+/// available (D-002). `CRLF WSP` folds count as whitespace, so the output of
+/// [`encode_words`] reads back as written.
 ///
 /// # Errors
 ///
@@ -390,8 +481,10 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
 /// bad encoding letter, a broken `=XX`, a byte not allowed in a Q word, a
 /// `B` word); [`ErrorKind::ControlInDecoded`] for a decoded control
 /// character (C0 including CR, LF, NUL, and HTAB; DEL; C1), as in ext-values;
-/// [`ErrorKind::InvalidUtf8`] (a UTF-8 word that is not whole characters, or
-/// text outside the words that is not UTF-8); [`ErrorKind::TooManyMembers`]
+/// a control kind for a control byte outside the words, other than HTAB and
+/// the CRLF of a fold; [`ErrorKind::InvalidUtf8`] (a UTF-8 word that is not
+/// whole characters, or text outside the words that is not UTF-8);
+/// [`ErrorKind::TooManyMembers`]
 /// beyond `max_encoded_words`; [`ErrorKind::BufferTooSmall`]. Nothing is
 /// written on error.
 ///
@@ -418,12 +511,7 @@ pub fn decode_words<'b>(value: &[u8], limits: &Limits, out: &'b mut [u8]) -> Res
         }
         n += b.len();
     })?;
-    if let Err(e) = core::str::from_utf8(dst) {
-        let at = e.valid_up_to();
-        // Nothing is left behind on error.
-        dst.fill(0);
-        return Err(ParseError::new(ErrorKind::InvalidUtf8, at));
-    }
+    // The first walk checked the text; this is the safe conversion.
     core::str::from_utf8(dst).map_err(|e| ParseError::new(ErrorKind::InvalidUtf8, e.valid_up_to()))
 }
 

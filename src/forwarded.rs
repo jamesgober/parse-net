@@ -39,8 +39,9 @@ use crate::{
     host::{Host, HostPort, host_port},
     limits::Limits,
     list,
+    param::{MAX_CHECKED_PARAMS, Names},
     scan::control_kind,
-    text::{Word, parse_word, skip_ows, trim_ows},
+    text::{Word, is_token, parse_word, skip_ows, trim_ows},
     write::{CountSink, Sink, reserve},
 };
 
@@ -202,6 +203,32 @@ pub enum Proto {
     Http,
     /// `https`.
     Https,
+    /// `ws`.
+    Ws,
+    /// `wss`.
+    Wss,
+    /// Another URI scheme (RFC 7239 section 5.4 allows any). It cannot be
+    /// written back: [`write_element`] refuses it.
+    Other,
+}
+
+/// The scheme named by `v`; `None` when `v` is not a URI scheme.
+fn proto(v: &[u8]) -> Option<Proto> {
+    const NAMES: [(&[u8], Proto); 4] = [
+        (b"http", Proto::Http),
+        (b"https", Proto::Https),
+        (b"ws", Proto::Ws),
+        (b"wss", Proto::Wss),
+    ];
+    if let Some(&(_, p)) = NAMES.iter().find(|(n, _)| v.eq_ignore_ascii_case(n)) {
+        return Some(p);
+    }
+    let (first, rest) = v.split_first()?;
+    let scheme = first.is_ascii_alphabetic()
+        && rest
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'));
+    scheme.then_some(Proto::Other)
 }
 
 /// One `Forwarded` element.
@@ -230,6 +257,12 @@ pub struct Element<'a> {
     pub proto: Option<Proto>,
 }
 
+/// Limits for walking text that was already validated.
+const RELAXED: Limits = Limits::DEFAULT
+    .max_list_members(u16::MAX)
+    .max_empty_elements(u16::MAX)
+    .max_comment_depth(u8::MAX);
+
 /// `"_" 1*( ALPHA / DIGIT / "." / "_" / "-" )`.
 fn is_obfuscated(s: &[u8]) -> bool {
     matches!(s, [b'_', rest @ ..] if !rest.is_empty()
@@ -257,30 +290,43 @@ fn ip(text: &[u8], v6: bool) -> Option<IpAddr> {
     }
 }
 
-/// Dotted-decimal IPv4 with `core`'s rules: four parts of one to three
-/// digits, each at most 255, no leading zeros (so `01.2.3.4` cannot pass).
-/// One pass over the bytes, with no UTF-8 check.
-fn ipv4(text: &[u8]) -> Option<Ipv4Addr> {
+/// The dotted-decimal IPv4 address at the front of `s`, with `core`'s rules
+/// (four parts of one to three digits, each at most 255, no leading zeros, so
+/// `01.2.3.4` cannot pass), and what follows it. One pass over the bytes,
+/// with no UTF-8 check.
+fn ipv4_prefix(mut s: &[u8]) -> Option<(Ipv4Addr, &[u8])> {
     let mut octets = [0u8; 4];
-    let mut parts = text.split(|&b| b == b'.');
-    for o in &mut octets {
-        let part = parts.next()?;
-        if part.is_empty() || part.len() > 3 || (part.len() > 1 && part.first() == Some(&b'0')) {
-            return None;
+    for (i, o) in octets.iter_mut().enumerate() {
+        if i > 0 {
+            let [b'.', rest @ ..] = s else {
+                return None;
+            };
+            s = rest;
         }
-        let mut n: u16 = 0;
-        for &b in part {
-            if !b.is_ascii_digit() {
+        let [first @ b'0'..=b'9', rest @ ..] = s else {
+            return None;
+        };
+        let (mut n, mut len) = (u16::from(*first - b'0'), 1usize);
+        s = rest;
+        while let [d @ b'0'..=b'9', rest @ ..] = s {
+            len += 1;
+            if len > 3 || *first == b'0' {
                 return None;
             }
-            n = n * 10 + u16::from(b - b'0');
+            n = n * 10 + u16::from(*d - b'0');
+            s = rest;
         }
         *o = u8::try_from(n).ok()?;
     }
-    if parts.next().is_some() {
-        return None;
+    Some((Ipv4Addr::from(octets), s))
+}
+
+/// A whole dotted-decimal IPv4 address.
+fn ipv4(text: &[u8]) -> Option<Ipv4Addr> {
+    match ipv4_prefix(text)? {
+        (a, []) => Some(a),
+        _ => None,
     }
-    Some(Ipv4Addr::from(octets))
 }
 
 /// Parses a node value (already unquoted).
@@ -307,7 +353,7 @@ fn node(v: &[u8]) -> Result<Node<'_>> {
         },
         Some(_) => return err(ErrorKind::InvalidAddress, name.len()),
     };
-    if name == b"unknown" {
+    if name.eq_ignore_ascii_case(b"unknown") {
         return Ok(Node::Unknown(port));
     }
     if is_obfuscated(name) {
@@ -332,7 +378,7 @@ fn element(e: &[u8]) -> Result<Element<'_>> {
         host: None,
         proto: None,
     };
-    let mut seen = [false; 4];
+    let (mut names, mut pairs) = (Names::new(), 0usize);
     let mut i = 0usize;
     loop {
         i += skip_ows(e.get(i..).unwrap_or(&[]));
@@ -371,30 +417,25 @@ fn element(e: &[u8]) -> Result<Element<'_>> {
         };
         let value_at = i + usize::from(matches!(w, Word::Quoted(_)));
         i += used;
+        // RFC 7239 section 4: a pair occurs at most once in an element.
+        pairs += 1;
+        if pairs > MAX_CHECKED_PARAMS {
+            return err(ErrorKind::TooManyMembers, name_at);
+        }
+        if names.repeats(e, name_at, name, class::is_tchar) {
+            return err(ErrorKind::DuplicateParameter, name_at);
+        }
         let slot = [&b"for"[..], b"by", b"host", b"proto"]
             .iter()
             .position(|k| name.eq_ignore_ascii_case(k));
-        if let Some(s) = slot {
-            if seen.get(s).copied().unwrap_or(false) {
-                return err(ErrorKind::DuplicateParameter, name_at);
-            }
-            if let Some(flag) = seen.get_mut(s) {
-                *flag = true;
-            }
-        }
         match slot {
             Some(0) => out.for_ = Some(node(v).map_err(|x| x.shifted(value_at))?),
             Some(1) => out.by = Some(node(v).map_err(|x| x.shifted(value_at))?),
             Some(2) => out.host = Some(host_port(v).map_err(|x| x.shifted(value_at))?),
-            Some(3) => {
-                out.proto = Some(if v.eq_ignore_ascii_case(b"http") {
-                    Proto::Http
-                } else if v.eq_ignore_ascii_case(b"https") {
-                    Proto::Https
-                } else {
-                    return err(ErrorKind::Malformed, value_at);
-                });
-            }
+            Some(3) => match proto(v) {
+                Some(p) => out.proto = Some(p),
+                None => return err(ErrorKind::Malformed, value_at),
+            },
             _ => {}
         }
         i += skip_ows(e.get(i..).unwrap_or(&[]));
@@ -449,7 +490,7 @@ impl<'a> ForwardedElements<'a> {
         let lines = self.lines;
         lines
             .iter()
-            .filter_map(|line| list::parse(line, &Limits::DEFAULT).ok())
+            .filter_map(|line| list::parse(line, &RELAXED).ok())
             .flat_map(|l| l.into_iter())
             .filter_map(|e| element(e).ok())
     }
@@ -550,13 +591,12 @@ fn xff_member(m: &[u8]) -> Option<(IpAddr, Option<u16>)> {
             _ => None,
         };
     }
-    // By shape: no colon is IPv4; exactly one is IPv4 with a port; more is
-    // IPv6 (which always has at least two).
-    let mut colons = m.iter().enumerate().filter(|&(_, &b)| b == b':');
-    match (colons.next(), colons.next()) {
-        (None, _) => Some((ip(m, false)?, None)),
-        (Some((c, _)), None) => Some((ip(m.get(..c)?, false)?, port(m.get(c + 1..)?)?)),
-        (Some(_), Some(_)) => Some((ip(m, true)?, None)),
+    // A whole IPv4 address cannot start IPv6 text, so IPv4 is read first.
+    match ipv4_prefix(m) {
+        Some((a, [])) => Some((IpAddr::V4(a), None)),
+        Some((a, [b':', p @ ..])) => Some((IpAddr::V4(a), port(p)?)),
+        Some(_) => None,
+        None => ip(m, true).map(|a| (a, None)),
     }
 }
 
@@ -680,8 +720,9 @@ pub fn parse_x_forwarded_for<'a>(lines: &'a [&'a [u8]], limits: &Limits) -> Resu
     Ok(XffChain { lines, count })
 }
 
-/// Parses `X-Forwarded-Proto`: `http` or `https`, case-insensitive; a
-/// comma list only when every member is the same.
+/// Parses `X-Forwarded-Proto`: a URI scheme, case-insensitive ([`Proto`]
+/// names `http`, `https`, `ws`, and `wss`); a comma list only when every
+/// member is the same.
 ///
 /// # Errors
 ///
@@ -697,23 +738,21 @@ pub fn parse_x_forwarded_for<'a>(lines: &'a [&'a [u8]], limits: &Limits) -> Resu
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn parse_x_forwarded_proto(value: &[u8]) -> Result<Proto> {
-    let mut found: Option<Proto> = None;
+    let mut found: Option<(Proto, &[u8])> = None;
     for m in value.split(|&b| b == b',') {
         let at = (m.as_ptr() as usize).saturating_sub(value.as_ptr() as usize);
         let t = trim_ows(m);
-        let p = if t.eq_ignore_ascii_case(b"http") {
-            Proto::Http
-        } else if t.eq_ignore_ascii_case(b"https") {
-            Proto::Https
-        } else {
+        let Some(p) = proto(t) else {
             return err(ErrorKind::Malformed, at);
         };
-        if found.is_some_and(|f| f != p) {
+        if found.is_some_and(|(_, f)| !f.eq_ignore_ascii_case(t)) {
             return err(ErrorKind::Malformed, at);
         }
-        found = Some(p);
+        found = Some((p, t));
     }
-    found.ok_or(ParseError::new(ErrorKind::Malformed, 0))
+    found
+        .map(|(p, _)| p)
+        .ok_or(ParseError::new(ErrorKind::Malformed, 0))
 }
 
 /// Parses `X-Forwarded-Host`: one `Host` value; a list is refused.
@@ -738,43 +777,75 @@ pub fn parse_x_forwarded_host(value: &[u8]) -> Result<HostPort<'_>> {
     crate::host::parse_host_port(value)
 }
 
-/// What a walk step found.
-enum Step {
-    Addr(IpAddr),
-    Unknown,
-}
-
-/// Walks a chain of `count` steps from the right; `step(i)` gives the
-/// `i`-th step counted from the left.
-fn walk(
-    count: usize,
+/// Resolves an `X-Forwarded-For` chain in one pass from the right: the first
+/// untrusted address is the client, and every member is still read, so a
+/// malformed chain fails closed. The outer `None` is any problem at all, and
+/// the left-to-right parser then gives the error; the inner `None` is an
+/// empty chain.
+fn xff_client(
+    lines: &[&[u8]],
+    limits: &Limits,
     trust: &impl Trust,
-    mut step: impl FnMut(usize) -> Step,
-) -> Option<ClientAddress> {
-    let mut leftmost: Option<IpAddr> = None;
-    for (walked, i) in (0..count).rev().enumerate() {
-        let hops = u8::try_from(walked + 1).unwrap_or(u8::MAX);
-        match step(i) {
-            Step::Addr(a) if trust.is_trusted(a) => leftmost = Some(a),
-            Step::Addr(addr) => return Some(ClientAddress::Forwarded { addr, hops }),
-            Step::Unknown => return Some(ClientAddress::Unknown { hops }),
+) -> Option<Option<ClientAddress>> {
+    for line in lines {
+        crate::scan::check_field_value(line).ok()?;
+    }
+    let hops = |n: usize| u8::try_from(n).unwrap_or(u8::MAX);
+    let (mut count, mut found, mut leftmost) = (0usize, None, None);
+    for line in lines.iter().rev() {
+        for m in line.rsplit(|&b| b == b',') {
+            let (addr, _) = xff_member(trim_ows(m))?;
+            count += 1;
+            if count > usize::from(limits.hops) {
+                return None;
+            }
+            if found.is_none() {
+                if trust.is_trusted(addr) {
+                    leftmost = Some(addr);
+                } else {
+                    found = Some(ClientAddress::Forwarded {
+                        addr,
+                        hops: hops(count),
+                    });
+                }
+            }
         }
     }
-    leftmost.map(|addr| ClientAddress::Forwarded {
+    Some(found.or(leftmost.map(|addr| ClientAddress::Forwarded {
         addr,
-        hops: u8::try_from(count).unwrap_or(u8::MAX),
-    })
+        hops: hops(count),
+    })))
 }
 
-/// The `i`-th element (from the left) of validated lines, by index: the
-/// chain is short (at most `max_hops`), so a walk by index stays cheap and
-/// allocates nothing.
-fn nth_member<'a, I: Iterator<Item = &'a [u8]>>(
-    lines: &[&'a [u8]],
-    i: usize,
-    members: impl Fn(&'a [u8]) -> I,
-) -> Option<&'a [u8]> {
-    lines.iter().flat_map(|line| members(line)).nth(i)
+/// Resolves validated `Forwarded` elements in one pass from the left (a
+/// quoted comma rules out splitting from the right): the client is the last
+/// element that is not a trusted address.
+fn forwarded_client(elements: &ForwardedElements<'_>, trust: &impl Trust) -> Option<ClientAddress> {
+    let count = elements.len();
+    let hops = |n: usize| u8::try_from(n).unwrap_or(u8::MAX);
+    let (mut last, mut leftmost) = (None, None);
+    for (i, e) in elements.iter().enumerate() {
+        match e.for_ {
+            Some(Node::Addr(a, _)) if trust.is_trusted(a) => {
+                leftmost = leftmost.or(Some(a));
+            }
+            Some(Node::Addr(addr, _)) => {
+                last = Some(ClientAddress::Forwarded {
+                    addr,
+                    hops: hops(count - i),
+                });
+            }
+            _ => {
+                last = Some(ClientAddress::Unknown {
+                    hops: hops(count - i),
+                });
+            }
+        }
+    }
+    last.or(leftmost.map(|addr| ClientAddress::Forwarded {
+        addr,
+        hops: hops(count),
+    }))
 }
 
 /// Resolves the client address of a request that arrived from `peer`.
@@ -818,30 +889,16 @@ pub fn client_address(
     }
     let limits = Limits::DEFAULT.max_hops(max_hops);
     let found = match source {
-        ForwardedSource::XForwardedFor(lines) => {
-            let chain = parse_x_forwarded_for(lines, &limits).map_err(as_malformed)?;
-            walk(chain.len(), trust, |i| {
-                match nth_member(lines, i, xff_line).and_then(xff_member) {
-                    Some((a, _)) => Step::Addr(a),
-                    None => Step::Unknown,
-                }
-            })
-        }
+        ForwardedSource::XForwardedFor(lines) => match xff_client(lines, &limits, trust) {
+            Some(found) => found,
+            None => {
+                let _ = parse_x_forwarded_for(lines, &limits).map_err(as_malformed)?;
+                return err(ErrorKind::Malformed, 0);
+            }
+        },
         ForwardedSource::Forwarded(lines) => {
             let elements = parse(lines, &limits).map_err(as_malformed)?;
-            walk(elements.len(), trust, |i| {
-                let e = nth_member(lines, i, |line| {
-                    list::parse(line, &Limits::DEFAULT)
-                        .ok()
-                        .into_iter()
-                        .flat_map(|l| l.into_iter())
-                })
-                .and_then(|e| element(e).ok());
-                match e.and_then(|e| e.for_) {
-                    Some(Node::Addr(a, _)) => Step::Addr(a),
-                    _ => Step::Unknown,
-                }
-            })
+            forwarded_client(&elements, trust)
         }
     };
     Ok(found.unwrap_or(ClientAddress::Peer(peer)))
@@ -1002,6 +1059,9 @@ fn put_element(e: &Element<'_>, out: &mut impl Sink) -> core::result::Result<(),
         out.put(match p {
             Proto::Http => b"proto=http",
             Proto::Https => b"proto=https",
+            Proto::Ws => b"proto=ws",
+            Proto::Wss => b"proto=wss",
+            Proto::Other => return Err(WriteError::NotToken),
         })?;
     }
     if let Some(n) = &e.by {
@@ -1012,9 +1072,16 @@ fn put_element(e: &Element<'_>, out: &mut impl Sink) -> core::result::Result<(),
             out.put(b";")?;
         }
         out.put(b"host=")?;
-        // A port or an IPv6 literal needs quotes; host bytes never need
-        // escapes.
-        let quote = h.port.is_some() || matches!(h.host, Host::V6(_) | Host::Future(_));
+        // A value that is not a token needs quotes: a port, an IPv6 literal,
+        // an empty name, or a name with `,`, `;`, `=`, `(`, or `)`, all legal
+        // in a reg-name and all able to end the pair or forge another. The
+        // quoted bytes need no escapes: no host holds `"` or `\`.
+        let quote = h.port.is_some()
+            || match h.host {
+                Host::V4(_) => false,
+                Host::V6(_) | Host::Future(_) => true,
+                Host::Name(n) => !is_token(n),
+            };
         if quote {
             out.put(b"\"")?;
         }
@@ -1033,7 +1100,9 @@ fn put_element(e: &Element<'_>, out: &mut impl Sink) -> core::result::Result<(),
 /// # Errors
 ///
 /// [`WriteError::NotToken`] for an obfuscated name or port that is not `_`
-/// followed by `ALPHA / DIGIT / "." / "_" / "-"`; [`WriteError::Full`]
+/// followed by `ALPHA / DIGIT / "." / "_" / "-"`, or for [`Proto::Other`];
+/// [`WriteError::Forbidden`] for a host name with a byte no name holds;
+/// [`WriteError::Full`]
 /// (nothing written when the sink reports its room).
 ///
 /// # Examples
@@ -1063,6 +1132,8 @@ pub fn write_element(e: &Element<'_>, out: &mut impl Sink) -> core::result::Resu
 
 #[cfg(test)]
 mod tests {
+    use std::vec::Vec;
+
     use super::*;
 
     #[test]
@@ -1176,7 +1247,7 @@ mod tests {
         assert_eq!(k(b"for=1.2.3"), ErrorKind::InvalidAddress);
         assert_eq!(k(b"for=01.2.3.4"), ErrorKind::InvalidAddress);
         assert_eq!(k(b"for=\"[::1]:99999\""), ErrorKind::InvalidPort);
-        assert_eq!(k(b"proto=ftp"), ErrorKind::Malformed);
+        assert_eq!(k(b"proto=1x"), ErrorKind::Malformed);
         assert_eq!(k(b"for"), ErrorKind::MissingValue);
         assert_eq!(k(b"for=\"a\\\"b\""), ErrorKind::InvalidQuotedPair);
         assert_eq!(k(b"for=1.2.3.4 x"), ErrorKind::ExpectedSeparator);
@@ -1368,11 +1439,190 @@ mod tests {
     fn test_x_forwarded_proto_and_host() {
         assert_eq!(parse_x_forwarded_proto(b"http, HTTP"), Ok(Proto::Http));
         assert!(parse_x_forwarded_proto(b"").is_err());
-        assert!(parse_x_forwarded_proto(b"wss").is_err());
+        assert_eq!(parse_x_forwarded_proto(b"wss"), Ok(Proto::Wss));
+        assert_eq!(parse_x_forwarded_proto(b"ftp"), Ok(Proto::Other));
+        assert!(parse_x_forwarded_proto(b"ftp, sftp").is_err());
+        assert!(parse_x_forwarded_proto(b"1x").is_err());
         assert!(parse_x_forwarded_host(b"[::1]:8080").is_ok());
         assert_eq!(
             parse_x_forwarded_host(b"a,b").unwrap_err().kind(),
             ErrorKind::Malformed
         );
+    }
+
+    /// The 0.8 readers, kept as the references the one-pass versions are
+    /// compared with (`test_client_address_agrees_with_reference`).
+    mod reference {
+        use super::super::*;
+
+        pub(super) fn xff_member(m: &[u8]) -> Option<(IpAddr, Option<u16>)> {
+            let port = |p: &[u8]| -> Option<Option<u16>> {
+                match node_port(p)? {
+                    NodePort::Number(n) => Some(Some(n)),
+                    NodePort::Obfuscated(_) => None,
+                }
+            };
+            if let [b'[', ..] = m {
+                let close = m.iter().position(|&b| b == b']')?;
+                let a = ip(m.get(1..close)?, true)?;
+                return match m.get(close + 1..)? {
+                    [] => Some((a, None)),
+                    [b':', p @ ..] => Some((a, port(p)?)),
+                    _ => None,
+                };
+            }
+            let v4 = |t: &[u8]| {
+                core::str::from_utf8(t)
+                    .ok()?
+                    .parse::<Ipv4Addr>()
+                    .ok()
+                    .map(IpAddr::V4)
+            };
+            let mut colons = m.iter().enumerate().filter(|&(_, &b)| b == b':');
+            match (colons.next(), colons.next()) {
+                (None, _) => Some((v4(m)?, None)),
+                (Some((c, _)), None) => Some((v4(m.get(..c)?)?, port(m.get(c + 1..)?)?)),
+                (Some(_), Some(_)) => Some((ip(m, true)?, None)),
+            }
+        }
+
+        enum Step {
+            Addr(IpAddr),
+            Unknown,
+        }
+
+        fn walk(
+            count: usize,
+            trust: &impl Trust,
+            mut step: impl FnMut(usize) -> Step,
+        ) -> Option<ClientAddress> {
+            let mut leftmost: Option<IpAddr> = None;
+            for (walked, i) in (0..count).rev().enumerate() {
+                let hops = u8::try_from(walked + 1).unwrap_or(u8::MAX);
+                match step(i) {
+                    Step::Addr(a) if trust.is_trusted(a) => leftmost = Some(a),
+                    Step::Addr(addr) => return Some(ClientAddress::Forwarded { addr, hops }),
+                    Step::Unknown => return Some(ClientAddress::Unknown { hops }),
+                }
+            }
+            leftmost.map(|addr| ClientAddress::Forwarded {
+                addr,
+                hops: u8::try_from(count).unwrap_or(u8::MAX),
+            })
+        }
+
+        fn nth_member<'a, I: Iterator<Item = &'a [u8]>>(
+            lines: &[&'a [u8]],
+            i: usize,
+            members: impl Fn(&'a [u8]) -> I,
+        ) -> Option<&'a [u8]> {
+            lines.iter().flat_map(|line| members(line)).nth(i)
+        }
+
+        pub(super) fn client_address(
+            peer: IpAddr,
+            source: ForwardedSource<'_>,
+            trust: &impl Trust,
+            max_hops: u8,
+        ) -> Result<ClientAddress> {
+            if !trust.is_trusted(peer) {
+                return Ok(ClientAddress::Peer(peer));
+            }
+            let limits = Limits::DEFAULT.max_hops(max_hops);
+            let found = match source {
+                ForwardedSource::XForwardedFor(lines) => {
+                    let chain = parse_x_forwarded_for(lines, &limits).map_err(as_malformed)?;
+                    walk(chain.len(), trust, |i| {
+                        match nth_member(lines, i, xff_line).and_then(xff_member) {
+                            Some((a, _)) => Step::Addr(a),
+                            None => Step::Unknown,
+                        }
+                    })
+                }
+                ForwardedSource::Forwarded(lines) => {
+                    let elements = parse(lines, &limits).map_err(as_malformed)?;
+                    walk(elements.len(), trust, |i| {
+                        let e = nth_member(lines, i, |line| {
+                            list::parse(line, &Limits::DEFAULT)
+                                .ok()
+                                .into_iter()
+                                .flat_map(|l| l.into_iter())
+                        })
+                        .and_then(|e| element(e).ok());
+                        match e.and_then(|e| e.for_) {
+                            Some(Node::Addr(a, _)) => Step::Addr(a),
+                            _ => Step::Unknown,
+                        }
+                    })
+                }
+            };
+            Ok(found.unwrap_or(ClientAddress::Peer(peer)))
+        }
+    }
+
+    fn v4(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(4096))]
+
+        #[test]
+        fn test_xff_member_agrees_with_reference(
+            text in "[0-9a-f.:\\[\\]]{0,28}",
+            shaped in "(25[0-9]|1?[0-9]{1,2})\\.(0|[0-9]{1,3})\\.[0-9]{1,3}\\.[0-9]{1,3}(:[0-9_a]{0,6})?",
+        ) {
+            proptest::prop_assert_eq!(xff_member(text.as_bytes()), reference::xff_member(text.as_bytes()));
+            proptest::prop_assert_eq!(xff_member(shaped.as_bytes()), reference::xff_member(shaped.as_bytes()));
+        }
+
+        #[test]
+        fn test_client_address_agrees_with_reference(
+            xff in proptest::collection::vec(proptest::sample::select(&[
+                "10.0.0.1", "10.0.0.2", "1.2.3.4", "198.51.100.7:80", "[2001:db8::1]:443",
+                "2001:db8::2", "::1", "", "bad", "01.2.3.4", "1.2.3", "1.2.3.4:99999", "[::1",
+            ][..]), 0..12),
+            fwd in proptest::collection::vec(proptest::sample::select(&[
+                "for=10.0.0.1", "for=10.0.0.2;proto=http", "for=1.2.3.4", "for=unknown",
+                "for=_hidden", "proto=https", "for=\"[2001:db8::1]:80\"", "for=\"::1\"",
+                "by=10.0.0.1;for=198.51.100.7", "bad", "for=", "",
+            ][..]), 0..12),
+            cuts in proptest::collection::vec(proptest::bool::ANY, 12),
+            max_hops in 0u8..10,
+            trusted_peer in proptest::bool::ANY,
+        ) {
+            // Joined with commas, some of them line breaks, so a chain spans
+            // several field lines.
+            fn lines<'a>(members: &[&str], cuts: &[bool], store: &'a mut Vec<std::string::String>) -> Vec<&'a [u8]> {
+                let mut cur = std::string::String::new();
+                for (i, m) in members.iter().enumerate() {
+                    if i > 0 && cuts[i] {
+                        store.push(core::mem::take(&mut cur));
+                    } else if i > 0 {
+                        cur.push_str(", ");
+                    }
+                    cur.push_str(m);
+                }
+                if !members.is_empty() {
+                    store.push(cur);
+                }
+                store.iter().map(|s| s.as_bytes()).collect()
+            }
+            let peer = if trusted_peer { v4("10.0.0.1") } else { v4("203.0.113.1") };
+            let trust = |a: IpAddr| a == v4("10.0.0.1") || a == v4("10.0.0.2") || a == v4("::1");
+            let shape = |r: Result<ClientAddress>| r.map_err(|e| (e.kind(), e.offset(), e.line()));
+            let mut store = Vec::new();
+            let ls = lines(&xff, &cuts, &mut store);
+            proptest::prop_assert_eq!(
+                shape(client_address(peer, ForwardedSource::XForwardedFor(&ls), &trust, max_hops)),
+                shape(reference::client_address(peer, ForwardedSource::XForwardedFor(&ls), &trust, max_hops))
+            );
+            let mut store = Vec::new();
+            let ls = lines(&fwd, &cuts, &mut store);
+            proptest::prop_assert_eq!(
+                shape(client_address(peer, ForwardedSource::Forwarded(&ls), &trust, max_hops)),
+                shape(reference::client_address(peer, ForwardedSource::Forwarded(&ls), &trust, max_hops))
+            );
+        }
     }
 }

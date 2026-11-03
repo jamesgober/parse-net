@@ -172,6 +172,17 @@ const fn refused(b: u8) -> ErrorKind {
     }
 }
 
+/// The error for a byte refused after a backslash: a control byte keeps its
+/// kind there too (D-037).
+#[inline]
+const fn pair_refused(b: u8) -> ErrorKind {
+    if crate::scan::is_control(b) {
+        control_kind(b)
+    } else {
+        ErrorKind::InvalidQuotedPair
+    }
+}
+
 /// Parses the quoted string at the start of `s` (RFC 9110 section 5.6.4).
 ///
 /// Returns the view and the length used, both quotes included.
@@ -180,9 +191,8 @@ const fn refused(b: u8) -> ErrorKind {
 ///
 /// [`ErrorKind::InvalidByte`] at offset 0 when `s` does not start with `"`;
 /// [`ErrorKind::BareCr`], [`ErrorKind::LineFeed`], [`ErrorKind::Nul`], or
-/// [`ErrorKind::Control`] for a control byte inside; [`ErrorKind::InvalidQuotedPair`]
-/// when the byte after `\` is not `HTAB / SP / VCHAR / obs-text`;
-/// [`ErrorKind::UnterminatedQuote`] at the end of input.
+/// [`ErrorKind::Control`] for a control byte inside, the byte after a `\`
+/// included; [`ErrorKind::UnterminatedQuote`] at the end of input.
 ///
 /// # Examples
 ///
@@ -212,7 +222,7 @@ pub fn parse_quoted(s: &[u8]) -> Result<(Quoted<'_>, usize)> {
                 match bytes.next() {
                     None => return err(ErrorKind::UnterminatedQuote, s.len()),
                     Some(&e) if class::is_quoted_pair_char(e) => i += 2,
-                    Some(_) => return err(ErrorKind::InvalidQuotedPair, i + 2),
+                    Some(&e) => return err(pair_refused(e), i + 2),
                 }
             }
             _ if class::is_qdtext(b) => i += 1,
@@ -284,6 +294,16 @@ pub fn parse_comment<'a>(s: &'a [u8], limits: &Limits) -> Result<(Comment<'a>, u
 /// Scans the comment that starts at `s[start]` (an opening `(`). Returns the
 /// offset just past its closing `)` and the deepest nesting seen.
 pub(crate) fn comment_end(s: &[u8], start: usize, limits: &Limits) -> Result<(usize, u8)> {
+    comment_walk(s, start, limits, false)
+}
+
+/// As [`comment_end`], for mail, where a comment may hold `CRLF WSP` folds
+/// (RFC 5322 section 3.2.2).
+pub(crate) fn comment_end_folded(s: &[u8], start: usize, limits: &Limits) -> Result<(usize, u8)> {
+    comment_walk(s, start, limits, true)
+}
+
+fn comment_walk(s: &[u8], start: usize, limits: &Limits, folds: bool) -> Result<(usize, u8)> {
     let limit = u16::from(limits.comment_depth);
     let mut depth: u16 = 0;
     let mut max: u16 = 0;
@@ -310,9 +330,17 @@ pub(crate) fn comment_end(s: &[u8], start: usize, limits: &Limits) -> Result<(us
             b'\\' => match bytes.next() {
                 None => return err(ErrorKind::UnbalancedComment, s.len()),
                 Some(&e) if class::is_quoted_pair_char(e) => i += 2,
-                Some(_) => return err(ErrorKind::InvalidQuotedPair, i + 1),
+                Some(&e) => return err(pair_refused(e), i + 1),
             },
             _ if class::is_ctext(b) => i += 1,
+            b'\r'
+                if folds
+                    && s.get(i + 1) == Some(&b'\n')
+                    && matches!(s.get(i + 2), Some(b' ' | b'\t')) =>
+            {
+                let _lf = bytes.next();
+                i += 2;
+            }
             _ => return err(refused(b), i),
         }
     }
@@ -830,7 +858,7 @@ mod tests {
         let e = q(b"\"a\x00\"").unwrap_err();
         assert_eq!((e.kind(), e.offset()), (ErrorKind::Nul, 2));
         let e = q(b"\"\\\x7f\"").unwrap_err();
-        assert_eq!((e.kind(), e.offset()), (ErrorKind::InvalidQuotedPair, 2));
+        assert_eq!((e.kind(), e.offset()), (ErrorKind::Control, 2));
         assert!(q(b"\"\x80\xff\"").is_ok());
         assert!(q(b"\"\\\t\"").unwrap().0.eq_bytes(b"\t"));
         assert_eq!(q(b"x").unwrap_err().kind(), ErrorKind::InvalidByte);
@@ -921,7 +949,7 @@ mod tests {
         );
         assert_eq!(
             parse_comment(b"(\\\x00)", &l).unwrap_err().kind(),
-            ErrorKind::InvalidQuotedPair
+            ErrorKind::Nul
         );
         assert_eq!(
             parse_comment(b"(a\rb)", &l).unwrap_err().kind(),

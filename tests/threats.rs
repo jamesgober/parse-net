@@ -208,19 +208,26 @@ fn test_invalid_filename_star_refuses_field() {
 
 #[test]
 fn test_range_u64_max_plus_one() {
-    let max = b"bytes=18446744073709551615-18446744073709551615";
-    assert!(range::parse(max, &Limits::DEFAULT).is_ok());
-    for v in [
-        &b"bytes=18446744073709551616-"[..],
-        b"bytes=0-18446744073709551616",
-        b"bytes=-18446744073709551616",
-    ] {
-        assert_eq!(
-            kind(range::parse(v, &Limits::DEFAULT)),
-            ErrorKind::NumberOverflow,
-            "{v:?}"
-        );
-    }
+    // RFC 9110 section 14.1.2: a recipient reads large numerals in a `Range`
+    // without failing, so they saturate past the end of any representation.
+    let mut out = [pn::ByteRange { start: 0, end: 0 }; 1];
+    let outcome = |v: &[u8], out: &mut [pn::ByteRange]| range::byte_ranges(v, 10, out);
+    assert_eq!(
+        outcome(b"bytes=0-18446744073709551616", &mut out),
+        Ok(pn::RangeOutcome::Ranges(1))
+    );
+    assert_eq!(out[0], pn::ByteRange { start: 0, end: 9 });
+    assert_eq!(
+        outcome(b"bytes=18446744073709551616-", &mut out),
+        Ok(pn::RangeOutcome::Unsatisfiable)
+    );
+    assert_eq!(
+        outcome(b"bytes=-18446744073709551616", &mut out),
+        Ok(pn::RangeOutcome::Ranges(1))
+    );
+    assert_eq!(out[0], pn::ByteRange { start: 0, end: 9 });
+    // `Content-Range` is a sender's own statement: no such rule, so it stays
+    // an error.
     assert_eq!(
         kind(range::parse_content_range(
             b"bytes 0-1/18446744073709551616"

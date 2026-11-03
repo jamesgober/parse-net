@@ -90,9 +90,10 @@ pub const fn days_from_civil(year: i32, month: u8, day: u8) -> i64 {
     era * 146_097 + doe - 719_468
 }
 
-/// The day count beyond which `civil_from_days` clamps, keeping every year
-/// inside `i32`.
-const DAYS_LIMIT: i64 = 784_352_296_671;
+/// The day counts past which `civil_from_days` clamps: the first and last
+/// days of the years an `i32` holds.
+const DAYS_MIN: i64 = days_from_civil(i32::MIN, 1, 1);
+const DAYS_MAX: i64 = days_from_civil(i32::MAX, 12, 31);
 
 /// The civil date `(year, month, day)` for a day count since 1970-01-01,
 /// after Howard Hinnant's `civil_from_days`.
@@ -111,10 +112,10 @@ const DAYS_LIMIT: i64 = 784_352_296_671;
 /// ```
 #[must_use]
 pub const fn civil_from_days(days: i64) -> (i32, u8, u8) {
-    let days = if days > DAYS_LIMIT {
-        DAYS_LIMIT
-    } else if days < -DAYS_LIMIT {
-        -DAYS_LIMIT
+    let days = if days > DAYS_MAX {
+        DAYS_MAX
+    } else if days < DAYS_MIN {
+        DAYS_MIN
     } else {
         days
     };
@@ -128,15 +129,9 @@ pub const fn civil_from_days(days: i64) -> (i32, u8, u8) {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    let y = if y > i32::MAX as i64 {
-        i32::MAX
-    } else if y < i32::MIN as i64 {
-        i32::MIN
-    } else {
-        y as i32
-    };
-    // `m` is 1 to 12 and `d` is 1 to 31 by construction.
-    (y, m as u8, d as u8)
+    // The clamp keeps `y` in `i32`; `m` is 1 to 12 and `d` is 1 to 31 by
+    // construction.
+    (y as i32, m as u8, d as u8)
 }
 
 /// The ISO 8601 weekday (1 = Monday ... 7 = Sunday) of a day count since
@@ -806,8 +801,10 @@ mod tests {
             assert_eq!(days_from_civil(y, m, d), days);
             assert!(d >= 1 && d <= days_in_month(y, m));
         }
-        assert_eq!(civil_from_days(i64::MAX).0, civil_from_days(DAYS_LIMIT).0);
-        assert_eq!(civil_from_days(i64::MIN).0, civil_from_days(-DAYS_LIMIT).0);
+        assert_eq!(civil_from_days(i64::MAX), (i32::MAX, 12, 31));
+        assert_eq!(civil_from_days(DAYS_MAX + 1), (i32::MAX, 12, 31));
+        assert_eq!(civil_from_days(i64::MIN), (i32::MIN, 1, 1));
+        assert_eq!(civil_from_days(DAYS_MIN - 1), (i32::MIN, 1, 1));
     }
 
     #[test]

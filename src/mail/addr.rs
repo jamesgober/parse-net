@@ -1,12 +1,13 @@
 //! `addr-spec`, `mailbox`, and `msg-id` (RFC 5322 sections 3.4 and 3.6.4),
 //! with UTF-8 per RFC 6532.
 
+use super::cfws;
 use crate::{
     class,
     error::{ErrorKind, ParseError, Result, WriteError, err},
     limits::Limits,
     scan::control_kind,
-    text::{Quoted, comment_end, parse_quoted, skip_ows, trim_ows},
+    text::{Quoted, comment_end_folded, parse_quoted, skip_ows, trim_ows},
     write::{CountSink, Sink, reserve},
 };
 
@@ -262,18 +263,18 @@ pub struct Mailbox<'a> {
 pub fn parse_mailbox<'a>(value: &'a [u8], limits: &Limits) -> Result<Mailbox<'a>> {
     let lead = skip_ows(value);
     let v = trim_ows(value);
-    if v.last() != Some(&b'>') {
-        let addr = addr_spec(v).map_err(|e| e.shifted(lead))?;
-        return Ok(Mailbox {
-            display_name: None,
-            addr,
-        });
-    }
     // Find the `<` outside quoted strings and comments, checking the phrase.
-    let mut i = 0usize;
+    // An `@` first means a bare address.
+    let (mut i, mut has_word) = (0usize, false);
     let lt = loop {
         match v.get(i) {
-            None => return err(ErrorKind::InvalidAddrSpec, lead + i),
+            None | Some(b'@') => {
+                let addr = addr_spec(v).map_err(|e| e.shifted(lead))?;
+                return Ok(Mailbox {
+                    display_name: None,
+                    addr,
+                });
+            }
             Some(b'<') => break i,
             Some(b'"') => {
                 let (q, used) =
@@ -281,23 +282,48 @@ pub fn parse_mailbox<'a>(value: &'a [u8], limits: &Limits) -> Result<Mailbox<'a>
                 if let Err(e) = core::str::from_utf8(q.raw()) {
                     return err(ErrorKind::InvalidUtf8, lead + i + 1 + e.valid_up_to());
                 }
+                has_word = true;
                 i += used;
             }
-            Some(b'(') => i = comment_end(v, i, limits).map_err(|e| e.shifted(lead))?.0,
-            Some(&b) if class::is_atext(b) || matches!(b, b'.' | b' ' | b'\t') || b >= 0x80 => {
-                i += 1
+            Some(b'(') => {
+                i = comment_end_folded(v, i, limits)
+                    .map_err(|e| e.shifted(lead))?
+                    .0;
+            }
+            Some(b' ' | b'\t') => i += 1,
+            Some(&b) if class::is_atext(b) || b == b'.' || b >= 0x80 => {
+                has_word = true;
+                i += 1;
             }
             Some(_) => return Err(refused(v, i, ErrorKind::InvalidAddrSpec).shifted(lead)),
         }
     };
+    // The closing `>`, past any quoted local part; only CFWS may follow it.
+    let mut j = lt + 1;
+    let gt = loop {
+        match v.get(j) {
+            None => return err(ErrorKind::InvalidAddrSpec, lead + j),
+            Some(b'>') => break j,
+            Some(b'"') => {
+                let (_, used) =
+                    parse_quoted(v.get(j..).unwrap_or(&[])).map_err(|e| e.shifted(lead + j))?;
+                j += used;
+            }
+            Some(_) => j += 1,
+        }
+    };
+    let end = cfws(v, gt + 1, limits).map_err(|e| e.shifted(lead))?;
+    if end < v.len() {
+        return Err(refused(v, end, ErrorKind::InvalidAddrSpec).shifted(lead));
+    }
     let display = trim_ows(v.get(..lt).unwrap_or(&[]));
     if let Err(e) = core::str::from_utf8(display) {
         return err(ErrorKind::InvalidUtf8, lead + e.valid_up_to());
     }
-    let inner = v.get(lt + 1..v.len() - 1).unwrap_or(&[]);
+    let inner = v.get(lt + 1..gt).unwrap_or(&[]);
     let addr = addr_spec(inner).map_err(|e| e.shifted(lead + lt + 1))?;
     Ok(Mailbox {
-        display_name: (!display.is_empty()).then_some(display),
+        display_name: has_word.then_some(display),
         addr,
     })
 }
@@ -417,6 +443,10 @@ pub fn write_msg_id(
     }
     let mut count = CountSink::new();
     put_msg_id(l, r, &mut count)?;
+    // One unfoldable line (RFC 5322 section 2.1.1).
+    if count.count() > super::HARD_LIMIT {
+        return Err(WriteError::OutOfRange);
+    }
     reserve(out, count.count())?;
     put_msg_id(l, r, out)
 }

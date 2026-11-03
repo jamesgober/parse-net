@@ -94,7 +94,8 @@ fn split_lines(parts: &[String], cuts: &[bool]) -> Vec<String> {
 fn condition_by_list(v: &[u8]) -> Option<Vec<Vec<u8>>> {
     let l = pn::list::parse(v, &Limits::DEFAULT).ok()?;
     if l.iter().any(|e| e == b"*") {
-        return (l.len() == 1).then(|| vec![b"*".to_vec()]);
+        // `*` stands alone: not as a member of a list, even with empty ones.
+        return (pn::text::trim_ows(v) == b"*").then(|| vec![b"*".to_vec()]);
     }
     l.iter()
         .map(|e| EntityTag::parse(e).ok().map(|t| t.opaque().to_vec()))
@@ -103,6 +104,55 @@ fn condition_by_list(v: &[u8]) -> Option<Vec<Vec<u8>>> {
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(2048))]
+
+    #[test]
+    fn test_write_element_cannot_forge_a_pair(
+        host in "[a-z0-9.,;=()!$&'*+~_-]{0,12}",
+        port in prop::option::of(1u16..),
+    ) {
+        // Any host the parser accepts, however odd its reg-name, must come
+        // back as itself in one element: no hop or pair forged by its bytes.
+        let text = match port {
+            Some(p) => format!("{host}:{p}"),
+            None => host.clone(),
+        };
+        let Ok(hp) = pn::parse_host_port(text.as_bytes()) else { return Ok(()) };
+        let addr: IpAddr = "198.51.100.7".parse().unwrap();
+        let e = forwarded::Element {
+            for_: Some(forwarded::Node::Addr(addr, None)),
+            by: None,
+            host: Some(hp),
+            proto: None,
+        };
+        let mut buf = [0u8; 128];
+        let mut out = SliceSink::new(&mut buf);
+        forwarded::write_element(&e, &mut out).unwrap();
+        let lines = [out.written()];
+        let parsed = forwarded::parse(&lines, &Limits::DEFAULT).unwrap();
+        prop_assert_eq!(parsed.len(), 1, "{:?}", String::from_utf8_lossy(out.written()));
+        prop_assert_eq!(parsed.iter().next(), Some(e));
+    }
+
+    #[test]
+    fn test_byte_ranges_fast_path_agrees_with_general(
+        v in prop_oneof![
+            "(bytes|BYTES|items)=[0-9]{0,4}-[0-9]{0,4}",
+            "bytes=[0-9]{18,21}-[0-9]{0,21}",
+            "bytes=-[0-9]{18,21}",
+            " ?bytes=[0-9]{0,3}-[0-9]{0,3}( |,|,0-1|x)?",
+            "bytes=[0-9-]{0,8}",
+        ],
+        length in prop_oneof![Just(0u64), 1u64..2000, Just(u64::MAX)],
+        room in 0usize..3,
+    ) {
+        let mut a = [ByteRange { start: 0, end: 0 }; 2];
+        let mut b = a;
+        let ours = range::byte_ranges(v.as_bytes(), length, &mut a[..room]);
+        let general = range::parse(v.as_bytes(), &Limits::DEFAULT)
+            .map(|h| range::resolve(&h, length, false, &Limits::DEFAULT, &mut b[..room]));
+        prop_assert_eq!(ours, general, "{}", v);
+        prop_assert_eq!(a, b, "{}", v);
+    }
 
     #[test]
     fn test_condition_agrees_with_list_reading(

@@ -5,7 +5,7 @@ use super::cfws;
 use crate::{
     class,
     error::{ErrorKind, ParseError, Result, WriteError, err},
-    ext_value::{Charset, ExtValue},
+    ext_value::{Charset, ExtValue, is_mime_attribute_char},
     limits::{Limits, MAX_RFC2231_SECTIONS},
     param::{MAX_CHECKED_PARAMS, Names},
     scan::control_kind,
@@ -38,13 +38,13 @@ fn split_name(name: &[u8]) -> (&[u8], Section) {
     if let Some(star) = body.iter().rposition(|&b| b == b'*') {
         let digits = body.get(star + 1..).unwrap_or(&[]);
         let canonical = !digits.is_empty()
-            && digits.len() <= 3
             && digits.iter().all(u8::is_ascii_digit)
             && (digits.len() == 1 || digits.first() != Some(&b'0'));
         if canonical {
-            let n = digits
-                .iter()
-                .fold(0usize, |a, &d| a * 10 + usize::from(d - b'0'));
+            // Saturating: any number this large is past the section limit.
+            let n = digits.iter().fold(0usize, |a, &d| {
+                a.saturating_mul(10).saturating_add(usize::from(d - b'0'))
+            });
             return (body.get(..star).unwrap_or(&[]), Section::Part { n, ext });
         }
     }
@@ -109,7 +109,7 @@ fn pct_chars(t: &[u8]) -> Option<usize> {
                 (Some(&h), Some(&l)) if class::is_hexdig(h) && class::is_hexdig(l) => i += 3,
                 _ => return Some(i),
             }
-        } else if class::is_attr_char(b) {
+        } else if is_mime_attribute_char(b) {
             i += 1;
         } else {
             return Some(i);
@@ -167,7 +167,7 @@ pub fn parse_mime_params<'a>(s: &'a [u8], limits: &Limits) -> Result<(MimeParams
         }
         match (split_name(name).1, value) {
             (Section::Ext | Section::Part { n: 0, ext: true }, Word::Token(t)) => {
-                let ext = ExtValue::parse(t).map_err(|e| e.shifted(at))?;
+                let ext = ExtValue::parse_mime(t).map_err(|e| e.shifted(at))?;
                 if split_name(name).1 == Section::Ext {
                     ext.check_text()
                         .map_err(|e| ParseError::new(e.kind(), at))?;
@@ -200,7 +200,8 @@ pub fn parse_mime_params<'a>(s: &'a [u8], limits: &Limits) -> Result<(MimeParams
                 .iter()
                 .any(|(n, _)| matches!(split_name(n), (b, Section::Part { n: 0, .. }) if b.eq_ignore_ascii_case(base)));
             if !has_zero {
-                return err(ErrorKind::SectionGap, 0);
+                let at = (name.as_ptr() as usize).saturating_sub(s.as_ptr() as usize);
+                return err(ErrorKind::SectionGap, at);
             }
         }
     }
@@ -255,7 +256,7 @@ impl<'a> MimeParams<'a> {
                 }
                 (b, Section::Ext) if b.eq_ignore_ascii_case(want) => {
                     if let Word::Token(t) = w {
-                        ext = ExtValue::parse(t).ok();
+                        ext = ExtValue::parse_mime(t).ok();
                     }
                 }
                 (b, Section::Plain) if b.eq_ignore_ascii_case(want) => plain = Some(w),
@@ -291,20 +292,32 @@ impl<'a> MimeParams<'a> {
             Some(MimeValue::Continued(c)) => c.decode_into(out).map(Some),
             Some(MimeValue::Extended(e)) => e.decode_into(out).map(Some),
             Some(MimeValue::Plain(w)) => {
-                let len = w.len();
-                let Some(dst) = out.get_mut(..len) else {
+                let Some(dst) = out.get_mut(..w.len()) else {
                     return err(ErrorKind::BufferTooSmall, 0);
                 };
-                let utf8 = core::str::from_utf8(w.unescape_into(dst)?).is_ok();
-                if !utf8 {
-                    dst.fill(0);
-                    return err(ErrorKind::InvalidUtf8, 0);
+                // Checked before anything is written.
+                let (mut utf8, text) = (crate::utf8::Utf8::new(), self.value_text(&w));
+                let valid = match w {
+                    Word::Token(t) => t.iter().all(|&b| utf8.push(b)),
+                    Word::Quoted(q) => q.bytes().all(|b| utf8.push(b)),
+                };
+                if !valid || !utf8.is_complete() {
+                    return err(ErrorKind::InvalidUtf8, text);
                 }
-                core::str::from_utf8(dst)
+                core::str::from_utf8(w.unescape_into(dst)?)
                     .map(Some)
                     .map_err(|e| ParseError::new(ErrorKind::InvalidUtf8, e.valid_up_to()))
             }
         }
+    }
+
+    /// The offset of a value in the text.
+    fn value_text(&self, w: &Word<'_>) -> usize {
+        let raw = match w {
+            Word::Token(t) => t,
+            Word::Quoted(q) => q.raw(),
+        };
+        (raw.as_ptr() as usize).saturating_sub(self.text.as_ptr() as usize)
     }
 
     /// The parameters as sent, sections included, in order.
@@ -512,8 +525,11 @@ impl Continuation<'_> {
     }
 
     /// Orders the sections, checks them, and emits the decoded UTF-8 bytes;
-    /// returns their count.
+    /// returns their count. A section given twice is refused, so the value
+    /// cannot depend on the order of the parameters.
     fn walk(&self, limits: &Limits, emit: &mut impl FnMut(u8)) -> Result<usize> {
+        let base = self.params.text.as_ptr() as usize;
+        let at = |s: &[u8]| (s.as_ptr() as usize).saturating_sub(base);
         let mut slots: [Option<(bool, Word<'_>)>; MAX_RFC2231_SECTIONS as usize] =
             [None; MAX_RFC2231_SECTIONS as usize];
         let max = usize::from(limits.rfc2231_sections.min(MAX_RFC2231_SECTIONS));
@@ -524,22 +540,47 @@ impl Continuation<'_> {
                     continue;
                 }
                 if n >= max {
-                    return err(ErrorKind::TooManySections, 0);
+                    return err(ErrorKind::TooManySections, at(name));
                 }
-                if let Some(slot) = slots.get_mut(n) {
-                    *slot = Some((ext, w));
+                match slots.get_mut(n) {
+                    Some(Some(_)) => return err(ErrorKind::SectionGap, at(name)),
+                    Some(slot) => *slot = Some((ext, w)),
+                    None => {}
                 }
                 highest = highest.max(n);
             }
         }
         let used = slots.get(..=highest).unwrap_or(&[]);
-        if used.iter().any(Option::is_none) {
-            return err(ErrorKind::SectionGap, 0);
+        if let Some(gap) = used.iter().position(Option::is_none) {
+            // The section after the gap is the first that cannot be accepted.
+            let after = self.params.iter().find(|(name, _)| {
+                matches!(split_name(name), (b, Section::Part { n, .. })
+                    if b.eq_ignore_ascii_case(self.name) && n > gap)
+            });
+            let offset = after.map_or(0, |(name, _)| at(name));
+            return err(ErrorKind::SectionGap, offset);
         }
         let mut charset = Charset::Utf8;
         let mut utf8 = crate::utf8::Utf8::new();
-        let mut count = 0usize;
-        let mut put = |b: u8, charset: Charset, count: &mut usize| -> Result<()> {
+        let (mut count, mut prev) = (0usize, 0u8);
+        // Every section passes through here, so what spans two sections is
+        // seen whole: `strict` also refuses HTAB, for decoded bytes.
+        let mut put = |b: u8, charset: Charset, strict: bool, off: usize| -> Result<()> {
+            if (b < 0x20 && (strict || b != b'\t')) || b == 0x7f {
+                return err(ErrorKind::ControlInDecoded, off);
+            }
+            if charset == Charset::UsAscii && b >= 0x80 {
+                return err(ErrorKind::InvalidByte, off);
+            }
+            let c1 = if charset == Charset::Iso8859_1 {
+                (0x80..=0x9f).contains(&b)
+            } else {
+                prev == 0xc2 && (0x80..=0x9f).contains(&b)
+            };
+            if c1 {
+                return err(ErrorKind::ControlInDecoded, off);
+            }
+            prev = b;
             let decoded = [0xc0 | (b >> 6), 0x80 | (b & 0x3f)];
             let bytes: &[u8] = if charset == Charset::Iso8859_1 && b >= 0x80 {
                 &decoded
@@ -548,10 +589,10 @@ impl Continuation<'_> {
             };
             for &x in bytes {
                 if !utf8.push(x) {
-                    return err(ErrorKind::InvalidUtf8, 0);
+                    return err(ErrorKind::InvalidUtf8, off);
                 }
                 emit(x);
-                *count += 1;
+                count += 1;
             }
             Ok(())
         };
@@ -559,7 +600,7 @@ impl Continuation<'_> {
             let Some((ext, w)) = *slot else { continue };
             let raw: &[u8] = match (k, ext, w) {
                 (0, true, Word::Token(t)) => {
-                    let e = ExtValue::parse(t)?;
+                    let e = ExtValue::parse_mime(t)?;
                     charset = e.charset();
                     e.encoded()
                 }
@@ -569,6 +610,7 @@ impl Continuation<'_> {
             if ext {
                 let mut i = 0usize;
                 while let Some(&b) = raw.get(i) {
+                    let start = i;
                     let byte = if b == b'%' {
                         let hi = raw
                             .get(i + 1)
@@ -586,31 +628,25 @@ impl Continuation<'_> {
                         i += 1;
                         b
                     };
-                    if byte < 0x20 || byte == 0x7f {
-                        return err(ErrorKind::ControlInDecoded, 0);
-                    }
-                    if charset == Charset::UsAscii && byte >= 0x80 {
-                        return err(ErrorKind::InvalidByte, 0);
-                    }
-                    put(byte, charset, &mut count)?;
+                    put(byte, charset, true, at(raw) + start)?;
                 }
             } else {
                 match w {
                     Word::Token(t) => {
-                        for &byte in t {
-                            put(byte, charset, &mut count)?;
+                        for (i, &byte) in t.iter().enumerate() {
+                            put(byte, charset, false, at(t) + i)?;
                         }
                     }
                     Word::Quoted(q) => {
                         for byte in q.bytes() {
-                            put(byte, charset, &mut count)?;
+                            put(byte, charset, false, at(q.raw()))?;
                         }
                     }
                 }
             }
         }
         if !utf8.is_complete() {
-            return err(ErrorKind::InvalidUtf8, 0);
+            return err(ErrorKind::InvalidUtf8, self.params.text.len());
         }
         Ok(count)
     }
@@ -683,7 +719,11 @@ fn put_param(name: &str, value: &str, out: &mut impl Sink) -> core::result::Resu
         return Ok(());
     }
     // Sections, one per line: `;CRLF name*k*=...`, each line within 78
-    // columns with its trailing `;`.
+    // columns with its trailing `;`. A name that leaves no room for one
+    // encoded byte after `*kk*=UTF-8''` cannot be written.
+    if 1 + n.len() + 12 + 3 + 1 > LINE {
+        return Err(WriteError::OutOfRange);
+    }
     out.put(b";")?;
     let mut rest = v;
     let mut k = 0usize;

@@ -432,7 +432,9 @@ pub fn decode_lower_only_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b
 
 #[inline]
 fn must_encode(b: u8, set: &EncodeSet) -> bool {
-    b >= 0x80 || set.contains(b)
+    // Bytes above 0x7E and C0 controls go out encoded whatever the set says,
+    // so no encoder can emit CR, LF, or NUL.
+    !(0x20..0x7f).contains(&b) || set.contains(b)
 }
 
 /// The length of `input` once encoded with `set`.

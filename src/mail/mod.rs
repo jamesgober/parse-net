@@ -64,20 +64,25 @@ pub(super) fn cfws(v: &[u8], mut i: usize, limits: &crate::Limits) -> Result<usi
                 }
             }
             Some(b'\n') => return err(ErrorKind::LineFeed, i),
-            Some(b'(') => i = crate::text::comment_end(v, i, limits)?.0,
+            Some(b'(') => i = crate::text::comment_end_folded(v, i, limits)?.0,
             _ => return Ok(i),
         }
     }
 }
 
-/// Checks a header field value for writing: no CR, LF, or NUL, and at most
-/// 998 bytes (the physical line limit of RFC 5322 section 2.1.1, which the
+/// A byte no header value may hold: every control but HTAB.
+const fn is_refused(b: u8) -> bool {
+    b != b'\t' && crate::scan::is_control(b)
+}
+
+/// Checks a header field value for writing: no control byte but HTAB, and at
+/// most 998 bytes (the physical line limit of RFC 5322 section 2.1.1, which the
 /// caller's `Name: ` also counts toward).
 ///
 /// # Errors
 ///
-/// [`ErrorKind::BareCr`], [`ErrorKind::LineFeed`], [`ErrorKind::Nul`];
-/// [`ErrorKind::LineTooLong`].
+/// [`ErrorKind::BareCr`], [`ErrorKind::LineFeed`], [`ErrorKind::Nul`],
+/// [`ErrorKind::Control`]; [`ErrorKind::LineTooLong`].
 ///
 /// # Examples
 ///
@@ -89,7 +94,7 @@ pub(super) fn cfws(v: &[u8], mut i: usize, limits: &crate::Limits) -> Result<usi
 /// assert_eq!(mail::check_header_value(&[b'a'; 999]).unwrap_err().kind(), ErrorKind::LineTooLong);
 /// ```
 pub fn check_header_value(value: &[u8]) -> Result<()> {
-    if let Some(at) = value.iter().position(|&b| matches!(b, b'\r' | b'\n' | 0)) {
+    if let Some(at) = value.iter().position(|&b| is_refused(b)) {
         return err(control_kind(value.get(at).copied().unwrap_or(0)), at);
     }
     if value.len() > HARD_LIMIT {
@@ -229,7 +234,7 @@ impl<'a> Iterator for UnfoldIter<'a> {
 /// # Errors
 ///
 /// [`WriteError::NotToken`] for a name outside `ftext`;
-/// [`WriteError::Forbidden`] for CR, LF, or NUL in `value`;
+/// [`WriteError::Forbidden`] for a control byte other than HTAB in `value`;
 /// [`WriteError::OutOfRange`] for a word (with the whitespace that ends the
 /// value, after the last word) that cannot fit in 998 bytes;
 /// [`WriteError::Full`] (nothing written when the sink reports its room).
@@ -252,7 +257,7 @@ pub fn fold(name: &str, value: &[u8], out: &mut impl Sink) -> core::result::Resu
     if !is_field_name(name.as_bytes()) {
         return Err(WriteError::NotToken);
     }
-    if let Some(at) = value.iter().position(|&b| matches!(b, b'\r' | b'\n' | 0)) {
+    if let Some(at) = value.iter().position(|&b| is_refused(b)) {
         return Err(WriteError::forbidden(at));
     }
     let mut count = CountSink::new();
@@ -269,11 +274,7 @@ fn put_fold(
     out.put(name)?;
     out.put(b":")?;
     let mut col = name.len() + 1;
-    if value.first().is_some_and(|&b| b != b' ' && b != b'\t') {
-        out.put(b" ")?;
-        col += 1;
-    }
-    let mut words_on_line = 0usize;
+    let mut first = true;
     let mut rest = value;
     loop {
         let ws_len = rest
@@ -296,18 +297,32 @@ fn put_fold(
             out.put(ws)?;
             return Ok(());
         }
-        if words_on_line > 0 && col + ws.len() + word.len() > SOFT_LIMIT {
+        // The writer's own space after the colon may fold too, but only
+        // when the word could not stay on the line at all.
+        let own_space = first && ws.is_empty();
+        let mut gap: &[u8] = if own_space { b" " } else { ws };
+        let width = col + gap.len() + word.len();
+        if width > HARD_LIMIT || (width > SOFT_LIMIT && !own_space) {
+            // A run too long to start the next line leaves all but its last
+            // byte here; a fold needs only one.
+            if gap.len() + word.len() > HARD_LIMIT {
+                let (keep, last) = gap.split_at(gap.len() - 1);
+                if col + keep.len() > HARD_LIMIT {
+                    return Err(WriteError::OutOfRange);
+                }
+                out.put(keep)?;
+                gap = last;
+            }
             out.put(b"\r\n")?;
             col = 0;
-            words_on_line = 0;
         }
-        if col + ws.len() + word.len() > HARD_LIMIT {
+        if col + gap.len() + word.len() > HARD_LIMIT {
             return Err(WriteError::OutOfRange);
         }
-        out.put(ws)?;
+        out.put(gap)?;
         out.put(word)?;
-        col += ws.len() + word.len();
-        words_on_line += 1;
+        col += gap.len() + word.len();
+        first = false;
         rest = tail;
     }
 }

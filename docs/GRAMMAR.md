@@ -286,10 +286,13 @@ If-Range          = entity-tag / HTTP-date
   ranges than
   `Limits::max_ranges` (default 16), more than two overlapping ranges, or
   more than two descents in order give `RangeOutcome::Ignore` (serve 200).
-- `If-Range` dates are IMF-fixdate only (D-035): the date is compared exactly
-  with the server's own `Last-Modified`.
+- `If-Range` dates are read in all three forms (RFC 9110 section 5.6.7);
+  `parse_if_range` has no clock, so an RFC 850 date needs `parse_if_range_at`
+  (D-035).
+- Positions past `u64::MAX` in a `Range` saturate (RFC 9110 section 14.1.2).
 - Functions: `range::parse`, `resolve`, `byte_ranges`, `parse_content_range`,
-  `write_content_range`, `write_unsatisfied`, `parse_if_range`.
+  `write_content_range`, `write_unsatisfied`, `parse_if_range`,
+  `parse_if_range_at`.
 
 ## ext-value
 
@@ -592,7 +595,7 @@ field-name = 1*ftext
 ftext      = %d33-57 / %d59-126
 ```
 
-- A header value for writing has no CR, LF, or NUL and is at most 998
+- A header value for writing has no control byte but HTAB and is at most 998
   bytes (the line limit of section 2.1.1, which `Name: ` also counts
   toward): `mail::check_header_value`.
 - Unfolding removes a CRLF only when WSP follows it (section 2.2.3); any

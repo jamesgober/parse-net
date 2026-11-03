@@ -33,6 +33,11 @@ use crate::{
     write::{CountSink, Sink, reserve, unique_names, write_quoted, write_word},
 };
 
+/// Limits for walking text that was already validated.
+const RELAXED: Limits = Limits::DEFAULT
+    .max_list_members(u16::MAX)
+    .max_empty_elements(u16::MAX);
+
 /// Whether `s` is a `token68`: `1*( ALPHA / DIGIT / "-" / "." / "_" / "~" /
 /// "+" / "/" ) *"="`.
 fn is_token68(s: &[u8]) -> bool {
@@ -115,7 +120,7 @@ impl<'a> AuthParams<'a> {
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     pub fn iter(&self) -> impl Iterator<Item = (&'a [u8], Word<'a>)> + use<'a> {
-        list::parse(self.text, &Limits::DEFAULT.max_list_members(u16::MAX))
+        list::parse(self.text, &RELAXED)
             .into_iter()
             .flat_map(|l| l.into_iter())
             .filter_map(|e| auth_param(e).ok())
@@ -224,7 +229,8 @@ impl fmt::Debug for AuthPayload<'_> {
 
 /// Validated credentials (`Authorization`, `Proxy-Authorization`).
 ///
-/// `Debug` prints the scheme only.
+/// `Debug` prints the scheme only, and not even that with no payload: a bare
+/// value may be a key sent without a scheme.
 ///
 /// # Examples
 ///
@@ -294,6 +300,10 @@ impl<'a> Credentials<'a> {
 
 impl fmt::Debug for Credentials<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // A value with no payload may be a key sent without a scheme.
+        if self.payload == AuthPayload::None {
+            return f.debug_struct("Credentials").finish_non_exhaustive();
+        }
         f.debug_struct("Credentials")
             .field("scheme", &core::str::from_utf8(self.scheme).unwrap_or("?"))
             .finish_non_exhaustive()
@@ -369,7 +379,16 @@ pub fn parse_credentials<'a>(value: &'a [u8], limits: &Limits) -> Result<Credent
             payload: AuthPayload::Token68(body),
         });
     }
-    if !is_param_start(body) {
+    // Recipients ignore empty list elements (RFC 9110 section 5.6.1.2), the
+    // leading ones included.
+    let first = body
+        .get(
+            body.iter()
+                .take_while(|&&b| matches!(b, b',' | b' ' | b'\t'))
+                .count()..,
+        )
+        .unwrap_or(&[]);
+    if !is_param_start(first) && !first.is_empty() {
         // A token68 followed by more, or a second scheme.
         let t68 = body
             .iter()
@@ -659,13 +678,17 @@ impl<'a> Iterator for ChallengeIter<'a> {
     fn next(&mut self) -> Option<Challenge<'a>> {
         let e = self.elements.next()?;
         let (scheme, rest) = challenge_start(e);
-        if rest.is_empty() {
+        let at = (e.as_ptr() as usize).saturating_sub(self.value.as_ptr() as usize);
+        let spaced_list = rest.is_empty()
+            && self.value.get(at + scheme.len()) == Some(&b' ')
+            && self.elements.peek().is_some_and(|x| is_param_start(x));
+        if rest.is_empty() && !spaced_list {
             return Some(Challenge {
                 scheme,
                 payload: AuthPayload::None,
             });
         }
-        if is_token68(rest) {
+        if !spaced_list && is_token68(rest) {
             return Some(Challenge {
                 scheme,
                 payload: AuthPayload::Token68(rest),
@@ -673,9 +696,14 @@ impl<'a> Iterator for ChallengeIter<'a> {
         }
         // The first parameter is in this element; the rest follow it as
         // separate elements until the next challenge starts.
-        let start = (rest.as_ptr() as usize).saturating_sub(self.value.as_ptr() as usize);
-        let mut end = start + rest.len();
-        let mut count = 1usize;
+        let first = if spaced_list {
+            self.elements.peek().copied().unwrap_or(rest)
+        } else {
+            rest
+        };
+        let start = (first.as_ptr() as usize).saturating_sub(self.value.as_ptr() as usize);
+        let mut end = start + first.len();
+        let mut count = usize::from(!spaced_list);
         while let Some(next) = self.elements.peek() {
             if !is_param_start(next) {
                 break;
@@ -739,16 +767,26 @@ pub fn parse_challenges<'a>(value: &'a [u8], limits: &Limits) -> Result<Challeng
             return Err(refused(e, n, ErrorKind::NotToken).shifted(at));
         }
         count += 1;
-        if rest.is_empty() || is_token68(rest) {
+        // `Digest , realm=x`: a space, then a list with an empty first element.
+        let spaced_list = rest.is_empty()
+            && value.get(at + n) == Some(&b' ')
+            && elements.peek().is_some_and(|x| is_param_start(x));
+        if !spaced_list && (rest.is_empty() || is_token68(rest)) {
             continue;
         }
-        if !is_param_start(rest) {
+        if !spaced_list && !is_param_start(rest) {
             let off = e.len() - rest.len();
             return Err(refused(e, off, ErrorKind::TrailingData).shifted(at));
         }
         // This challenge's parameters: the rest of this element and every
         // following parameter element.
-        let start = at + (e.len() - rest.len());
+        let start = if spaced_list {
+            elements.peek().map_or(at, |x| {
+                (x.as_ptr() as usize).saturating_sub(value.as_ptr() as usize)
+            })
+        } else {
+            at + (e.len() - rest.len())
+        };
         let mut end = at + e.len();
         while let Some(next) = elements.peek() {
             if !is_param_start(next) {
@@ -816,6 +854,10 @@ pub fn write_challenge(
         return Err(WriteError::NotToken);
     }
     unique_names(params)?;
+    // What the parser reads (D-072): a longer list could not be read back.
+    if params.len() > MAX_CHECKED_PARAMS {
+        return Err(WriteError::OutOfRange);
+    }
     let mut count = CountSink::new();
     put_challenge(scheme, params, &mut count)?;
     reserve(out, count.count())?;

@@ -9,7 +9,7 @@ use crate::{
     error::{ErrorKind, ParseError, Result, WriteError, err},
     limits::Limits,
     scan::control_kind,
-    text::comment_end,
+    text::comment_end_folded,
     write::{Sink, reserve},
 };
 
@@ -259,6 +259,7 @@ impl MailDate {
             limits: Limits::DEFAULT,
         };
         let _ = c.cfws()?;
+        let weekday_at = c.i;
         let weekday = if c.peek().is_some_and(|b| b.is_ascii_alphabetic()) {
             let wd = c.name(&DAY_NAMES)?;
             let _ = c.cfws()?;
@@ -271,6 +272,7 @@ impl MailDate {
         } else {
             None
         };
+        let day_at = c.i;
         let (day, n) = c.digits()?;
         if !(1..=2).contains(&n) {
             return Err(c.fail_at(ErrorKind::InvalidDate, c.i - n));
@@ -305,11 +307,11 @@ impl MailDate {
         }
         let (year, month, day) = (year as i32, month as u8, day as u8);
         if day == 0 || day > days_in_month(year, month) {
-            return err(ErrorKind::InvalidDate, 0);
+            return err(ErrorKind::InvalidDate, day_at);
         }
         let days = days_from_civil(year, month, day);
         if weekday.is_some_and(|w| w as u8 != weekday_from_days(days)) {
-            return err(ErrorKind::WeekdayMismatch, 0);
+            return err(ErrorKind::WeekdayMismatch, weekday_at);
         }
         let leap_second = second == 60;
         let second = if leap_second { 59 } else { second };
@@ -456,7 +458,7 @@ impl Cur<'_> {
                         return Err(self.fail(ErrorKind::BareCr));
                     }
                 }
-                Some(b'(') => self.i = comment_end(self.v, self.i, &self.limits)?.0,
+                Some(b'(') => self.i = comment_end_folded(self.v, self.i, &self.limits)?.0,
                 _ => return Ok(self.i > start),
             }
         }

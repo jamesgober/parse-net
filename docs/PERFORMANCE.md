@@ -16,27 +16,62 @@ strictness.
 
 | Operation | Input | parse-net | Competitor | Faster | Target |
 |---|---|---|---|---|---|
-| `scan::check_field_value` | 64-byte `User-Agent` text | 4.9 ns | 25.9 ns (bytewise loop, http-net's former code) | 81% | met |
-| `HttpDate::parse_imf_fixdate` | `Sun, 06 Nov 1994 08:49:37 GMT` | 16.0 ns | 36.3 ns (`httpdate` 1.0.3) | 56% | met |
-| `HttpDate::format` | | 18.8 ns | 47.1 ns (`httpdate`, allocates a `String`) | 60% | met |
-| `MailDate::parse` | `Wed, 21 Oct 2026 17:38:00 +0200` | 21.4 ns | 51.9 ns (`mailparse` 0.15.0) | 59% | met |
-| `sfv::parse_list` | 10 tokens with one parameter each | 382 ns | 1047 ns (`sfv` 0.16.0, owned) | 64% | met |
-| `sfv::parse_dictionary` | 5 members of mixed types | 157 ns | 429 ns (`sfv`, owned) | 63% | met |
-| `if_none_match` | 3 tags | 16.7 ns | 32.4 ns (`headers` 0.4.2) | 48% | met |
-| `best_media` | Chrome's navigation `Accept`, 3 offers | 476 ns | 731 ns (`mime` and a selection loop) | 35% | met |
-| `response_cache_control` | `public, max-age=31536000, immutable` | 41.2 ns | 59.8 ns (`headers`) | 31% | met (0.7) |
-| `parse_media_type` and `charset` | `text/html; charset=utf-8` | 26.1 ns | 37.4 ns (`mime` 0.3.17) | 30% | met (0.7) |
-| `parse_content_disposition` and `filename` | `attachment; filename="a.txt"; filename*=UTF-8''%E2%82%AC.txt` | 133 ns | 175 ns (`mailparse`; `content_disposition` 0.4.0 202 ns) | 24% | met |
-| `byte_ranges` | `bytes=0-499` | 27.5 ns | 34.8 ns (`headers`) | 21% | met |
-| `client_address` | 3-hop `X-Forwarded-For`, IPv4 | 101 ns | no Rust crate resolves through trusted proxies | n/a | estimate was 60 ns |
-| `mail::encode_words` | 36-byte UTF-8 subject (PLAN row: 40 bytes) | 185 ns | no allocation-free Rust encoder | n/a | estimate 200 ns: met |
+| `byte_ranges` | `bytes=0-499` | 10.2 ns | 42.9 ns (`headers`) | 76% | met |
+| `scan::check_field_value` | 64-byte `User-Agent` text | 8.3 ns | 30.4 ns (bytewise loop, http-net's former code) | 73% | met |
+| `HttpDate::format` | | 23.8 ns | 71.9 ns (`httpdate`, allocates a `String`) | 67% | met |
+| `sfv::parse_list` | 10 tokens with one parameter each | 504 ns | 1408 ns (`sfv` 0.16.0, owned) | 64% | met |
+| `sfv::parse_dictionary` | 5 members of mixed types | 207 ns | 531 ns (`sfv`, owned) | 61% | met |
+| `MailDate::parse` | `Wed, 21 Oct 2026 17:38:00 +0200` | 31.6 ns | 76.6 ns (`mailparse` 0.15.0) | 59% | met |
+| `HttpDate::parse_imf_fixdate` | `Sun, 06 Nov 1994 08:49:37 GMT` | 23.5 ns | 53.6 ns (`httpdate` 1.0.3) | 56% | met |
+| `if_none_match` | 3 tags | 28.6 ns | 53.6 ns (`headers` 0.4.2) | 47% | met |
+| `parse_content_disposition` and `filename` | `attachment; filename="a.txt"; filename*=UTF-8''%E2%82%AC.txt` | 173 ns | 298 ns (`content_disposition` 0.4.0; `mailparse` 371 ns) | 42% | met |
+| `parse_media_type` and `charset` | `text/html; charset=utf-8` | 32.3 ns | 55.1 ns (`mime` 0.3.17) | 41% | met |
+| `response_cache_control` | `public, max-age=31536000, immutable` | 54.5 ns | 81.3 ns (`headers`) | 33% | met |
+| `best_media` | Chrome's navigation `Accept`, 3 offers | 609 ns | 879 ns (`mime` and a selection loop) | 31% | met |
+| `client_address` | 3-hop `X-Forwarded-For`, IPv4 | 70 ns | no Rust crate resolves through trusted proxies | n/a | estimate 60 ns: see below |
+| `mail::encode_words` | 36-byte UTF-8 subject (PLAN row: 40 bytes) | 256 ns | no allocation-free Rust encoder | n/a | estimate 200 ns: see below |
 
 parse-net validates every byte of the field in these rows (where it has been
 compared, it is the stricter side: `mime` accepts values parse-net refuses,
 `tests/differential/verdicts.md`), and none of its numbers include an
-allocation. The numbers are from one run of the whole suite at 0.7.0, on a
-machine other build sessions may have been using at the same time; both
-sides of each row ran under the same conditions.
+allocation.
+
+The numbers are from one run of the whole suite at 0.9.0, on a machine that
+other builds were using at the same time (load average 14 to 26 on 32
+threads). That lifts the absolute times by about 30% on both sides of every
+row, so the percentages stand and the times are high. The two rows with an
+estimate have no other side to compare with: `encode_words` measured 185 ns
+on a quiet machine at 0.7, with the same instruction count; `client_address`
+measured 101 ns there at 0.7, and its count has fallen 60% since, so a quiet
+run should land near 40 ns. That run is on the list for the release
+candidates.
+
+## What 0.9 changed
+
+Instructions per call (callgrind), which other builds do not disturb:
+
+| Operation | 0.8 | 0.9 | Change |
+|---|---|---|---|
+| `byte_ranges` | 815 | 197 | -76% |
+| `client_address` | 3,193 | 1,289 | -60% |
+| `parse_content_disposition` and `filename` | 4,014 | 3,585 | -11% |
+| `parse_media_type` and `charset` | 797 | 729 | -9% |
+| `response_cache_control` | 884 | 881 | flat |
+
+- `byte_ranges` reads the shape nearly every request sends by position:
+  `bytes=a-b`, `bytes=a-`, or `bytes=-n`. Anything else takes the general path,
+  and a property test compares the two (D-074).
+- `client_address` decides and validates a chain in one pass, instead of
+  walking it again from the left for every hop.
+- The repeated-name table of D-072 cost every parameter list 512 bytes of
+  zeroing for nothing. Eight offsets now sit inline and the rest of the table
+  is written only past eight.
+- `Content-Disposition` reads `filename*` with the in-place `Params::get`, and
+  stops checking validated text again in `filename_ext`.
+
+`best_media` rose from 10,244 to 10,840 instructions over 0.7 to 0.9, the cost
+of the repeated-name table on each of its members, and is the narrowest row at
+31%.
 
 ## What 0.7 changed
 

@@ -76,7 +76,7 @@ fn link_value(v: &[u8], i: usize, limits: &Limits) -> Result<(usize, usize)> {
         return Err(refused(v, i, ErrorKind::InvalidByte));
     }
     let mut i = target_end(v, i + 1)? + 1;
-    let mut count = 0usize;
+    let (mut count, mut title_star) = (0usize, false);
     loop {
         let mut j = i + skip_ows(v.get(i..).unwrap_or(&[]));
         if v.get(j) != Some(&b';') {
@@ -103,13 +103,20 @@ fn link_value(v: &[u8], i: usize, limits: &Limits) -> Result<(usize, usize)> {
                 ErrorKind::Empty => refused(v, eq, ErrorKind::MissingValue),
                 _ => e.shifted(eq),
             })?;
-            if name.eq_ignore_ascii_case(b"title*") {
-                let Word::Token(t) = w else {
-                    return err(ErrorKind::InvalidCharset, eq);
+            // Only the first counts (RFC 8288 section 3.4.1), and either form
+            // of a link-param is read (section 3).
+            if name.eq_ignore_ascii_case(b"title*") && !title_star {
+                title_star = true;
+                let (t, at) = match w {
+                    Word::Token(t) => (t, eq),
+                    Word::Quoted(q) => match q.as_plain() {
+                        Some(t) => (t, eq + 1),
+                        None => return err(ErrorKind::InvalidCharset, eq),
+                    },
                 };
-                let ext = ExtValue::parse(t).map_err(|e| e.shifted(eq))?;
+                let ext = ExtValue::parse(t).map_err(|e| e.shifted(at))?;
                 ext.check_text()
-                    .map_err(|e| ParseError::new(e.kind(), eq))?;
+                    .map_err(|e| ParseError::new(e.kind(), at))?;
             }
             i = eq + used;
         } else {
@@ -464,7 +471,7 @@ impl<'a> LinkValue<'a> {
     pub fn title(&self) -> Option<Filename<'a>> {
         let ext = self.first("title*").flatten().and_then(|w| match w {
             Word::Token(t) => ExtValue::parse(t).ok(),
-            Word::Quoted(_) => None,
+            Word::Quoted(q) => ExtValue::parse(q.as_plain()?).ok(),
         });
         ext.map(Filename::Ext)
             .or_else(|| self.first("title").flatten().map(Filename::Plain))
@@ -731,6 +738,17 @@ pub fn write_link(
     if params.iter().any(|(name, _)| !is_token(name.as_bytes())) {
         return Err(WriteError::NotToken);
     }
+    // A `title*` its own parser would refuse is never written. As there, only
+    // the first with a value counts, and any later one is ignored.
+    let title = params
+        .iter()
+        .find(|(name, value)| name.eq_ignore_ascii_case("title*") && !value.is_empty());
+    if let Some((_, value)) = title {
+        let ext = ExtValue::parse(value.as_bytes());
+        if ext.and_then(|e| e.check_text()).is_err() {
+            return Err(WriteError::forbidden(0));
+        }
+    }
     let mut count = CountSink::new();
     put_link(target, params, &mut count)?;
     reserve(out, count.count())?;
@@ -839,7 +857,11 @@ mod tests {
             one(b"<a>; title=x").title(),
             Some(Filename::Plain(_))
         ));
-        assert_eq!(k(b"<a>; title*=\"UTF-8''x\""), ErrorKind::InvalidCharset);
+        assert!(matches!(
+            one(b"<a>; title*=\"UTF-8''x\"").title(),
+            Some(crate::Filename::Ext(_))
+        ));
+        assert_eq!(k(b"<a>; title*=\"UTF-8\\''x\""), ErrorKind::InvalidCharset);
         assert_eq!(k(b"<a>; title*=UTF-8''%0a"), ErrorKind::ControlInDecoded);
         assert_eq!(k(b"<a>; title*=x"), ErrorKind::InvalidCharset);
     }

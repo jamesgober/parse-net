@@ -65,19 +65,27 @@ pub struct Param<'a> {
 /// ```
 pub const MAX_CHECKED_PARAMS: usize = 64;
 
+/// How many name offsets [`Names`] keeps inline. Nearly every list fits, and
+/// the rest of the table is then never written.
+const INLINE_NAMES: usize = 8;
+
 /// The names already seen in one parameter list, for the repeat check: their
 /// offsets in the list's text, compared in place (D-072). The caller keeps
-/// at most [`MAX_CHECKED_PARAMS`] names.
+/// at most [`MAX_CHECKED_PARAMS`] names. `rest` stays `None` until a list
+/// passes [`INLINE_NAMES`], so a short list does not pay to zero the table.
 pub(crate) struct Names {
-    at: [usize; MAX_CHECKED_PARAMS],
+    first: [usize; INLINE_NAMES],
+    rest: Option<[usize; MAX_CHECKED_PARAMS - INLINE_NAMES]>,
     len: usize,
     seen: u64,
 }
 
 impl Names {
+    #[inline]
     pub(crate) const fn new() -> Self {
         Self {
-            at: [0; MAX_CHECKED_PARAMS],
+            first: [0; INLINE_NAMES],
+            rest: None,
             len: 0,
             seen: 0,
         }
@@ -86,6 +94,7 @@ impl Names {
     /// Whether `name`, at `off` in `text`, repeats a recorded name (ASCII
     /// case-insensitive); records it when it does not. `in_name` is the
     /// names' byte class: a recorded name ends at the first byte outside it.
+    #[inline]
     pub(crate) fn repeats(
         &mut self,
         text: &[u8],
@@ -94,20 +103,52 @@ impl Names {
         in_name: fn(u8) -> bool,
     ) -> bool {
         let bit = name_bit(name);
-        let l = name.len();
-        let earlier = self.at.get(..self.len).unwrap_or(&[]);
-        if self.seen & bit != 0
-            && earlier.iter().any(|&o| {
+        if self.seen & bit == 0 {
+            if let Some(slot) = self.first.get_mut(self.len) {
+                self.seen |= bit;
+                *slot = off;
+                self.len += 1;
+                return false;
+            }
+        }
+        self.repeats_slow(text, off, name, in_name, bit)
+    }
+
+    /// [`repeats`](Self::repeats) when the filter cannot rule a repeat out,
+    /// or the list has passed [`INLINE_NAMES`].
+    #[cold]
+    fn repeats_slow(
+        &mut self,
+        text: &[u8],
+        off: usize,
+        name: &[u8],
+        in_name: fn(u8) -> bool,
+        bit: u64,
+    ) -> bool {
+        if self.seen & bit != 0 {
+            let l = name.len();
+            let same = |&o: &usize| {
                 text.get(o + l).is_none_or(|&b| !in_name(b))
                     && text
                         .get(o..o + l)
                         .is_some_and(|e| e.eq_ignore_ascii_case(name))
-            })
-        {
-            return true;
+            };
+            let inline = self.first.get(..self.len.min(INLINE_NAMES));
+            let spilled = self.len.saturating_sub(INLINE_NAMES);
+            let rest = self.rest.as_ref().and_then(|r| r.get(..spilled));
+            if inline.unwrap_or(&[]).iter().any(same) || rest.unwrap_or(&[]).iter().any(same) {
+                return true;
+            }
         }
         self.seen |= bit;
-        if let Some(slot) = self.at.get_mut(self.len) {
+        let slot = match self.len.checked_sub(INLINE_NAMES) {
+            None => self.first.get_mut(self.len),
+            Some(i) => self
+                .rest
+                .get_or_insert([0; MAX_CHECKED_PARAMS - INLINE_NAMES])
+                .get_mut(i),
+        };
+        if let Some(slot) = slot {
             *slot = off;
             self.len += 1;
         }
@@ -371,8 +412,12 @@ impl<'a> Params<'a> {
                 let off = (p.name.as_ptr() as usize).saturating_sub(self.text.as_ptr() as usize);
                 let head = self.text.get(..off).unwrap_or(&[]);
                 let semi = head.iter().rposition(|&b| b == b';').unwrap_or(0);
+                let mut text = self.text.get(..semi).unwrap_or(&[]);
+                while let [rest @ .., b' ' | b'\t'] = text {
+                    text = rest;
+                }
                 let before = Params {
-                    text: self.text.get(..semi).unwrap_or(&[]),
+                    text,
                     count: u32::try_from(index).unwrap_or(u32::MAX),
                     policy: self.policy,
                 };
