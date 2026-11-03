@@ -13,6 +13,85 @@
 
 ---
 
+## [0.9.0] - 2026-11-03
+
+Beta: the pre-1.0 polish pass. Three independent reviews of the whole crate
+found 46 defects; all are fixed, each with a regression test. `0.9.0` refuses
+some inputs that `0.8.0` accepted, and accepts some it refused.
+
+### Security
+
+- `write_element` quotes every host that is not a token: a `Host` holding a
+  comma or a semicolon, legal in a reg-name, forged a `Forwarded` hop or pair
+  that the next proxy read.
+- `Host`, `Origin`, and `write_element` refuse bytes no parsed value holds, so
+  their public fields cannot carry CR, LF, or NUL through a writer.
+- The numeric-name rule (D-040) reads percent-decoded bytes: `127.0.0.%31` and
+  `127%2e1` passed as names, and a browser reads them as addresses.
+- `decode_words` refuses raw controls in its text, and is linear: failed
+  candidates each scanned to the end of the value, 62 seconds for 1 MiB.
+- RFC 2231 continuations refuse C1 controls, across sections too, and a
+  section given twice, whose value depended on the parameters' order.
+- A malformed `max-stale` no longer reads as any staleness.
+- `Debug` of a bare credential hides it (it may be a key sent without a
+  scheme), and `OwnedMediaType`'s `Debug` hides parameter values.
+- `check_header_value`, `fold`, and `pct::encode` refuse or encode every
+  control but HTAB (D-078).
+
+### Added
+
+- `range::parse_if_range_at`: `If-Range` in all three date forms; without a
+  clock, `parse_if_range` reads IMF-fixdate and asctime (D-035).
+- `forwarded::Proto::{Ws, Wss, Other}`: `proto` takes any URI scheme, where
+  `proto=wss` failed whole chains closed (D-077).
+- `dev/READINESS-1.0.md`: what stands between parse-net and 1.0.
+
+### Changed
+
+- `byte_ranges` reads the one-range shape by position (815 to 197
+  instructions); `client_address` decides and validates in one pass (3,193 to
+  1,289); the repeated-name table zeroes nothing for short lists;
+  `Content-Disposition` stops revalidating `filename*` (D-074). Every compared
+  row is at least 30% faster than its competitor.
+- Numerals past `u64::MAX` in `Range` saturate (RFC 9110 section 14.1.2,
+  D-075); a non-zero suffix on an empty representation is `Ignore`, not 416.
+- `*` stands alone in `If-Match` and `If-None-Match`.
+- `Negotiator` refuses what the fields' grammar forbids (`language-range`,
+  parameters other than `q`), never chooses an invalid offer, and places
+  `Refused` errors by line and offset (D-076).
+- Control bytes keep their kind in ranges, entity tags, and after a backslash
+  (D-037); `InvalidQuotedPair` is now for grammars that allow no such pair.
+- `for=UNKNOWN` reads as `unknown`; a repeated pair of any name in a
+  `Forwarded` element is refused.
+- `Link` reads a quoted `title*` and ignores `title*` after the first;
+  `write_link` and `write_challenge` refuse what their parsers would.
+- Leading empty list elements are read in credentials and challenges.
+- `Cache-Control` budgets span field lines, and a trailing comma counts as an
+  empty element, in `Cache-Control`, entity-tag lists, and ranges.
+- `fold` folds after the colon and splits long whitespace runs, so values that
+  fit are no longer refused; `write_mime_param`, `write_msg_id`, and
+  `encode_words` keep the 998-byte line limit.
+- `decode_words` reads folds as whitespace, treats a lone `"` as text, and
+  never errors on what does not stand alone as an encoded word.
+- `parse_mailbox` reads comments around an angle address; comments in mail
+  fields may fold. RFC 2231 section numbers past three digits count, values
+  keep `{` and `}`, and US-ASCII holds in every section.
+- Display String triples count toward `max_string_len`; `civil_from_days`
+  clamps to real dates; many error offsets now point at the failure; refusals
+  in `decode_words` and `MimeParams::decode_into` write nothing.
+
+### Testing
+
+- `tests/review_core.rs`, `tests/review_security.rs`, `tests/review_mail.rs`:
+  a regression for each finding.
+- Property tests: the one-pass `client_address`, `xff_member`, and the
+  `byte_ranges` path against the code they replaced; no host can forge a
+  `Forwarded` pair through `write_element`.
+- `tests/complexity.rs` gains the adversarial `decode_words` shapes, and its
+  time bound on an optimised build is 2.0 of the size ratio (D-073).
+
+---
+
 ## [0.8.0] - 2026-10-29
 
 Alpha: parse-net in use by published consumers. http-net 0.8.0 and 0.9.0
@@ -374,7 +453,8 @@ The scaffold and the plan. No parsing code yet.
   (0.1 to 1.0 with exit criteria).
 - `fuzz/` crate skeleton; targets arrive with the parsers they cover.
 
-[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/jamesgober/parse-net/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jamesgober/parse-net/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jamesgober/parse-net/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/jamesgober/parse-net/compare/v0.6.0...v0.6.1

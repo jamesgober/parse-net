@@ -36,12 +36,16 @@ James accepts it or it is fixed.
 
 ## Performance
 
-Every compared row is at least 20% faster than the best Rust competitor
+Every compared row is at least 30% faster than the best Rust competitor
 (`docs/PERFORMANCE.md`). form-net's `FormKind::detect` measured 114 ns against
 its 100 ns estimate on parse-net 0.6.1, before the 0.7 and 0.9 speedups; it
 should be measured again once form-net moves to 0.9, and it can drop its own
 repeated-name walk by parsing under `Refuse` and reading the name at the
 error's offset.
+
+One benchmark waits for a quiet machine: the 0.9.0 run shared the machine with
+other builds, so `client_address` (70 ns there, near 40 ns expected) has not
+been measured against its 60 ns estimate.
 
 ## Closed by the 0.9 polish pass
 
