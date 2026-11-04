@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "parse-net"
-version = "0.9.0"
+version = "0.9.1"
 
 # Minimum Supported Rust Version (MSRV)
 # 1.85: edition 2024. `core::net` addresses need 1.77, `core::error::Error`
@@ -60,8 +60,10 @@ alloc = []
 std = ["alloc"]
 
 # Base64 decode and encode helpers through the first-party `encode-lib`
-# (dev/PLAN.md, D-002). Declared empty until encode-lib is published; with it
-# off, parse-net validates base64 text and never decodes it.
+# (dev/PLAN.md, D-002). A no-op until encode-lib is published, kept so builds
+# that name it keep working. RFC 2047 `B` encoded words do not need it: they
+# use a private codec (D-080). `Basic` credentials and Structured Field byte
+# sequences are validated, not decoded, until then.
 encode-lib = []
 
 

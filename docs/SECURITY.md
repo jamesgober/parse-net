@@ -105,9 +105,10 @@ field of many parameters cost the square of its length (D-072).
 
 ## Fuzzing
 
-34 cargo-fuzz targets cover every parser, every writer's round trip, and
-three differential comparisons (`diff_http_date` against `httpdate`,
-`diff_media_type` against `mime`, `diff_sfv` against `sfv`). Each of the 31
+37 cargo-fuzz targets cover every parser, every writer's round trip, and
+four differential comparisons (`diff_http_date` against `httpdate`,
+`diff_media_type` against `mime`, `diff_sfv` against `sfv`, `diff_b64`
+against `base64` for `B` encoded words). Each of the 33
 parser targets runs under the counting allocator (a parse that allocates
 fails the run), checks that every error it sees prints as exactly its kind's message and
 position, with no input bytes, and asserts the properties its parser
@@ -138,7 +139,8 @@ ambiguous with the RFC text. None is open as "theirs right". In summary:
 
 - **Base64 decoding** of `Basic` credentials and Structured Field byte
   sequences waits for encode-lib (D-002): the text is validated, not
-  decoded.
+  decoded. RFC 2047 `B` words are decoded, by a strict private codec bounded
+  to one 75-byte word (D-080).
 - **TLS, authentication, and authorization** are the caller's: parse-net
   reads credentials and reports what they say.
 - **Policy**: which file names to accept, which proxies to trust, and which

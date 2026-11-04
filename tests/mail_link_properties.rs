@@ -119,6 +119,18 @@ proptest! {
     }
 
     #[test]
+    fn test_b_encoded_words_round_trip(text in "\\PC{0,80}", room in 0usize..90) {
+        let mut buf = vec![0u8; 8192];
+        let mut out = SliceSink::new(&mut buf);
+        mail::encode_words_b(&text, room, &mut out).expect("no control characters");
+        let flat: Vec<u8> = mail::unfold(out.written()).expect("unfolds").iter().flatten().copied().collect();
+        let mut dec = vec![0u8; 8192];
+        let l = Limits::DEFAULT.max_encoded_words(u16::MAX);
+        let lead = if out.written().starts_with(b"\r\n ") { " " } else { "" };
+        prop_assert_eq!(mail::decode_words(&flat, &l, &mut dec).expect("decodes"), format!("{lead}{text}"));
+    }
+
+    #[test]
     fn test_encoded_words_round_trip(text in "\\PC{0,80}", room in 0usize..90) {
         let mut buf = vec![0u8; 8192];
         let mut out = SliceSink::new(&mut buf);

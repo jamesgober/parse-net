@@ -220,6 +220,33 @@ fn cases() -> Vec<Case> {
             full: |v| outcome(param::parse(v, &FULL)),
         },
         Case {
+            name: "optional parameters, bare names no filter separates",
+            input: |n| build("", |i| format!("; {}", colliding_name(i)), "", n),
+            default: |v| outcome(param::parse_optional(v, &Limits::DEFAULT)),
+            expect: Err(ErrorKind::TooManyMembers),
+            full: |v| outcome(param::parse_optional(v, &FULL)),
+        },
+        Case {
+            name: "optional parameters, bare and valued names mixed",
+            input: |n| {
+                build(
+                    "",
+                    |i| {
+                        if i % 2 == 0 {
+                            format!(";{}", name(i))
+                        } else {
+                            format!(";{}=\"v\"", name(i))
+                        }
+                    },
+                    "",
+                    n,
+                )
+            },
+            default: |v| outcome(param::parse_optional(v, &Limits::DEFAULT)),
+            expect: Err(ErrorKind::TooManyMembers),
+            full: |v| outcome(param::parse_optional(v, &FULL)),
+        },
+        Case {
             name: "media type, many parameters",
             input: |n| build("text/html", |i| format!("; {}=\"v\"", name(i)), "", n),
             default: |v| outcome(media::parse(v, &Limits::DEFAULT)),
@@ -479,6 +506,39 @@ fn cases() -> Vec<Case> {
                 ))
             },
             expect: Err(ErrorKind::TooManyMembers),
+            full: |v| decode(v, &FULL),
+        },
+        Case {
+            name: "encoded words, many B words of the longest kind",
+            input: |n| {
+                build(
+                    "",
+                    |_| format!("=?UTF-8?B?{}?= ", "w6nDqcOp".repeat(7)),
+                    "z",
+                    n,
+                )
+            },
+            default: |v| {
+                outcome(mail::decode_words(
+                    v,
+                    &Limits::DEFAULT,
+                    &mut vec![0; v.len()],
+                ))
+            },
+            expect: Err(ErrorKind::TooManyMembers),
+            full: |v| decode(v, &FULL),
+        },
+        Case {
+            name: "encoded words, B candidates that never close",
+            input: |n| build("", |_| "=?UTF-8?B?QUFB ".into(), "", n),
+            default: |v| {
+                outcome(mail::decode_words(
+                    v,
+                    &Limits::DEFAULT,
+                    &mut vec![0; v.len()],
+                ))
+            },
+            expect: Ok(()),
             full: |v| decode(v, &FULL),
         },
         // Each `=?` starts a candidate that never closes: a scan to the end

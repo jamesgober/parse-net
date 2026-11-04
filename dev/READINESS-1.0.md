@@ -17,7 +17,8 @@ James accepts it or it is fixed.
 
 | Item | State | Recommendation |
 |---|---|---|
-| `encode-lib` helpers: `basic_decode_into` (ATH-3), `encode_words_b` (MAIL-5), `ByteSeq::decode_into`, `sfv::Writer::bytes`, `B` encoded words | P2 items blocked on encode-lib, which is not published (D-002, D-062). They are additive behind the `encode-lib` feature, so 1.0 can ship without them and a 1.x add them. `decode_words` refuses `B` words until then, which is the one gap a real mail client would meet | ship 1.0 without them only if encode-lib is not ready by the last release candidate; publish encode-lib first if it is close |
+| `encode-lib` helpers: `basic_decode_into` (ATH-3), `ByteSeq::decode_into`, `sfv::Writer::bytes` | P2 items blocked on encode-lib, which is not published (D-002, D-062). They are additive behind the `encode-lib` feature, a no-op until then, so 1.0 can ship without them and a 1.x add them. `B` encoded words no longer wait: 0.9.1 reads and writes them (D-080, below) | ship 1.0 without them only if encode-lib is not ready by the last release candidate; publish encode-lib first if it is close |
+| D-080: a private base64 codec for RFC 2047 `B` words (`encode_words_b`, `B` in `decode_words`) | reverses D-002's "no private codec is added", which James approved at the design lock, for that one encoding. Decided by the main session on 2026-11-04 for smtp-net and ws-net, and told to James. Strict, bounded to one 75-byte word, no public base64 API, fuzzed against the `base64` crate (`diff_b64`) | James: confirm, or name encode-lib as the codec it moves to once published (an internal change, invisible to callers) |
 | 64 parameters per element where repeats are refused (D-072) | a fixed limit on RFC 9110, authentication, and MIME parameters, whatever `max_params` says. Finding a repeat without allocating costs either quadratic time or a table on the stack. No consumer has come near it | keep it; raising it later is compatible, lowering it is not |
 | `has_bidi_control` reports embedding, override, and isolate controls, not LRM, RLM, and ALM (D-070) | the same set rustc's lint reports; legitimate right-to-left names contain the marks | keep it |
 | `Proto::Other` carries no scheme name (D-077) | `proto=ftp` reads, but the name is lost and `write_element` refuses it. Carrying it would add a lifetime to `Proto` | keep it |
@@ -36,16 +37,16 @@ James accepts it or it is fixed.
 
 ## Performance
 
-Every compared row is at least 30% faster than the best Rust competitor
-(`docs/PERFORMANCE.md`). form-net's `FormKind::detect` measured 114 ns against
+Every compared row is at least 25% faster than the best Rust competitor, on
+the quiet-machine run at 0.9.1 (`docs/PERFORMANCE.md`). The narrowest is
+`response_cache_control` at 25%: the loaded 0.9.0 run read 33%, and `headers`
+gained more from the quiet machine. It meets the 20% target; tune it in the
+release-candidate pass. Both estimates are met: `client_address` 37.6 ns
+against 60, `encode_words` 176 ns against 200. form-net's `FormKind::detect` measured 114 ns against
 its 100 ns estimate on parse-net 0.6.1, before the 0.7 and 0.9 speedups; it
 should be measured again once form-net moves to 0.9, and it can drop its own
 repeated-name walk by parsing under `Refuse` and reading the name at the
 error's offset.
-
-One benchmark waits for a quiet machine: the 0.9.0 run shared the machine with
-other builds, so `client_address` (70 ns there, near 40 ns expected) has not
-been measured against its 60 ns estimate.
 
 ## Closed by the 0.9 polish pass
 
@@ -56,3 +57,16 @@ been measured against its 60 ns estimate.
   each with a regression test (`docs/SECURITY.md`).
 - Every P0, P1, and P2 item of `docs/API.md` ships, except the two named above
   that wait on encode-lib.
+- `client_address` against its 60 ns estimate: 38.3 ns on a quiet machine at
+  0.9.1.
+
+## Since 0.9.0
+
+- ws-net, adopting 0.9.0, found that `param::parse` refuses RFC 6455
+  extension parameters without a value. 0.9.1 adds `param::parse_optional`
+  (D-079).
+- smtp-net needed `encode_words_b`, which waited on encode-lib. 0.9.1 adds
+  it and `B` decoding with a private codec (D-080, in the table above for
+  James). Before 1.0, web-net settles whether
+  `Strict-Transport-Security` needs the same shape without a leading `;`;
+  smtp-net does not need it (ROADMAP).

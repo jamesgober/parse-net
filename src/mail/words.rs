@@ -1,5 +1,6 @@
 //! RFC 2047 encoded words in unstructured header text.
 
+use super::b64;
 use crate::{
     class,
     error::{ErrorKind, ParseError, Result, WriteError, err},
@@ -84,6 +85,18 @@ impl Payload {
     fn as_bytes(&self) -> &[u8] {
         self.buf.get(..self.len).unwrap_or(&[])
     }
+}
+
+/// Whether `text` goes out as it is under the `B` encoder: printable ASCII
+/// without `=?` whose line stays legal. `put_words` keeps its own copy of
+/// this test: called from there, it cost the Q encoder 2% (callgrind).
+#[inline]
+fn goes_plain(text: &str, room_first_line: usize) -> bool {
+    let bytes = text.as_bytes();
+    let used = super::SOFT_LIMIT.saturating_sub(room_first_line);
+    bytes.iter().all(|b| (0x20..=0x7e).contains(b))
+        && !text.contains("=?")
+        && used + bytes.len() <= super::HARD_LIMIT
 }
 
 fn put_words(
@@ -177,6 +190,91 @@ pub fn encode_words(
     put_words(text, room_first_line, &mut count)?;
     reserve(out, count.count())?;
     put_words(text, room_first_line, out)
+}
+
+/// Writes one `=?UTF-8?B?...?=` word holding `chunk`, at most 45 bytes.
+fn put_b_word(chunk: &[u8], out: &mut impl Sink) -> core::result::Result<(), WriteError> {
+    let mut buf = [0u8; WORD_LIMIT - OVERHEAD];
+    let n = b64::encode(chunk, &mut buf);
+    out.put(b"=?UTF-8?B?")?;
+    out.put(buf.get(..n).unwrap_or(&[]))?;
+    out.put(b"?=")?;
+    Ok(())
+}
+
+fn put_words_b(
+    text: &str,
+    room_first_line: usize,
+    out: &mut impl Sink,
+) -> core::result::Result<(), WriteError> {
+    let bytes = text.as_bytes();
+    if goes_plain(text, room_first_line) {
+        out.put(bytes)?;
+        return Ok(());
+    }
+    let mut limit = room_first_line.min(WORD_LIMIT);
+    // The characters of the word being built: `bytes[start..start + len]`.
+    let (mut start, mut len) = (0usize, 0usize);
+    while let Some(&lead) = bytes.get(start + len) {
+        let w = utf8_width(lead);
+        if len > 0 && OVERHEAD + b64::encoded_len(len + w) > limit {
+            put_b_word(bytes.get(start..start + len).unwrap_or(&[]), out)?;
+            out.put(b"\r\n ")?;
+            (start, len, limit) = (start + len, 0, WORD_LIMIT);
+        }
+        if len == 0 && OVERHEAD + b64::encoded_len(w) > limit {
+            // Not even one character fits in the room left on the first
+            // line: start on a new one.
+            out.put(b"\r\n ")?;
+            limit = WORD_LIMIT;
+        }
+        len += w;
+    }
+    if len > 0 {
+        put_b_word(bytes.get(start..start + len).unwrap_or(&[]), out)?;
+    }
+    Ok(())
+}
+
+/// [`encode_words`] with the RFC 2047 `B` encoding: `=?UTF-8?B?...?=` words
+/// of at most 75 bytes, split only between characters, separated by CRLF SP.
+/// Text that goes out as it is under [`encode_words`] goes out as it is here.
+/// `B` costs four bytes for every three, `Q` three for every byte it escapes,
+/// so `B` is the shorter for text that is mostly not ASCII: a Japanese or
+/// Chinese subject is about 40% shorter. [`decode_words`] reads both.
+///
+/// # Errors
+///
+/// [`WriteError::Forbidden`] for a control character (C0, DEL, or C1);
+/// [`WriteError::Full`] (nothing written when the sink reports its room).
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{mail, Limits, SliceSink};
+///
+/// let mut buf = [0u8; 256];
+/// let mut out = SliceSink::new(&mut buf);
+/// mail::encode_words_b("\u{4f1a}\u{8b70}\u{306e}\u{304a}\u{77e5}\u{3089}\u{305b}", 64, &mut out).expect("room");
+/// assert_eq!(out.written(), b"=?UTF-8?B?5Lya6K2w44Gu44GK55+l44KJ44Gb?=");
+///
+/// let mut text = [0u8; 64];
+/// let s = mail::decode_words(out.written(), &Limits::DEFAULT, &mut text)?;
+/// assert_eq!(s, "\u{4f1a}\u{8b70}\u{306e}\u{304a}\u{77e5}\u{3089}\u{305b}");
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
+pub fn encode_words_b(
+    text: &str,
+    room_first_line: usize,
+    out: &mut impl Sink,
+) -> core::result::Result<(), WriteError> {
+    if let Some((at, _)) = text.char_indices().find(|&(_, c)| c.is_control()) {
+        return Err(WriteError::forbidden(at));
+    }
+    let mut count = CountSink::new();
+    put_words_b(text, room_first_line, &mut count)?;
+    reserve(out, count.count())?;
+    put_words_b(text, room_first_line, out)
 }
 
 /// The charsets decoded.
@@ -315,6 +413,87 @@ fn closing_quote(v: &[u8], from: usize) -> Option<usize> {
     }
 }
 
+/// The checks every decoded byte meets, whichever the encoding, then its
+/// UTF-8 form emitted. `start` is the offset reported for it.
+#[inline(always)]
+fn put_decoded(
+    cs: Charset,
+    byte: u8,
+    prev: &mut u8,
+    utf8: &mut Utf8,
+    start: usize,
+    emit: &mut impl FnMut(&[u8]),
+) -> Result<()> {
+    // Every control character is refused, as in ext-values: C0 (HTAB
+    // included), DEL, and C1 (U+0080 to U+009F: `C2 80` to `C2 9F` in
+    // UTF-8, where 0xC2 is always a lead byte; bytes 0x80 to 0x9F in
+    // ISO-8859-1).
+    let c1 = match cs {
+        Charset::Utf8 => *prev == 0xc2 && (0x80..=0x9f).contains(&byte),
+        Charset::Latin1 => (0x80..=0x9f).contains(&byte),
+        Charset::Ascii => false,
+    };
+    if byte < 0x20 || byte == 0x7f || c1 {
+        return err(ErrorKind::ControlInDecoded, start);
+    }
+    *prev = byte;
+    match cs {
+        Charset::Utf8 => {
+            if !utf8.push(byte) {
+                return err(ErrorKind::InvalidUtf8, start);
+            }
+            emit(&[byte]);
+        }
+        Charset::Ascii if byte >= 0x80 => {
+            return err(ErrorKind::InvalidEncodedWord, start);
+        }
+        Charset::Ascii => emit(&[byte]),
+        Charset::Latin1 if byte >= 0x80 => emit(&[0xc0 | (byte >> 6), 0x80 | (byte & 0x3f)]),
+        Charset::Latin1 => emit(&[byte]),
+    }
+    Ok(())
+}
+
+/// Decodes one B word's text, emitting UTF-8. The base64 is strict
+/// (`b64::decode`); each byte is then checked as a Q word's is, and reported
+/// at the group of four that holds it.
+fn decode_b(cs: Charset, text: &[u8], at: usize, emit: &mut impl FnMut(&[u8])) -> Result<()> {
+    let mut bytes = [0u8; b64::MAX_DECODED];
+    let n =
+        b64::decode(text, &mut bytes).or_else(|i| err(ErrorKind::InvalidEncodedWord, at + i))?;
+    let decoded = bytes.get(..n).unwrap_or(&[]);
+    // A word that passes every check goes out in one piece. The checks are
+    // those of `put_decoded`, over the whole word at once: no C0 or DEL, no
+    // C1 (`C2 80` to `C2 9F`), whole UTF-8 characters; ASCII for the other
+    // charsets. Anything else takes the byte loop, which finds the error.
+    let ascii_text = |d: &[u8]| d.iter().all(|&b| (0x20..0x7f).contains(&b));
+    let clean = match cs {
+        Charset::Utf8 => {
+            decoded.iter().all(|&b| b >= 0x20 && b != 0x7f)
+                && !decoded
+                    .iter()
+                    .zip(decoded.iter().skip(1))
+                    .any(|(&a, &b)| a == 0xc2 && (0x80..=0x9f).contains(&b))
+                && core::str::from_utf8(decoded).is_ok()
+        }
+        Charset::Ascii | Charset::Latin1 => ascii_text(decoded),
+    };
+    if clean {
+        emit(decoded);
+        return Ok(());
+    }
+    let mut utf8 = Utf8::new();
+    let mut prev = 0u8;
+    for (k, &byte) in decoded.iter().enumerate() {
+        put_decoded(cs, byte, &mut prev, &mut utf8, at + k / 3 * 4, emit)?;
+    }
+    if !utf8.is_complete() {
+        // Each encoded word holds whole characters (RFC 2047 section 5).
+        return err(ErrorKind::InvalidUtf8, at + text.len());
+    }
+    Ok(())
+}
+
 /// Decodes one Q word's text, emitting UTF-8.
 fn decode_q(cs: Charset, text: &[u8], at: usize, emit: &mut impl FnMut(&[u8])) -> Result<()> {
     let mut utf8 = Utf8::new();
@@ -336,33 +515,7 @@ fn decode_q(cs: Charset, text: &[u8], at: usize, emit: &mut impl FnMut(&[u8])) -
             _ => return err(ErrorKind::InvalidEncodedWord, start),
         };
         i += 1;
-        // Every control character is refused, as in ext-values: C0 (HTAB
-        // included), DEL, and C1 (U+0080 to U+009F: `C2 80` to `C2 9F` in
-        // UTF-8, where 0xC2 is always a lead byte; bytes 0x80 to 0x9F in
-        // ISO-8859-1).
-        let c1 = match cs {
-            Charset::Utf8 => prev == 0xc2 && (0x80..=0x9f).contains(&byte),
-            Charset::Latin1 => (0x80..=0x9f).contains(&byte),
-            Charset::Ascii => false,
-        };
-        if byte < 0x20 || byte == 0x7f || c1 {
-            return err(ErrorKind::ControlInDecoded, start);
-        }
-        prev = byte;
-        match cs {
-            Charset::Utf8 => {
-                if !utf8.push(byte) {
-                    return err(ErrorKind::InvalidUtf8, start);
-                }
-                emit(&[byte]);
-            }
-            Charset::Ascii if byte >= 0x80 => {
-                return err(ErrorKind::InvalidEncodedWord, start);
-            }
-            Charset::Ascii => emit(&[byte]),
-            Charset::Latin1 if byte >= 0x80 => emit(&[0xc0 | (byte >> 6), 0x80 | (byte & 0x3f)]),
-            Charset::Latin1 => emit(&[byte]),
-        }
+        put_decoded(cs, byte, &mut prev, &mut utf8, start, emit)?;
     }
     if !utf8.is_complete() {
         // Each encoded word holds whole characters (RFC 2047 section 5).
@@ -427,14 +580,20 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
                 if words > usize::from(limits.encoded_words) {
                     return err(ErrorKind::TooManyMembers, i);
                 }
-                if b64 {
-                    // Base64 decoding comes with encode-lib (D-002).
-                    return err(ErrorKind::InvalidEncodedWord, i);
-                }
                 // Whitespace between two encoded words is dropped
                 // (RFC 2047 section 6.2).
                 held = None;
-                decode_q(cs, word, end - 2 - word.len(), emit)?;
+                let at = end - 2 - word.len();
+                if b64 {
+                    // A `B` word keeps to the 75-byte limit of section 2,
+                    // which also bounds what it decodes to (D-080).
+                    if end - i > WORD_LIMIT {
+                        return err(ErrorKind::InvalidEncodedWord, i);
+                    }
+                    decode_b(cs, word, at, emit)?;
+                } else {
+                    decode_q(cs, word, at, emit)?;
+                }
                 after_word = true;
                 boundary = false;
                 i = end;
@@ -471,15 +630,18 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
 /// `_` is a space in Q; an encoded word must stand alone between whitespace,
 /// and words inside a quoted string are not decoded (section 5). Charsets:
 /// UTF-8, US-ASCII, ISO-8859-1 (transcoded), with an optional RFC 2231
-/// `*language`. `B` words need the `encode-lib` feature, which is not yet
-/// available (D-002). `CRLF WSP` folds count as whitespace, so the output of
-/// [`encode_words`] reads back as written.
+/// `*language`. `B` words are read strictly (D-080): whole groups of four,
+/// `=` padding only at the end with zero bits under it, no whitespace inside,
+/// and at most 75 bytes to a word. `CRLF WSP` folds count as whitespace, so
+/// the output of [`encode_words`] and [`encode_words_b`] reads back as
+/// written.
 ///
 /// # Errors
 ///
 /// [`ErrorKind::UnsupportedCharset`]; [`ErrorKind::InvalidEncodedWord`] (a
-/// bad encoding letter, a broken `=XX`, a byte not allowed in a Q word, a
-/// `B` word); [`ErrorKind::ControlInDecoded`] for a decoded control
+/// bad encoding letter, a broken `=XX`, a byte not allowed in a Q word, base64
+/// that is not canonical, a `B` word longer than 75 bytes);
+/// [`ErrorKind::ControlInDecoded`] for a decoded control
 /// character (C0 including CR, LF, NUL, and HTAB; DEL; C1), as in ext-values;
 /// a control kind for a control byte outside the words, other than HTAB and
 /// the CRLF of a fold; [`ErrorKind::InvalidUtf8`] (a UTF-8 word that is not
@@ -518,7 +680,7 @@ pub fn decode_words<'b>(value: &[u8], limits: &Limits, out: &'b mut [u8]) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{string::String, vec};
+    use std::{format, string::String, vec, vec::Vec};
 
     fn enc(text: &str, room: usize) -> String {
         let mut buf = vec![0u8; 2048];
@@ -589,10 +751,7 @@ mod tests {
             dec(b"=?UTF-8?Q?=4?=").unwrap_err().kind(),
             ErrorKind::InvalidEncodedWord
         );
-        assert_eq!(
-            dec(b"=?UTF-8?B?YQ==?=").unwrap_err().kind(),
-            ErrorKind::InvalidEncodedWord
-        );
+        assert_eq!(dec(b"=?UTF-8?B?YQ==?=").unwrap(), "a");
         assert_eq!(
             dec(b"=?UTF-8?Q?=0D=0A?=").unwrap_err().kind(),
             ErrorKind::ControlInDecoded
@@ -623,5 +782,138 @@ mod tests {
             ErrorKind::BufferTooSmall
         );
         assert_eq!(small, [0, 0]);
+    }
+
+    fn enc_b(text: &str, room: usize) -> String {
+        let mut buf = vec![0u8; 4096];
+        let mut out = crate::SliceSink::new(&mut buf);
+        encode_words_b(text, room, &mut out).unwrap();
+        String::from_utf8(out.written().to_vec()).unwrap()
+    }
+
+    #[test]
+    fn test_decode_b_words() {
+        // RFC 2047 section 8, the first word of its `Subject` example (the
+        // second is ISO-8859-2, not a charset read here).
+        assert_eq!(
+            dec(b"=?ISO-8859-1?B?SWYgeW91IGNhbiByZWFkIHRoaXMgeW8=?=").unwrap(),
+            "If you can read this yo"
+        );
+        assert_eq!(
+            dec(b"=?ISO-8859-1?B?SWYgeW91IGNhbiByZWFkIHRoaXMgeW8=?=\r\n =?ISO-8859-1?Q?u?=")
+                .unwrap(),
+            "If you can read this you"
+        );
+        assert_eq!(
+            dec(b"=?utf-8?b?Q2Fmw6k=?= au lait").unwrap(),
+            "Caf\u{e9} au lait"
+        );
+        assert_eq!(dec(b"=?ISO-8859-1?B?6Q==?=").unwrap(), "\u{e9}");
+        assert_eq!(dec(b"=?UTF-8*ja?B?5Lya?=").unwrap(), "\u{4f1a}");
+        assert_eq!(dec(b"=?UTF-8?B??=").unwrap(), "");
+        // Strict base64, at the offset of the character refused.
+        let at = |v: &[u8]| {
+            let e = dec(v).unwrap_err();
+            (e.kind(), e.offset())
+        };
+        assert_eq!(at(b"=?UTF-8?B?YQ=?="), (ErrorKind::InvalidEncodedWord, 10));
+        assert_eq!(at(b"=?UTF-8?B?YR==?="), (ErrorKind::InvalidEncodedWord, 11));
+        assert_eq!(
+            at(b"=?UTF-8?B?YQ==YQ==?="),
+            (ErrorKind::InvalidEncodedWord, 12)
+        );
+        assert_eq!(at(b"=?UTF-8?B?Y-Q=?="), (ErrorKind::InvalidEncodedWord, 11));
+        assert_eq!(
+            at(b"=?UTF-8?B?YWJj\x80?="),
+            (ErrorKind::InvalidEncodedWord, 14)
+        );
+        // Whitespace ends the candidate: it is ordinary text, as in Q.
+        assert_eq!(dec(b"=?UTF-8?B?YW Jj?=").unwrap(), "=?UTF-8?B?YW Jj?=");
+        // Decoded bytes meet the Q rules, reported at their group of four.
+        assert_eq!(at(b"=?UTF-8?B?YQ0K?="), (ErrorKind::ControlInDecoded, 10));
+        assert_eq!(
+            at(b"=?UTF-8?B?YWJjGw==?="),
+            (ErrorKind::ControlInDecoded, 14)
+        );
+        assert_eq!(at(b"=?UTF-8?B?woU=?="), (ErrorKind::ControlInDecoded, 10));
+        assert_eq!(at(b"=?ISO-8859-1?B?hQ==?=").0, ErrorKind::ControlInDecoded);
+        assert_eq!(dec(b"=?UTF-8?B?w6k=?=x").unwrap(), "=?UTF-8?B?w6k=?=x");
+        assert_eq!(at(b"=?UTF-8?B?ww==?=").0, ErrorKind::InvalidUtf8);
+        assert_eq!(at(b"=?US-ASCII?B?6Q==?=").0, ErrorKind::InvalidEncodedWord);
+        // 75 bytes to a word: 64 base64 characters fit after `=?a?B?`.
+        let word = |n: usize| format!("=?UTF-8?B?{}?=", "QUFB".repeat(n));
+        assert_eq!(dec(word(15).as_bytes()).unwrap(), "A".repeat(45));
+        let long = format!("=?UTF-8?B?{}QQ==?=", "QUFB".repeat(15));
+        assert_eq!(long.len(), 76);
+        assert_eq!(at(long.as_bytes()), (ErrorKind::InvalidEncodedWord, 0));
+        assert_eq!(at(word(16).as_bytes()), (ErrorKind::InvalidEncodedWord, 0));
+    }
+
+    #[test]
+    fn test_encode_words_b_edge_cases() {
+        assert_eq!(enc_b("plain ascii", 10), "plain ascii");
+        assert_eq!(enc_b("a =?b", 70), "=?UTF-8?B?YSA9P2I=?=");
+        assert_eq!(enc_b("Caf\u{e9}", 70), "=?UTF-8?B?Q2Fmw6k=?=");
+        // Every word is at most 75 bytes, holds whole characters, and reads
+        // back on its own; the words together read back as the text.
+        let text = "\u{4f1a}\u{8b70}".repeat(30);
+        let e = enc_b(&text, 75);
+        for w in e.split("\r\n ") {
+            assert!(
+                w.len() <= 75 && w.starts_with("=?UTF-8?B?") && w.ends_with("?="),
+                "{w}"
+            );
+            assert!(dec(w.as_bytes()).is_ok());
+        }
+        assert_eq!(dec(e.as_bytes()).unwrap(), text);
+        // 45 bytes fill a word: 60 base64 characters, 72 bytes in all, as
+        // 63 is not a multiple of four.
+        let e = enc_b(&"\u{20ac}".repeat(15), 75);
+        assert_eq!(e.len(), 72);
+        let e = enc_b(&"\u{20ac}".repeat(16), 75);
+        assert_eq!(e.split("\r\n ").map(str::len).collect::<Vec<_>>(), [72, 16]);
+        // The first word fits the room left on the line, or starts a new one.
+        assert!(enc_b("\u{e9}", 16).starts_with("=?UTF-8?B?"));
+        assert!(enc_b("\u{e9}", 15).starts_with("\r\n =?UTF-8?B?"));
+        assert!(
+            enc_b(&"\u{e9}".repeat(20), 20)
+                .split("\r\n ")
+                .next()
+                .unwrap()
+                .len()
+                <= 20
+        );
+        // Mostly-CJK text: B is shorter than Q.
+        let subject = "\u{4f1a}\u{8b70}\u{306e}\u{304a}\u{77e5}\u{3089}\u{305b}";
+        assert!(enc_b(subject, 64).len() * 10 < enc(subject, 64).len() * 7);
+        let mut buf = [0u8; 8];
+        let mut out = crate::SliceSink::new(&mut buf);
+        assert_eq!(
+            encode_words_b("a\u{1b}", 70, &mut out),
+            Err(WriteError::Forbidden { at: 1 })
+        );
+        assert_eq!(
+            encode_words_b("\u{e9}\u{e9}", 70, &mut out),
+            Err(WriteError::Full)
+        );
+        assert!(out.is_empty());
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn test_encode_words_b_round_trips(text in "[^\\p{Cc}]{0,120}", room in 0usize..80) {
+            let e = enc_b(&text, room);
+            for (i, w) in e.split("\r\n ").enumerate() {
+                if w.starts_with("=?") {
+                    proptest::prop_assert!(w.len() <= if i == 0 { room.min(75) } else { 75 }, "{w}");
+                }
+            }
+            // A fold before the first word follows `Name:` in the field, where
+            // a reader drops it with the whitespace after the colon.
+            let value = |s: &str| String::from(s.strip_prefix("\r\n ").unwrap_or(s));
+            proptest::prop_assert_eq!(&dec(value(&e).as_bytes()).unwrap(), &text);
+            // Q and B read back the same.
+            proptest::prop_assert_eq!(dec(value(&enc(&text, room)).as_bytes()).unwrap(), text);
+        }
     }
 }

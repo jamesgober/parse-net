@@ -62,6 +62,10 @@ harness = false
 name = "mail"
 harness = false
 
+[[bench]]
+name = "params"
+harness = false
+
 # Keeps this crate out of any parent workspace.
 [workspace]
 members = ["."]

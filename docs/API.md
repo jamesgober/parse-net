@@ -96,7 +96,7 @@ Every `parse_*` checks the whole value in one forward pass and returns a small `
 | (none) | yes | everything not marked otherwise; `no_std`, no `alloc` |
 | `alloc` | no | owned forms (`to_owned`), `Sink for Vec<u8>` |
 | `std` | no | `HttpDate` to and from `SystemTime`, `HttpDate::now`, Tier 1 `http_date`; implies `alloc` |
-| `encode-lib` | no | base64 decode and encode helpers (needs the first-party `encode-lib` crate; see [D-002](../dev/PLAN.md#16-decision-log)) |
+| `encode-lib` | no | a no-op until the first-party `encode-lib` crate is published; then the base64 helpers `basic_decode_into`, `ByteSeq::decode_into`, and `sfv::Writer::bytes` ([D-002](../dev/PLAN.md#16-decision-log)). `B` encoded words need no feature ([D-080](../dev/PLAN.md#16-decision-log)) |
 
 ---
 
@@ -864,6 +864,24 @@ pub mod param {
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct Param<'a> { pub name: &'a [u8], pub value: Word<'a> }
+
+    // 0.9.1: RFC 6455 section 9.1, a value may be left out.
+    pub fn parse_optional(s: &[u8], limits: &Limits) -> Result<(OptionalParams<'_>, usize), ParseError>;
+
+    #[derive(Clone, Copy)]
+    pub struct OptionalParams<'a> { /* validated text, count, policy */ }
+    impl<'a> OptionalParams<'a> {
+        pub fn iter(&self) -> OptionalParamIter<'a>;              // Iterator<Item = OptionalParam<'a>>
+        pub fn find(&self, name: &str) -> Option<OptionalParam<'a>>;
+        pub fn contains(&self, name: &str) -> bool;
+        pub const fn len(&self) -> usize;
+        pub const fn is_empty(&self) -> bool;
+        pub const fn raw(&self) -> &'a [u8];
+    }
+    impl core::fmt::Debug for OptionalParams<'_> {}              // names only
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct OptionalParam<'a> { pub name: &'a [u8], pub value: Option<Word<'a>> }
 }
 ```
 
@@ -876,6 +894,7 @@ RFC 9110 section 5.6.6: `parameters = *( OWS ";" OWS [ parameter ] )`, `paramete
 | PRM-3 | `Params::iter`, `Param` | P0, 2, 0.3 | every parameter in order (with `First` or `Last`, duplicates included) | none |
 | PRM-5 | `len`, `is_empty`, `raw` | P1, 2, 0.3 | the parameter count; the validated text | none |
 | PRM-6 | `Debug` | P1, 2, 0.3 | prints parameter names only: values can be secrets (`Authorization` parameters) | none |
+| PRM-7 | `param::parse_optional`, `OptionalParams`, `OptionalParam` | P1, 3, 0.9.1 | RFC 6455 section 9.1 `extension-param = token [ "=" ( token / quoted-string ) ]`, for `Sec-WebSocket-Extensions` (permessage-deflate sends `client_max_window_bits` and `server_no_context_takeover` alone). As PRM-1 in every other way: empty parameters, bytes used, no whitespace around `=`, the duplicate policy and the 64-name limit under `Refuse`. A name followed by OWS and then anything but `=` has no value, and what follows is the caller's. Wherever `parse` succeeds, `parse_optional` succeeds with the same parameters (a property test and the `param_optional` fuzz target check it). `find` returns the parameter, so `value` tells a bare name from one with a value; `contains` asks whether it is there at all. Whether a quoted value unescapes to a token, as RFC 6455 asks, is the caller's check (D-079) | as PRM-1, except that a name with no `=` is not an error; `MissingValue` remains for `=` with no value and for a quoted string straight after a name |
 
 ```rust
 use parse_net::{param, Limits};
@@ -891,7 +910,7 @@ assert_eq!((dup.kind(), dup.offset()), (parse_net::ErrorKind::DuplicateParameter
 # Ok::<(), parse_net::ParseError>(())
 ```
 
-Edge cases tested: `;`, `;;`, `; a=b`, `;a=`, `;a`, `;a =b`, `;a= b`, `;A=b` against `;a=b` (duplicate), 256 and 257 parameters, `""` as a value, a value with escapes.
+Edge cases tested: `;`, `;;`, `; a=b`, `;a=`, `;a`, `;a =b`, `;a= b`, `;A=b` against `;a=b` (duplicate), 256 and 257 parameters, `""` as a value, a value with escapes. For `parse_optional`: the RFC 7692 offers, `;a`, `;a;b`, `;a ;b`, `;a , b`, `;a b`, `;a,`, `;a=`, `;a=;b`, `;a =1`, `;a"x"`, a bare name repeating a valued one in either order and case, 64 and 65 bare names under `Refuse`, 257 under `Last`.
 
 ---
 
@@ -2114,8 +2133,7 @@ pub mod mail {
     pub fn unfold(value: &[u8]) -> Result<Unfolded<'_>, ParseError>;           // iter: &[u8] pieces
     pub fn fold(name: &str, value: &[u8], out: &mut impl Sink) -> Result<(), WriteError>;
     pub fn encode_words(text: &str, room_first_line: usize, out: &mut impl Sink) -> Result<(), WriteError>;
-    #[cfg(feature = "encode-lib")]
-    pub fn encode_words_b(text: &str, room_first_line: usize, out: &mut impl Sink) -> Result<(), WriteError>;
+    pub fn encode_words_b(text: &str, room_first_line: usize, out: &mut impl Sink) -> Result<(), WriteError>;   // 0.9.1 (D-080)
     pub fn decode_words<'b>(value: &[u8], limits: &Limits, out: &'b mut [u8]) -> Result<&'b str, ParseError>;
     pub fn parse_mime_params(s: &[u8], limits: &Limits) -> Result<(MimeParams<'_>, usize), ParseError>;
     pub fn write_mime_param(name: &str, value: &str, out: &mut impl Sink) -> Result<(), WriteError>;
@@ -2167,8 +2185,8 @@ The grammar smtp-net needs to write mail and gate-net needs to validate login ad
 | MAIL-2 | `unfold` | P2, 2, 0.5 | validates, then iterates the pieces between `CRLF WSP` folds (the CRLF removed, the WSP kept, RFC 5322 section 2.2.3) | `BareCr`, `LineFeed` (a CRLF not followed by WSP, or a lone CR or LF) |
 | MAIL-3 | `fold` | P1, 1, 0.5 | writes `Name: value` and folds at whitespace, after the colon too, so lines stay within 78 columns where possible; never a line of only whitespace; never over 998 | `NotToken` for a name outside `ftext`; `Forbidden { at }` for a control byte other than HTAB in `value`; `OutOfRange` for a word that fits on no line, or whitespace ending the value that does not fit after the last word; `Full` |
 | MAIL-4 | `encode_words` (Q) | P1, 1, 0.5 | RFC 2047: printable ASCII text without `=?` that fits a 998-byte line is written as it is; otherwise `=?UTF-8?Q?...?=` words of at most 75 bytes, split only on UTF-8 character boundaries, separated by CRLF SP; the first word fits in `room_first_line` | `Forbidden { at }` for a control character; `Full` |
-| MAIL-5 | `encode_words_b` | P2, 1, 0.6 (D-062) | `encode-lib`: the B encoding, used when Q would be longer | as MAIL-4 |
-| MAIL-6 | `decode_words` | P2, 2, 0.5 | decodes encoded words in unstructured text into `out`; whitespace between adjacent encoded words is dropped (RFC 2047 section 6.2); text outside encoded words copied, with `CRLF WSP` folds as whitespace; `_` is a space in Q; a word that does not stand between whitespace is ordinary text; words inside quoted strings are not decoded (section 5), and a lone `"` is not a quoted string; B needs `encode-lib` | `UnsupportedCharset`, `InvalidEncodedWord`, `ControlInDecoded` (any decoded control: C0 including HTAB, DEL, C1, as in ext-values; D-071), a control kind for a raw control other than HTAB and the CRLF of a fold (D-078), `InvalidUtf8`, `TooManyMembers` beyond `max_encoded_words`, `BufferTooSmall` |
+| MAIL-5 | `encode_words_b` | P2, 1, 0.9.1 (D-080) | MAIL-4 with the B encoding: `=?UTF-8?B?...?=` words of at most 75 bytes (at most 45 bytes of text, 60 base64 characters), split only between characters; text that MAIL-4 writes as it is goes out as it is. The caller picks: `B` is the shorter for text that is mostly not ASCII (a Japanese subject about 40% shorter), `Q` for text that is mostly ASCII. A private codec, no feature (D-080) | as MAIL-4 |
+| MAIL-6 | `decode_words` | P2, 2, 0.5 | decodes encoded words in unstructured text into `out`; whitespace between adjacent encoded words is dropped (RFC 2047 section 6.2); text outside encoded words copied, with `CRLF WSP` folds as whitespace; `_` is a space in Q; a word that does not stand between whitespace is ordinary text; words inside quoted strings are not decoded (section 5), and a lone `"` is not a quoted string; B from 0.9.1 (D-080), strictly: whole groups of four, `=` only at the end with zero bits under it, no whitespace inside, at most 75 bytes to a word, each decoded byte checked as in Q | `UnsupportedCharset`, `InvalidEncodedWord`, `ControlInDecoded` (any decoded control: C0 including HTAB, DEL, C1, as in ext-values; D-071), a control kind for a raw control other than HTAB and the CRLF of a fold (D-078), `InvalidUtf8`, `TooManyMembers` beyond `max_encoded_words`, `BufferTooSmall` |
 | MAIL-7 | `parse_mime_params`, `MimeParams` | P1, 3, 0.5 | RFC 2045 section 5.1 with the MIME `token` class (allows `{` and `}`); case-insensitive names; CFWS between parameters, comments may fold; a quoted value must be unfolded first (`unfold`); at most 64 parameters (D-072) | `NotToken`, `MissingValue`, `DuplicateParameter`, `UnterminatedQuote`, `TooManyMembers` |
 | MAIL-8 | RFC 2231 (`get`, `decode_into`, `Continuation`) | P1, 2, 0.5 | the reassembly in [PLAN 7.12](../dev/PLAN.md#712-rfc-2231-reassembly-without-allocation): sections `name*0`, `name*1*`, ... numbered from 0 without gaps or duplicates; a charset only on section 0; decoded in order into `out`; `attribute-char` keeps `{` and `}`; a section given twice is `SectionGap`; decoded controls, C1 split across sections included, and the US-ASCII rule hold over the whole value | `SectionGap`, `TooManySections`, EXT-1 and EXT-2 errors, `BufferTooSmall` |
 | MAIL-9 | `write_mime_param` | P1, 1, 0.5 | `; name=token`, `; name="quoted"`, or, for non-ASCII or long values, `; name*=UTF-8''...` split into `name*0*`, `name*1*` sections so no line passes 78 columns | `NotToken` (name), `Forbidden { at }` (control), `OutOfRange` (a name that leaves no room on a line, or more than 32 sections), `Full` |
@@ -2263,7 +2281,7 @@ The 0.2 review of this API against each consumer's needs. "Moves" means the cons
 | `head.rs` `trim_ows` | `text::trim_ows` | |
 | `head.rs` `is_control`, `is_visible` | `scan::check_field_value`, `class::all(s, Class::VCHAR)` | |
 | `handshake.rs` `list`, `list_has` | `list`, `list::contains_token` | commas inside quoted strings no longer split |
-| `Sec-WebSocket-Extensions` | `list` then `param::parse` per element | RFC 6455 section 9.1 extensions with parameters become readable |
+| `Sec-WebSocket-Extensions` | `list`, then per element the extension token and `param::parse_optional` (0.9.1) | RFC 6455 section 9.1 parameters may have no value (`client_max_window_bits`, `server_no_context_takeover`), which `param::parse` refuses with `MissingValue`; `OptionalParams::find` and `contains` read them |
 | `Sec-WebSocket-Protocol` | `list` of tokens | |
 | `Origin` checks | `parse_origin`, `Origin::same_origin` | from 0.4 |
 | `base64.rs`, `sha1.rs` | not parse-net | encode-lib and crypt-io |
@@ -2302,7 +2320,7 @@ The 0.2 review of this API against each consumer's needs. "Moves" means the cons
 |---|---|
 | `Date` header | `MailDate::new`, `write_to` |
 | header folding | `mail::fold` |
-| `Subject` and display names | `mail::encode_words` (Q); `encode_words_b` with `encode-lib` |
+| `Subject` and display names | `mail::encode_words` (Q), `mail::encode_words_b` (B, 0.9.1, for mostly non-ASCII text) |
 | `Content-Type` and `Content-Disposition` with RFC 2231 | `media::write`, `mail::write_mime_param` |
 | reading parameters of received parts | `mail::parse_mime_params`, `MimeParams::decode_into` |
 | addresses | `mail::parse_addr_spec`, `AddrSpec::is_ascii` (SMTPUTF8), `parse_mailbox` |

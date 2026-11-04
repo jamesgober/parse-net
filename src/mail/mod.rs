@@ -25,6 +25,7 @@
 //! ```
 
 mod addr;
+mod b64;
 mod params;
 mod words;
 
@@ -35,7 +36,7 @@ pub use addr::{
 pub use params::{
     Continuation, MimeParamIter, MimeParams, MimeValue, parse_mime_params, write_mime_param,
 };
-pub use words::{decode_words, encode_words};
+pub use words::{decode_words, encode_words, encode_words_b};
 
 pub use crate::MailDate;
 

@@ -13,6 +13,64 @@
 
 ---
 
+## [0.9.1] - 2026-11-05
+
+Two additions consumers asked for while adopting 0.9.0. No 0.9.0 call
+changes its signature; `decode_words` now reads `B` words it refused.
+
+### Added
+
+- `param::parse_optional`, with `OptionalParams` and `OptionalParam`: RFC
+  6455 section 9.1 extension parameters, whose value may be left out.
+  permessage-deflate (RFC 7692) sends `client_max_window_bits` and
+  `server_no_context_takeover` that way, and `param::parse` refuses them with
+  `MissingValue`. Every other rule is `param::parse`'s: empty parameters,
+  bytes used, no whitespace around `=`, the duplicate policy, and the
+  64-name limit under `Refuse`. `find` returns the parameter, so its `value`
+  tells a bare name from one with a value; `contains` asks whether it is
+  there. Found by ws-net adopting 0.9.0 (D-079).
+- `mail::encode_words_b`: RFC 2047 `B` encoded words, `=?UTF-8?B?...?=`, of
+  at most 75 bytes, split only between characters, folded as
+  `encode_words` folds. For text that is mostly not ASCII it is the shorter
+  form: a Japanese subject is one 64-byte word against two words, 144 bytes,
+  in `Q`. For smtp-net (D-080).
+- Fuzz targets `param_optional`, `mail_words_b`, and `diff_b64` (against the
+  `base64` crate's canonical engine; 37 targets, four differential, the
+  weekly workflow runs it); property tests against a plain reference reader,
+  against `param::parse`, and for the `B` round trip; complexity cases for
+  bare names and `B` words; counting-allocator coverage; benchmark rows.
+
+### Changed
+
+- `mail::decode_words` reads `B` words, which it refused with
+  `InvalidEncodedWord`: a widening, allowed in a 0.9.x patch. The base64 is
+  strict, so every byte string has one encoding: whole groups of four, `=`
+  only as the last one or two characters with zero bits under it, nothing
+  outside the alphabet, no whitespace inside the word, and at most 75 bytes
+  to a word. Every decoded byte meets the Q rules: no control character (C0,
+  DEL, C1), whole UTF-8 characters, ASCII for US-ASCII. A word that breaks
+  one is `InvalidEncodedWord`, `ControlInDecoded`, or `InvalidUtf8`, at the
+  group of four that holds it.
+- The base64 is a private codec for one word at a time, with no public API:
+  this reverses D-002 for `B` words, decided for smtp-net and ws-net and
+  recorded for James (D-080, `dev/READINESS-1.0.md`). The `encode-lib`
+  feature stays, as a documented no-op, so builds that name it keep working;
+  `basic_decode_into`, `ByteSeq::decode_into`, and `sfv::Writer::bytes` still
+  wait for encode-lib.
+
+### Performance
+
+- A full benchmark run on a quiet machine, the first since 0.7: every row is
+  25% to 81% faster than its competitor, and both estimates are met
+  (`client_address` 37.6 ns against 60, `encode_words` 176 ns against 200).
+  `response_cache_control` reads 25% (33% on the loaded 0.9.0 run).
+- `decode_words` on one `B` word is 61% faster than `mailparse` (145 ns
+  against 373 ns): a clean word goes out in one piece.
+- `param::parse` and the Q paths stay within 1.5% of 0.9.0 in instructions,
+  the size of the moves code layout makes in unchanged functions.
+
+---
+
 ## [0.9.0] - 2026-11-03
 
 Beta: the pre-1.0 polish pass. Three independent reviews of the whole crate
@@ -453,7 +511,8 @@ The scaffold and the plan. No parsing code yet.
   (0.1 to 1.0 with exit criteria).
 - `fuzz/` crate skeleton; targets arrive with the parsers they cover.
 
-[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/jamesgober/parse-net/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/jamesgober/parse-net/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jamesgober/parse-net/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/jamesgober/parse-net/compare/v0.6.1...v0.7.0

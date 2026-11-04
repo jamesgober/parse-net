@@ -109,6 +109,12 @@ fn test_parsing_never_allocates() {
                     let _ = x.value.len();
                 }
             }
+            if let Ok((p, _)) = param::parse_optional(v, &Limits::DEFAULT) {
+                let _ = (p.find("a"), p.contains("b"));
+                for x in p.iter() {
+                    let _ = x.value.map(|w| w.len());
+                }
+            }
             if let Ok(m) = pn::parse_media_type(v) {
                 let _ = m.boundary();
                 let _ = m.charset();
@@ -342,6 +348,7 @@ fn test_mail_and_link_writing_never_allocates() {
             &mut out,
         );
         let _ = mail::encode_words("Caf\u{e9} au lait", 20, &mut out);
+        let _ = mail::encode_words_b("Caf\u{e9} au lait", 20, &mut out);
         let _ = mail::write_mime_param("filename", "caf\u{e9}.txt", &mut out);
         let _ = mail::write_msg_id("a.b", "example.com", &mut out);
         let e = forwarded::Element {

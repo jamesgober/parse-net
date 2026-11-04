@@ -40,6 +40,10 @@ proptest! {
                 prop_assert!(used <= input.len());
                 prop_assert_eq!(p.iter().count(), p.len());
             }
+            if let Ok((p, used)) = param::parse_optional(input, &Limits::DEFAULT) {
+                prop_assert!(used <= input.len());
+                prop_assert_eq!(p.iter().count(), p.len());
+            }
             if let Ok(m) = pn::parse_media_type(input) {
                 let _ = m.boundary();
                 let mut buf = [0u8; 256];

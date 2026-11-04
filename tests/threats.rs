@@ -55,6 +55,17 @@ fn test_encoded_word_crlf_refused() {
         b"=?UTF-8?Q?a=C2=9Bb?=",
         b"=?ISO-8859-1?Q?a=85b?=",
         b"=?us-ascii?Q?a=1Fb?=",
+        // The same bytes in B words (D-080).
+        b"=?UTF-8?B?YQ0KYg==?=",
+        b"=?UTF-8?B?YQpi?=",
+        b"=?UTF-8?B?YQBi?=",
+        b"=?UTF-8?B?YQli?=",
+        b"=?UTF-8?B?YRtbMkpi?=",
+        b"=?UTF-8?B?YX9i?=",
+        b"=?UTF-8?B?YcKFYg==?=",
+        b"=?UTF-8?B?YcKbYg==?=",
+        b"=?ISO-8859-1?B?YYVi?=",
+        b"=?us-ascii?B?YR9i?=",
     ] {
         assert_eq!(
             kind(mail::decode_words(word, &Limits::DEFAULT, &mut out)),
@@ -70,6 +81,14 @@ fn test_encoded_word_crlf_refused() {
     assert_eq!(
         mail::decode_words(b"=?UTF-8?Q?=C2=A0=C3=82?=", &Limits::DEFAULT, &mut out),
         Ok("\u{a0}\u{c2}")
+    );
+    assert_eq!(
+        mail::decode_words(
+            b"=?UTF-8?B?wqDDgg==?= =?UTF-8?B?YSBi?=",
+            &Limits::DEFAULT,
+            &mut out
+        ),
+        Ok("\u{a0}\u{c2}a b")
     );
     assert_eq!(
         mail::decode_words(b"=?ISO-8859-1?Q?=A0=C2?=", &Limits::DEFAULT, &mut out),
