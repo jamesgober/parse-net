@@ -1,6 +1,6 @@
 name: Fuzz
 
-# The differential targets compare parse-net with httpdate, mime, and sfv
+# The differential targets compare parse-net with httpdate, mime, sfv, and base64
 # every week, so a change in either side's behaviour is seen (dev/PLAN.md
 # section 11.5). The full 24-hour runs happen before releases, off CI.
 on:
@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [diff_http_date, diff_media_type, diff_sfv]
+        target: [diff_http_date, diff_media_type, diff_sfv, diff_b64]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@nightly

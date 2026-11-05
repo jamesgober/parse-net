@@ -1,7 +1,7 @@
 # Performance
 
 How fast parse-net is against the Rust crates that do the same work, how
-that was measured, and what changed in 0.6 to get there. Every number here
+that was measured, and what changed in each release to get there. Every number here
 comes from the benchmark crate in [`benches/`](../benches) and can be
 reproduced with the commands at the end.
 
@@ -16,35 +16,59 @@ strictness.
 
 | Operation | Input | parse-net | Competitor | Faster | Target |
 |---|---|---|---|---|---|
-| `byte_ranges` | `bytes=0-499` | 10.2 ns | 42.9 ns (`headers`) | 76% | met |
-| `scan::check_field_value` | 64-byte `User-Agent` text | 8.3 ns | 30.4 ns (bytewise loop, http-net's former code) | 73% | met |
-| `HttpDate::format` | | 23.8 ns | 71.9 ns (`httpdate`, allocates a `String`) | 67% | met |
-| `sfv::parse_list` | 10 tokens with one parameter each | 504 ns | 1408 ns (`sfv` 0.16.0, owned) | 64% | met |
-| `sfv::parse_dictionary` | 5 members of mixed types | 207 ns | 531 ns (`sfv`, owned) | 61% | met |
-| `MailDate::parse` | `Wed, 21 Oct 2026 17:38:00 +0200` | 31.6 ns | 76.6 ns (`mailparse` 0.15.0) | 59% | met |
-| `HttpDate::parse_imf_fixdate` | `Sun, 06 Nov 1994 08:49:37 GMT` | 23.5 ns | 53.6 ns (`httpdate` 1.0.3) | 56% | met |
-| `if_none_match` | 3 tags | 28.6 ns | 53.6 ns (`headers` 0.4.2) | 47% | met |
-| `parse_content_disposition` and `filename` | `attachment; filename="a.txt"; filename*=UTF-8''%E2%82%AC.txt` | 173 ns | 298 ns (`content_disposition` 0.4.0; `mailparse` 371 ns) | 42% | met |
-| `parse_media_type` and `charset` | `text/html; charset=utf-8` | 32.3 ns | 55.1 ns (`mime` 0.3.17) | 41% | met |
-| `response_cache_control` | `public, max-age=31536000, immutable` | 54.5 ns | 81.3 ns (`headers`) | 33% | met |
-| `best_media` | Chrome's navigation `Accept`, 3 offers | 609 ns | 879 ns (`mime` and a selection loop) | 31% | met |
-| `client_address` | 3-hop `X-Forwarded-For`, IPv4 | 70 ns | no Rust crate resolves through trusted proxies | n/a | estimate 60 ns: see below |
-| `mail::encode_words` | 36-byte UTF-8 subject (PLAN row: 40 bytes) | 256 ns | no allocation-free Rust encoder | n/a | estimate 200 ns: see below |
+| `scan::check_field_value` | 64-byte `User-Agent` text | 4.68 ns | 24.3 ns (bytewise loop, http-net's former code) | 81% | met |
+| `byte_ranges` | `bytes=0-499` | 7.71 ns | 33.5 ns (`headers`) | 77% | met |
+| `sfv::parse_dictionary` | 5 members of mixed types | 147 ns | 504 ns (`sfv` 0.16.0, owned) | 71% | met |
+| `sfv::parse_list` | 10 tokens with one parameter each | 352 ns | 991 ns (`sfv`, owned) | 64% | met |
+| `HttpDate::format` | | 17.2 ns | 44.4 ns (`httpdate`, allocates a `String`) | 61% | met |
+| `mail::decode_words`, one `B` word | 39 bytes of Japanese, `=?UTF-8?B?...?=` | 145 ns | 373 ns (`mailparse` 0.15.0, `parse_header` and `get_value`, allocates) | 61% | met |
+| `MailDate::parse` | `Wed, 21 Oct 2026 17:38:00 +0200` | 20.0 ns | 47.3 ns (`mailparse`) | 58% | met |
+| `if_none_match` | 3 tags | 17.9 ns | 42.4 ns (`headers` 0.4.2) | 58% | met |
+| `HttpDate::parse_imf_fixdate` | `Sun, 06 Nov 1994 08:49:37 GMT` | 14.8 ns | 32.5 ns (`httpdate` 1.0.3) | 55% | met |
+| `parse_media_type` and `charset` | `text/html; charset=utf-8` | 20.6 ns | 37.6 ns (`mime` 0.3.17) | 45% | met |
+| `parse_content_disposition` and `filename` | `attachment; filename="a.txt"; filename*=UTF-8''%E2%82%AC.txt` | 108 ns | 173 ns (`mailparse`; `content_disposition` 0.4.0 178 ns) | 38% | met |
+| `best_media` | Chrome's navigation `Accept`, 3 offers | 444 ns | 630 ns (`mime` and a selection loop) | 30% | met |
+| `response_cache_control` | `public, max-age=31536000, immutable` | 37.8 ns | 50.7 ns (`headers`) | 25% | met |
+| `client_address` | 3-hop `X-Forwarded-For`, IPv4 | 37.6 ns | no Rust crate resolves through trusted proxies | n/a | estimate 60 ns: met |
+| `mail::encode_words` | 36-byte UTF-8 subject (PLAN row: 40 bytes) | 176 ns | no allocation-free Rust encoder | n/a | estimate 200 ns: met |
+| `mail::encode_words_b` | the same subject; 39 bytes of Japanese | 92.2 ns; 103 ns (`encode_words` 131 ns) | no allocation-free Rust encoder | n/a | none set |
+| `param::parse_optional` and `find` | `; client_max_window_bits; server_no_context_takeover` | 29.2 ns | no Rust crate reads RFC 6455 extension parameters as a library call; `param::parse` and `get` on the same names with values, 24.6 ns | n/a | none set |
 
 parse-net validates every byte of the field in these rows (where it has been
 compared, it is the stricter side: `mime` accepts values parse-net refuses,
 `tests/differential/verdicts.md`), and none of its numbers include an
 allocation.
 
-The numbers are from one run of the whole suite at 0.9.0, on a machine that
-other builds were using at the same time (load average 14 to 26 on 32
-threads). That lifts the absolute times by about 30% on both sides of every
-row, so the percentages stand and the times are high. The two rows with an
-estimate have no other side to compare with: `encode_words` measured 185 ns
-on a quiet machine at 0.7, with the same instruction count; `client_address`
-measured 101 ns there at 0.7, and its count has fallen 60% since, so a quiet
-run should land near 40 ns. That run is on the list for the release
-candidates.
+The numbers are from one run of the whole suite at 0.9.1 on a quiet machine
+(load average 0.7 to 2.0 on 32 threads), the first since 0.7. Every row is
+faster than at 0.9.0, whose run shared the machine with other builds. The
+percentages moved little, except `response_cache_control`: `headers` gained
+more from the quiet machine than parse-net did, and the row reads 25% where
+the loaded run read 33%. It is the narrowest row, above the 20% target, and
+is on the list for the release candidates.
+
+`B` is the shorter encoding for text that is mostly not ASCII, and the
+faster: the Japanese subject is one 64-byte word in `B` and two words, 144
+bytes, in `Q`. The
+`parse_optional` row reads 4.6 ns more than `parse` on the valued list:
+`find` walks the list through the iterator, where `Params::get` skips the
+names it does not want.
+
+## What 0.9.1 changed
+
+Instructions per call (callgrind), 0.9.0 against 0.9.1 built side by side:
+`param::parse` 1,009 to 1,012, four valued names 671 to 670,
+`parse_media_type` 747 to 749, `Content-Disposition` 3,601 to 3,604, Q
+decoding 5,420 to 5,408, Q encoding 5,717 to 5,722. Those are code layout,
+not new work: `client_address`, whose code did not change, moved 1,304 to
+1,321. The `parse_optional` branch is compiled out of `parse` (D-079).
+
+Two things were measured and fixed on the way. Moving the Q encoder's
+plain-text test into a function shared with the `B` encoder cost it 136
+instructions (2.4%), so `put_words` keeps its own copy. The first `B`
+decoder, byte by byte, took 481 ns against `mailparse`'s 442 ns: a word that
+passes every check now goes out in one piece, and the base64 groups are read
+four characters to a table lookup, which brought it to 145 ns.
 
 ## What 0.9 changed
 

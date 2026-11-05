@@ -15,6 +15,7 @@ libfuzzer-sys = "0.4"
 httpdate = "1"
 mime = "0.3"
 sfv = "0.16"
+base64 = "0.22"
 
 [dependencies.parse-net]
 path = ".."
@@ -48,6 +49,13 @@ bench = false
 [[bin]]
 name = "params"
 path = "fuzz_targets/params.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "param_optional"
+path = "fuzz_targets/param_optional.rs"
 test = false
 doc = false
 bench = false
@@ -211,6 +219,18 @@ doc = false
 [[bin]]
 name = "mail_words"
 path = "fuzz_targets/mail_words.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "mail_words_b"
+path = "fuzz_targets/mail_words_b.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "diff_b64"
+path = "fuzz_targets/diff_b64.rs"
 test = false
 doc = false
 

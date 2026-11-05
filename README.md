@@ -56,7 +56,7 @@ The list below is the plan for 1.0. What ships in the current version is under [
 - **Proxies and auth** - `Forwarded`, `X-Forwarded-*` with a trust predicate that fails closed, `Authorization`, `WWW-Authenticate`.
 - **Hosts and origins** - `Host` with real IPv4 and IPv6 validation, `Origin` with same-origin comparison.
 - **Structured Fields** - RFC 9651 Items, Lists, Dictionaries, every bare item type, parse and serialize.
-- **Email** - folding, RFC 2047 encoded words, MIME parameters with RFC 2231 continuations, `addr-spec`, `msg-id`.
+- **Email** - folding, RFC 2047 encoded words in Q and B, MIME parameters with RFC 2231 continuations, `addr-spec`, `msg-id`.
 
 ### **Reliability and safety**
 - **No unsafe code** - `#![forbid(unsafe_code)]`; the SWAR scanners are plain safe Rust.
@@ -174,7 +174,7 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 - **Byte classes and scanning** - every ABNF class in one 1 KiB table; SWAR byte search and field-value validation, eight bytes per step.
 - **Writers** - `Sink`, `SliceSink`, `CountSink`, `Vec<u8>` (with `alloc`); tokens, quoted strings, words, parameters, field values, numbers; nothing half-written after an error.
 - **Lexical forms** - tokens, OWS, quoted strings (zero-copy, buffer-free comparison), words, comments (nested, counted, never recursed).
-- **Lists and parameters** - quote- and comment-aware lists, several field lines as one list without copying, parameters that refuse duplicates by default.
+- **Lists and parameters** - quote- and comment-aware lists, several field lines as one list without copying, parameters that refuse duplicates by default, and RFC 6455 extension parameters whose value may be left out.
 - **Media types** - parsing, RFC 2046 boundaries, `charset`, suffixes, writing, canonical form.
 - **HTTP-date** - all three formats, the RFC 9110 50-year rule with an explicit clock, IMF-fixdate formatting, years 1 to 9999, the calendar functions; `SystemTime` conversions with `std`.
 - **Host** - reg-names, IPv4, IPv6, IPvFuture, ports; numeric names that browsers read as IPv4 refused.
@@ -185,11 +185,11 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 - **Caching, proxies, auth, origins** - `Cache-Control`, `Forwarded` and `X-Forwarded-*` with client-address resolution through trusted proxies only, `Authorization` and `WWW-Authenticate` with redacted `Debug`, `Origin` with exact same-origin comparison.
 - **Structured Fields** - RFC 9651 Items, Lists, and Dictionaries with every bare item type: views, a single-pass visitor, and a canonical writer, passing the httpwg parsing and serialisation suites in full.
 - **Links** - RFC 8288 `Link` values, with the first `rel` winning and `title*` decoded.
-- **Email** - RFC 5322 dates, header folding and unfolding, RFC 2047 encoded words, MIME parameters with RFC 2231 continuations, `addr-spec`, mailboxes, and message identifiers, for smtp-net and login validation.
+- **Email** - RFC 5322 dates, header folding and unfolding, RFC 2047 encoded words (Q and B, read and written), MIME parameters with RFC 2231 continuations, `addr-spec`, mailboxes, and message identifiers, for smtp-net and login validation.
 - **Owned forms** - with `alloc`, owned media types, entity tags, host-ports, and Structured Field values that give the same views back.
-- **Proof** - unit tests on every path, property tests (no panic, round trips, writer-parser closure, combined lines), counting-allocator tests for every parse and write, RFC and tc2231 vectors, 34 fuzz targets including three differential oracles against `httpdate`, `mime`, and `sfv`, and an example for every public item.
+- **Proof** - unit tests on every path, property tests (no panic, round trips, writer-parser closure, combined lines), counting-allocator tests for every parse and write, RFC and tc2231 vectors, 37 fuzz targets including four differential oracles against `httpdate`, `mime`, `sfv`, and `base64`, and an example for every public item.
 
-- **Performance** - at least 30% faster than the competing Rust crates on every compared operation (31% to 76%), without allocating: see [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- **Performance** - at least 25% faster than the competing Rust crates on every compared operation (25% to 81%), without allocating: see [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 - **Hardening** - an attack test for every threat in the model, every walker checked for linear time at 1 KiB, 64 KiB, and 1 MiB, and every fuzz target run for 24 hours: see [docs/SECURITY.md](docs/SECURITY.md).
 
 **What's planned next**:

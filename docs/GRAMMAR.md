@@ -103,6 +103,21 @@ parameter-value = ( token / quoted-string )
   `DuplicatePolicy::First` and `Last` exist for fields whose RFC picks one.
 - Function: `param::parse`, with `Params::get`, `iter`, `len`.
 
+RFC 6455 section 9.1, where a value may be left out:
+
+```abnf
+extension-param = token [ "=" ( token / quoted-string ) ]
+```
+
+- The rules above hold as they are, except that a name may stand alone: a
+  name followed by the end, `;`, `,`, or OWS that is not before `=` has no
+  value. `=` with no value is still `MissingValue`, and `a = b` is still
+  refused.
+- RFC 6455 asks that a quoted value unescape to a token; that is the caller's
+  check, as the meaning of each parameter is.
+- Function: `param::parse_optional`, with `OptionalParams::find`, `contains`,
+  `iter`, `len` (0.9.1).
+
 ## Media types and ranges
 
 RFC 9110 sections 8.3.1 and 12.5.1.
@@ -623,7 +638,11 @@ encoding     = token
 - Q: `_` is a space and `=XX` a byte (either hex case read); each UTF-8 word
   must hold whole characters. Charsets UTF-8, US-ASCII, and ISO-8859-1
   (transcoded), with an optional RFC 2231 `*language`. Decoded CR, LF, and
-  NUL are refused. `B` waits for encode-lib (D-002).
+  NUL are refused.
+- B (0.9.1, D-080): base64 read strictly, so every byte string has one
+  encoding: whole groups of four, `=` only as the last one or two characters
+  with zero bits under it, nothing outside the alphabet, no whitespace inside
+  the word, and at most 75 bytes to a word. Decoded bytes meet the Q rules.
 - Encoding: "An 'encoded-word' may not be more than 75 characters long";
   words split only between characters and are separated by CRLF SP.
   Printable ASCII without `=?` is written as it is.

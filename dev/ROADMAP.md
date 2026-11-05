@@ -82,7 +82,7 @@ Exit: every P0, P1, and P2 item exists; every public item has a doctest; `cargo 
 
 Exit: every comparable row of PLAN 10.1 at least 20% faster than the best Rust competitor, or a recorded plan; no regression over 5% against 0.5.
 
-- [ ] Moved from 0.5 (D-062): ATH-3 `basic_decode_into`, MAIL-5 `encode_words_b`, `ByteSeq::decode_into`, `sfv::Writer::bytes`, `B` encoded words, behind `encode-lib`. encode-lib is still not published; they move to 0.7, then to the first release after encode-lib appears (D-002).
+- [ ] Moved from 0.5 (D-062): ATH-3 `basic_decode_into`, MAIL-5 `encode_words_b`, `ByteSeq::decode_into`, `sfv::Writer::bytes`, `B` encoded words, behind `encode-lib`. encode-lib is still not published; they move to 0.7, then to the first release after encode-lib appears (D-002). MAIL-5 and `B` words shipped in 0.9.1 without it (D-080).
 - [x] Benchmarks for every row of PLAN 10.1 against the named competitors (`benches/`, D-066).
 - [x] SWAR fast paths where measured to help (`scan`, from 0.3); `#[inline]` decisions recorded in `docs/PERFORMANCE.md` with D-041.
 - [x] `docs/PERFORMANCE.md`.
@@ -111,6 +111,7 @@ Exit: two consumers in published releases with green CI; no API change requested
 Exit: four consumers end to end; no breaking change for one full release cycle; the pre-1.0 polish pass below done before any release candidate.
 
 - [ ] smtp-net and web-net built on it; ws-net on it (from 0.8); cookie-net and form-net on `^0.7` or later; API frozen except for fixes found by consumers; `0.9.x` release candidates.
+- [x] 0.9.1: `param::parse_optional` for RFC 6455 extension parameters, the gap ws-net found adopting 0.9.0 (D-079), and `mail::encode_words_b` with `B` decoding in `decode_words`, for smtp-net (D-080). Additive, except that `decode_words` reads `B` words it refused.
 
 ### Pre-1.0 polish pass (DONE at 0.9.0, 2026-11-03)
 
@@ -119,6 +120,7 @@ James's standing rule: go back and fix any issues and tune performance before ge
 - [x] Every accepted gap, deferred item, known issue, and missed target revisited; the `encode-lib` helpers stay blocked on encode-lib, and they and the other open items are in the readiness note.
 - [x] A fresh performance pass: every row profiled, `byte_ranges` (21% to 76%), `Content-Disposition` (24% to 42%), and `client_address` tuned, and the cost of D-072 taken back (D-074). Every row is at least 30% ahead.
 - [x] The security and edge-case review again, by three independent reviews: 46 defects found and fixed, each with a regression test; every fuzz target 24 hours on the release code.
+- [ ] Before 1.0: ask the other parameter users whether they need the optional-value shape (D-079). smtp-net does not: ESMTP parameters are space-separated, and MIME parameters (`mail::parse_mime_params`) always carry a value. web-net's `Strict-Transport-Security` (RFC 6797, `max-age=...; includeSubDomains`) does, but it has no leading `;`; settle that with web-net.
 
 Repeat before the first release candidate if the code changes: a fresh benchmark on a quiet machine, the threat table against the code, and the 24-hour run.
 
