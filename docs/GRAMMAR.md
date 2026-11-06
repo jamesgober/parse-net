@@ -646,7 +646,11 @@ encoding     = token
 - Encoding: "An 'encoded-word' may not be more than 75 characters long";
   words split only between characters and are separated by CRLF SP.
   Printable ASCII without `=?` is written as it is.
-- Functions: `mail::decode_words`, `mail::encode_words`.
+- In a phrase (a display name), an encoded word must be a whole atom with
+  whitespace on both sides (section 5): next to a special, a comment, or a
+  quoted string it is text.
+- Functions: `mail::decode_words`, `mail::decode_phrase`,
+  `mail::encode_words`, `mail::encode_words_b`.
 
 ## MIME parameters
 
@@ -679,8 +683,11 @@ extended-other-names   := attribute other-sections "*"
 - Writing picks a token, a quoted string, a single `name*=UTF-8''...`, or
   `name*0*`, `name*1*` sections on folded lines, whichever keeps the line
   within 78 columns.
+- `mail::write_mime_param_at` starts where a line already holds text: a
+  one-line form that does not fit in the room left goes on a new line,
+  `;CRLF name=value`, before the value is split into sections.
 - Functions: `mail::parse_mime_params`, `MimeParams::get`, `decode_into`,
-  `Continuation`, `mail::write_mime_param`.
+  `Continuation`, `mail::write_mime_param`, `mail::write_mime_param_at`.
 
 ## Addresses and message identifiers
 
@@ -698,6 +705,10 @@ domain         = dot-atom / domain-literal / obs-domain
 dtext          = %d33-90 / %d94-126 / obs-dtext
 mailbox        = name-addr / addr-spec
 name-addr      = [display-name] angle-addr
+display-name   = phrase
+phrase         = 1*word / obs-phrase
+word           = atom / quoted-string
+obs-phrase     = word *(word / "." / CFWS)
 msg-id         = [CFWS] "<" id-left "@" id-right ">" [CFWS]
 id-left        = dot-atom-text / obs-id-left
 id-right       = dot-atom-text / no-fold-literal / obs-id-right
@@ -711,5 +722,8 @@ no-fold-literal = "[" *dtext "]"
   obs-text; `AddrSpec::is_ascii` says whether SMTPUTF8 is needed.
 - A mailbox's display name is checked as a phrase (atoms, `.`, quoted
   strings, comments, UTF-8) and returned raw, encoded words included.
-- Functions: `mail::parse_addr_spec`, `parse_mailbox`, `parse_msg_id`,
-  `write_msg_id`.
+- `mail::decode_phrase` reads a phrase as text: comments dropped, quoted
+  strings unquoted and unescaped, words joined by one space, encoded words
+  decoded. Its text holds no control character but HTAB, C1 included (D-081).
+- Functions: `mail::parse_addr_spec`, `parse_mailbox`, `decode_phrase`,
+  `parse_msg_id`, `write_msg_id`.

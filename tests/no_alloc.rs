@@ -295,6 +295,7 @@ const MAIL_INPUTS: &[&[u8]] = &[
     b"; filename*0*=UTF-8''caf%C3%A9; filename*1=\".txt\"; charset=utf-8",
     b"\"john doe\"@example.com",
     b"John Q. Public <jqp@example.com>",
+    b"\"Doe, Jane\" (Sales) =?UTF-8?B?5Lya6K2w?= Q. Public",
     b"<1234.5678@mail.example.com>",
     b"\"unterminated",
 ];
@@ -326,6 +327,7 @@ fn test_mail_and_link_parsing_never_allocates() {
             }
             let _ = mail::parse_addr_spec(v).map(|a| a.is_ascii());
             let _ = mail::parse_mailbox(v, &l);
+            let _ = mail::decode_phrase(v, &l, &mut out);
             let _ = mail::parse_msg_id(v);
             if let Ok(list) = sfv::parse_list(v) {
                 let _ = list.iter().count();
@@ -350,6 +352,7 @@ fn test_mail_and_link_writing_never_allocates() {
         let _ = mail::encode_words("Caf\u{e9} au lait", 20, &mut out);
         let _ = mail::encode_words_b("Caf\u{e9} au lait", 20, &mut out);
         let _ = mail::write_mime_param("filename", "caf\u{e9}.txt", &mut out);
+        let _ = mail::write_mime_param_at("filename", "caf\u{e9}.txt", 20, &mut out);
         let _ = mail::write_msg_id("a.b", "example.com", &mut out);
         let e = forwarded::Element {
             for_: Some(forwarded::Node::Addr(IpAddr::from([192, 0, 2, 1]), None)),

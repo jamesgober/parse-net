@@ -229,6 +229,12 @@ test = false
 doc = false
 
 [[bin]]
+name = "mail_phrase"
+path = "fuzz_targets/mail_phrase.rs"
+test = false
+doc = false
+
+[[bin]]
 name = "diff_b64"
 path = "fuzz_targets/diff_b64.rs"
 test = false

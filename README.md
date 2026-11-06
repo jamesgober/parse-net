@@ -187,7 +187,7 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 - **Links** - RFC 8288 `Link` values, with the first `rel` winning and `title*` decoded.
 - **Email** - RFC 5322 dates, header folding and unfolding, RFC 2047 encoded words (Q and B, read and written), MIME parameters with RFC 2231 continuations, `addr-spec`, mailboxes, and message identifiers, for smtp-net and login validation.
 - **Owned forms** - with `alloc`, owned media types, entity tags, host-ports, and Structured Field values that give the same views back.
-- **Proof** - unit tests on every path, property tests (no panic, round trips, writer-parser closure, combined lines), counting-allocator tests for every parse and write, RFC and tc2231 vectors, 37 fuzz targets including four differential oracles against `httpdate`, `mime`, `sfv`, and `base64`, and an example for every public item.
+- **Proof** - unit tests on every path, property tests (no panic, round trips, writer-parser closure, combined lines), counting-allocator tests for every parse and write, RFC and tc2231 vectors, 38 fuzz targets including four differential oracles against `httpdate`, `mime`, `sfv`, and `base64`, and an example for every public item.
 
 - **Performance** - at least 25% faster than the competing Rust crates on every compared operation (25% to 81%), without allocating: see [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
 - **Hardening** - an attack test for every threat in the model, every walker checked for linear time at 1 KiB, 64 KiB, and 1 MiB, and every fuzz target run for 24 hours: see [docs/SECURITY.md](docs/SECURITY.md).

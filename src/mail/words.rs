@@ -286,13 +286,13 @@ enum Charset {
 }
 
 /// The parts of an encoded word.
-struct Encoded<'a> {
+pub(super) struct Encoded<'a> {
     charset: Charset,
     /// The `B` encoding.
     base64: bool,
     text: &'a [u8],
     /// The index after the closing `?=`.
-    end: usize,
+    pub(super) end: usize,
 }
 
 /// An encoded word at `v[i..]`: `=?charset?enc?text?=`, standing alone.
@@ -300,7 +300,7 @@ struct Encoded<'a> {
 /// whitespace: they are then ordinary text, whatever charset they name. Each
 /// scan stops at the first byte that cannot continue, so failed candidates
 /// never add up to a second pass over the value.
-fn shape(v: &[u8], i: usize) -> Result<Option<Encoded<'_>>> {
+pub(super) fn shape(v: &[u8], i: usize) -> Result<Option<Encoded<'_>>> {
     let rest = v.get(i + 2..).unwrap_or(&[]);
     let q1 = rest
         .iter()
@@ -356,7 +356,7 @@ fn shape(v: &[u8], i: usize) -> Result<Option<Encoded<'_>>> {
 
 /// The length of the whitespace unit at `v[i]`: SP, HTAB, or a `CRLF WSP`
 /// fold; 0 for anything else.
-fn ws_len(v: &[u8], i: usize) -> usize {
+pub(super) fn ws_len(v: &[u8], i: usize) -> usize {
     match (v.get(i), v.get(i + 1), v.get(i + 2)) {
         (Some(b' ' | b'\t'), _, _) => 1,
         (Some(b'\r'), Some(b'\n'), Some(b' ' | b'\t')) => 3,
@@ -366,13 +366,26 @@ fn ws_len(v: &[u8], i: usize) -> usize {
 
 /// The text outside encoded words, checked as it is copied: UTF-8 (raw bytes
 /// above 0x7F are RFC 6532 text), with no control character but HTAB.
-struct Text {
+pub(super) struct Text {
     utf8: Utf8,
     prev: u8,
 }
 
 impl Text {
-    fn check(&mut self, b: u8, at: usize) -> Result<()> {
+    /// A checker at a character boundary.
+    pub(super) const fn new() -> Self {
+        Self {
+            utf8: Utf8::new(),
+            prev: 0,
+        }
+    }
+
+    /// Whether the text so far ends on a character boundary.
+    pub(super) const fn is_complete(&self) -> bool {
+        self.utf8.is_complete()
+    }
+
+    pub(super) fn check(&mut self, b: u8, at: usize) -> Result<()> {
         if b != b'\t' && crate::scan::is_control(b) {
             return err(crate::scan::control_kind(b), at);
         }
@@ -500,6 +513,21 @@ fn decode_q(cs: Charset, text: &[u8], at: usize, emit: &mut impl FnMut(&[u8])) -
     let (mut i, mut prev) = (0usize, 0u8);
     while let Some(&b) = text.get(i) {
         let start = at + i;
+        // A run of bytes written as themselves goes out whole: printable
+        // ASCII, which passes every check of `put_decoded` on a character
+        // boundary.
+        let plain = |c: u8| matches!(c, 0x21..=0x7e) && c != b'_' && c != b'=';
+        if plain(b) {
+            if !utf8.is_complete() {
+                return err(ErrorKind::InvalidUtf8, start);
+            }
+            let run = text.get(i..).unwrap_or(&[]);
+            let n = run.iter().position(|&c| !plain(c)).unwrap_or(run.len());
+            emit(run.get(..n).unwrap_or(&[]));
+            prev = run.get(n - 1).copied().unwrap_or(b);
+            i += n;
+            continue;
+        }
         let byte = match b {
             b'_' => b' ',
             b'=' => {
@@ -524,16 +552,43 @@ fn decode_q(cs: Charset, text: &[u8], at: usize, emit: &mut impl FnMut(&[u8])) -
     Ok(())
 }
 
+/// Decodes `e`, an encoded word that starts at `start` in the value.
+pub(super) fn decode_word(
+    e: &Encoded<'_>,
+    start: usize,
+    emit: &mut impl FnMut(&[u8]),
+) -> Result<()> {
+    decode_encoded(e.charset, e.base64, e.text, start, e.end, emit)
+}
+
+fn decode_encoded(
+    cs: Charset,
+    b64: bool,
+    word: &[u8],
+    start: usize,
+    end: usize,
+    emit: &mut impl FnMut(&[u8]),
+) -> Result<()> {
+    let at = end - 2 - word.len();
+    if b64 {
+        // A `B` word keeps to the 75-byte limit of section 2, which also
+        // bounds what it decodes to (D-080).
+        if end - start > WORD_LIMIT {
+            return err(ErrorKind::InvalidEncodedWord, start);
+        }
+        decode_b(cs, word, at, emit)
+    } else {
+        decode_q(cs, word, at, emit)
+    }
+}
+
 /// Walks `v`, emitting the decoded text. Whitespace includes folds, whose
 /// CRLF is dropped, so the folded output of [`encode_words`] reads back. A
 /// quoted string starts at a word boundary and needs its closing `"`: a lone
 /// `"` (`5" disk`) is ordinary text. One pass: every scan ahead either
 /// consumes what it read or stops at the first byte that rules it out.
 fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
-    let mut text = Text {
-        utf8: Utf8::new(),
-        prev: 0,
-    };
+    let mut text = Text::new();
     let (mut i, mut words) = (0usize, 0usize);
     let (mut boundary, mut after_word) = (true, false);
     let mut held: Option<(usize, usize)> = None;
@@ -583,17 +638,7 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
                 // Whitespace between two encoded words is dropped
                 // (RFC 2047 section 6.2).
                 held = None;
-                let at = end - 2 - word.len();
-                if b64 {
-                    // A `B` word keeps to the 75-byte limit of section 2,
-                    // which also bounds what it decodes to (D-080).
-                    if end - i > WORD_LIMIT {
-                        return err(ErrorKind::InvalidEncodedWord, i);
-                    }
-                    decode_b(cs, word, at, emit)?;
-                } else {
-                    decode_q(cs, word, at, emit)?;
-                }
+                decode_encoded(cs, b64, word, i, end, emit)?;
                 after_word = true;
                 boundary = false;
                 i = end;

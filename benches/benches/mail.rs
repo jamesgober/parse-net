@@ -1,5 +1,5 @@
-//! Email: RFC 5322 dates and B-word decoding against `mailparse`, and
-//! encoded-word writing in Q and B.
+//! Email: RFC 5322 dates, B-word decoding, and display names against
+//! `mailparse`; encoded-word and MIME parameter writing.
 
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
@@ -7,6 +7,8 @@ const DATE: &[u8] = include_bytes!("../data/mail_date.txt");
 const SUBJECT: &[u8] = include_bytes!("../data/subject.txt");
 const SUBJECT_CJK: &[u8] = include_bytes!("../data/subject_cjk.txt");
 const SUBJECT_B: &[u8] = include_bytes!("../data/subject_b.txt");
+const MAILBOX_QUOTED: &[u8] = include_bytes!("../data/mailbox_quoted.txt");
+const MAILBOX_ENCODED: &[u8] = include_bytes!("../data/mailbox_encoded.txt");
 
 fn bench(c: &mut Criterion) {
     let text = std::str::from_utf8(DATE).expect("ASCII");
@@ -68,15 +70,67 @@ fn bench(c: &mut Criterion) {
     let mut g = c.benchmark_group("decode_words/one B word, 39 bytes of Japanese");
     g.bench_function("parse-net", |b| {
         b.iter(|| {
-            parse_net::mail::decode_words(black_box(SUBJECT_B), &parse_net::Limits::DEFAULT, &mut text)
-                .expect("valid")
-                .len()
+            parse_net::mail::decode_words(
+                black_box(SUBJECT_B),
+                &parse_net::Limits::DEFAULT,
+                &mut text,
+            )
+            .expect("valid")
+            .len()
         })
     });
     g.bench_function("mailparse", |b| {
         b.iter(|| {
             let (h, _) = mailparse::parse_header(black_box(&header)).expect("valid");
             h.get_value().len()
+        })
+    });
+    g.finish();
+
+    // A mailbox and its display name as text: mailparse reads both into
+    // `String`s, so its time includes the allocations, as a caller's would.
+    let mut name = [0u8; 128];
+    for (label, mailbox) in [
+        ("quoted, with a comment", MAILBOX_QUOTED),
+        ("two Q words", MAILBOX_ENCODED),
+    ] {
+        let text = std::str::from_utf8(mailbox).expect("ASCII");
+        let mut g = c.benchmark_group(format!("mailbox display name/{label}"));
+        g.bench_function("parse-net", |b| {
+            b.iter(|| {
+                let m =
+                    parse_net::mail::parse_mailbox(black_box(mailbox), &parse_net::Limits::DEFAULT)
+                        .expect("valid");
+                let raw = m.display_name.expect("named");
+                parse_net::mail::decode_phrase(raw, &parse_net::Limits::DEFAULT, &mut name)
+                    .expect("valid")
+                    .len()
+            })
+        });
+        g.bench_function("mailparse", |b| {
+            b.iter(
+                || match &mailparse::addrparse(black_box(text)).expect("valid")[0] {
+                    mailparse::MailAddr::Single(s) => {
+                        s.display_name.as_ref().map_or(0, String::len)
+                    }
+                    mailparse::MailAddr::Group(_) => 0,
+                },
+            )
+        });
+        g.finish();
+    }
+
+    let mut g = c.benchmark_group("write_mime_param_at/filename after Content-Disposition");
+    g.bench_function("parse-net", |b| {
+        b.iter(|| {
+            let mut out = parse_net::SliceSink::new(&mut buf);
+            parse_net::mail::write_mime_param_at(
+                "filename",
+                black_box("quarterly report for the northern region.pdf"),
+                47,
+                &mut out,
+            )
+            .expect("room")
         })
     });
     g.finish();

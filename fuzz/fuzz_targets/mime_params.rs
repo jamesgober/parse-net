@@ -1,6 +1,7 @@
 #![no_main]
 //! MIME parameters: no panic, no allocation; every value decodes within its
-//! bound, and a value written by `write_mime_param` parses back unchanged.
+//! bound, and a value written by `write_mime_param`, or by
+//! `write_mime_param_at` mid-line, parses back unchanged.
 
 use libfuzzer_sys::fuzz_target;
 use parse_net::{Limits, SliceSink, mail};
@@ -42,6 +43,30 @@ fuzz_target!(|data: &[u8]| {
             }
             // A control character is refused; so is a value needing more
             // than 32 RFC 2231 sections, which no parser here would accept.
+            Err(parse_net::WriteError::Forbidden { .. }) => assert!(value.chars().any(char::is_control)),
+            Err(e) => assert_eq!(e, parse_net::WriteError::OutOfRange),
+        }
+
+        // Mid-line: the first line keeps to the room (the `;` always goes
+        // there), the others to 78 columns, and what is left is what the
+        // last line leaves.
+        let room = data.first().map_or(40, |&b| usize::from(b % 100));
+        let mut sink = SliceSink::new(&mut buf);
+        match mail::write_mime_param_at("filename", value, room, &mut sink) {
+            Ok(left) => {
+                let written = sink.written();
+                for (i, line) in written.split(|&b| b == b'\n').enumerate() {
+                    let line = line.strip_suffix(b"\r").unwrap_or(line);
+                    assert!(line.len() <= if i == 0 { room.max(1) } else { 78 });
+                }
+                match written.iter().rposition(|&b| b == b'\n') {
+                    None => assert_eq!(left, room - written.len()),
+                    Some(i) => assert_eq!(left, 78 - (written.len() - i - 1)),
+                }
+                let (p, used) = mail::parse_mime_params(written, &Limits::DEFAULT).expect("written parameter parses");
+                assert_eq!(used, written.len());
+                assert_eq!(p.decode_into("filename", &mut out).expect("decodes"), Some(value));
+            }
             Err(parse_net::WriteError::Forbidden { .. }) => assert!(value.chars().any(char::is_control)),
             Err(e) => assert_eq!(e, parse_net::WriteError::OutOfRange),
         }
