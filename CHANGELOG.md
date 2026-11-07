@@ -53,6 +53,11 @@ parameter writing. No 0.9.1 call changes its signature or its output.
 
 - `class::is_atext`, which smtp-net asked for, has been public since 0.5;
   nothing changed.
+- The `list` fuzz target found its split point by parsing the value up to
+  every comma, which is quadratic on a comment that holds many escaped
+  commas: one 3.5 KB input took 130 ms a run. It now finds the commas
+  outside quotes and comments in one pass (1.5 ms on that input). The
+  library took 10 microseconds on it; only the harness changed.
 
 ---
 
