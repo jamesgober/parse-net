@@ -682,41 +682,90 @@ fn put_unit(b: u8, out: &mut impl Sink) -> core::result::Result<(), WriteError> 
     Ok(())
 }
 
-fn put_param(name: &str, value: &str, out: &mut impl Sink) -> core::result::Result<(), WriteError> {
-    let (n, v) = (name.as_bytes(), value.as_bytes());
-    if !v.is_empty()
-        && v.iter().all(|&b| class::is_mime_token_char(b))
-        && 3 + n.len() + v.len() <= LINE
-    {
-        out.put(b"; ")?;
-        out.put(n)?;
-        out.put(b"=")?;
-        out.put(v)?;
-        return Ok(());
+/// The one-line forms of a parameter value.
+#[derive(Clone, Copy)]
+enum Form {
+    Token,
+    Quoted,
+    Extended,
+}
+
+/// The one-line form `value` takes, and the length of `; name=value` in it.
+fn form(n: &[u8], v: &[u8]) -> (Form, usize) {
+    // Each test stops at the first byte that fails it; the printable test
+    // and the count of escapes are simple enough to vectorize.
+    if !v.is_empty() && v.iter().all(|&b| class::is_mime_token_char(b)) {
+        return (Form::Token, 3 + n.len() + v.len());
     }
-    let escaped = v.iter().filter(|&&b| b == b'"' || b == b'\\').count();
-    if v.iter().all(|&b| (0x20..=0x7e).contains(&b)) && 5 + n.len() + v.len() + escaped <= LINE {
-        out.put(b"; ")?;
-        out.put(n)?;
-        out.put(b"=\"")?;
-        for &b in v {
-            if b == b'"' || b == b'\\' {
-                out.put(b"\\")?;
-            }
-            out.put(&[b])?;
-        }
-        out.put(b"\"")?;
-        return Ok(());
+    if v.iter().all(|&b| (0x20..=0x7e).contains(&b)) {
+        let escaped = v.iter().filter(|&&b| b == b'"' || b == b'\\').count();
+        return (Form::Quoted, 5 + n.len() + v.len() + escaped);
     }
     let encoded: usize = v.iter().map(|&b| unit_len(b)).sum();
-    if 4 + n.len() + 7 + encoded <= LINE {
-        out.put(b"; ")?;
-        out.put(n)?;
-        out.put(b"*=UTF-8''")?;
-        for &b in v {
-            put_unit(b, out)?;
+    (Form::Extended, 11 + n.len() + encoded)
+}
+
+/// Writes `name=value` in `form`, without the `; ` before it.
+fn put_form(
+    form: Form,
+    n: &[u8],
+    v: &[u8],
+    out: &mut impl Sink,
+) -> core::result::Result<(), WriteError> {
+    out.put(n)?;
+    match form {
+        Form::Token => {
+            out.put(b"=")?;
+            out.put(v)?;
         }
-        return Ok(());
+        Form::Quoted => {
+            out.put(b"=\"")?;
+            // The runs between the bytes that need a `\` go out whole.
+            let mut rest = v;
+            while let Some(p) = rest.iter().position(|&b| b == b'"' || b == b'\\') {
+                out.put(rest.get(..p).unwrap_or(&[]))?;
+                out.put(b"\\")?;
+                out.put(rest.get(p..p + 1).unwrap_or(&[]))?;
+                rest = rest.get(p + 1..).unwrap_or(&[]);
+            }
+            out.put(rest)?;
+            out.put(b"\"")?;
+        }
+        Form::Extended => {
+            out.put(b"*=UTF-8''")?;
+            let mut rest = v;
+            while let Some(p) = rest.iter().position(|&b| !class::is_attr_char(b)) {
+                out.put(rest.get(..p).unwrap_or(&[]))?;
+                put_unit(rest.get(p).copied().unwrap_or(0), out)?;
+                rest = rest.get(p + 1..).unwrap_or(&[]);
+            }
+            out.put(rest)?;
+        }
+    }
+    Ok(())
+}
+
+/// Writes the parameter, whose one-line form is `f` of `len` bytes, where
+/// `room` columns are left on the line, and returns the columns left on the
+/// line it ends on.
+fn put_param(
+    n: &[u8],
+    v: &[u8],
+    (f, len): (Form, usize),
+    room: usize,
+    out: &mut impl Sink,
+) -> core::result::Result<usize, WriteError> {
+    if len <= room {
+        out.put(b"; ")?;
+        put_form(f, n, v, out)?;
+        return Ok(room - len);
+    }
+    // On a line of its own, ` name=value` keeps one column for the `;` that
+    // may follow, as the sections do.
+    if len <= LINE {
+        out.put(b";\r\n ")?;
+        put_form(f, n, v, out)?;
+        return Ok(LINE - (len - 1));
     }
     // Sections, one per line: `;CRLF name*k*=...`, each line within 78
     // columns with its trailing `;`. A name that leaves no room for one
@@ -727,6 +776,7 @@ fn put_param(name: &str, value: &str, out: &mut impl Sink) -> core::result::Resu
     out.put(b";")?;
     let mut rest = v;
     let mut k = 0usize;
+    let mut col = 0usize;
     while !rest.is_empty() || k == 0 {
         if k >= usize::from(MAX_RFC2231_SECTIONS) {
             return Err(WriteError::OutOfRange);
@@ -748,7 +798,7 @@ fn put_param(name: &str, value: &str, out: &mut impl Sink) -> core::result::Resu
         out.put(b"*")?;
         out.put(digits.get(..dl).unwrap_or(&[]))?;
         out.put(b"*=")?;
-        let mut col = 1 + n.len() + 1 + dl + 2;
+        col = 1 + n.len() + 1 + dl + 2;
         if k == 0 {
             out.put(b"UTF-8''")?;
             col += 7;
@@ -767,13 +817,46 @@ fn put_param(name: &str, value: &str, out: &mut impl Sink) -> core::result::Resu
         rest = rest.get(took..).unwrap_or(&[]);
         k += 1;
     }
-    Ok(())
+    Ok(LINE.saturating_sub(col))
+}
+
+/// Checks the name and value, then writes the parameter with nothing written
+/// when the sink reports too little room.
+fn write_param(
+    name: &str,
+    value: &str,
+    room: usize,
+    out: &mut impl Sink,
+) -> core::result::Result<usize, WriteError> {
+    if !is_attribute(name.as_bytes()) {
+        return Err(WriteError::NotToken);
+    }
+    // ASCII text holds no C1 control, so its bytes are tested alone.
+    let control = if value.is_ascii() {
+        value.bytes().position(|b| b < 0x20 || b == 0x7f)
+    } else {
+        value
+            .char_indices()
+            .find(|&(_, c)| c.is_control())
+            .map(|(at, _)| at)
+    };
+    if let Some(at) = control {
+        return Err(WriteError::forbidden(at));
+    }
+    let (n, v) = (name.as_bytes(), value.as_bytes());
+    let f = form(n, v);
+    let mut count = CountSink::new();
+    let _ = put_param(n, v, f, room, &mut count)?;
+    reserve(out, count.count())?;
+    put_param(n, v, f, room, out)
 }
 
 /// Writes `; name=value`: as a token, as a quoted string, or, for non-ASCII
 /// or long values, as `; name*=UTF-8''...`, split into `name*0*`,
 /// `name*1*` sections on folded lines when one line would pass 78 columns.
-/// The output parses back with [`parse_mime_params`] to the same value.
+/// The parameter starts a line of its own: use [`write_mime_param_at`]
+/// after other text on the line. The output parses back with
+/// [`parse_mime_params`] to the same value.
 ///
 /// # Errors
 ///
@@ -799,16 +882,43 @@ pub fn write_mime_param(
     value: &str,
     out: &mut impl Sink,
 ) -> core::result::Result<(), WriteError> {
-    if !is_attribute(name.as_bytes()) {
-        return Err(WriteError::NotToken);
-    }
-    if let Some((at, _)) = value.char_indices().find(|&(_, c)| c.is_control()) {
-        return Err(WriteError::forbidden(at));
-    }
-    let mut count = CountSink::new();
-    put_param(name, value, &mut count)?;
-    reserve(out, count.count())?;
-    put_param(name, value, out)
+    write_param(name, value, LINE, out).map(|_| ())
+}
+
+/// Writes `; name=value` as [`write_mime_param`] does, where
+/// `room_first_line` columns are left on the current line (78 less what the
+/// line holds), and returns the columns left on the line the parameter ends
+/// on, for the next call. A one-line form that does not fit in the room goes
+/// on a new line, `;CRLF name=value`, before the value is split into
+/// sections; the `;` always goes on the current line. With a
+/// `room_first_line` of 78 the output is that of [`write_mime_param`].
+///
+/// # Errors
+///
+/// As [`write_mime_param`].
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{mail, SliceSink};
+///
+/// let mut buf = [0u8; 128];
+/// let mut out = SliceSink::new(&mut buf);
+/// // After `Content-Disposition: attachment`, 47 columns are left.
+/// let room = mail::write_mime_param_at("filename", "quarterly report for the northern region.pdf", 47, &mut out)?;
+/// assert_eq!(out.written(), &b";\r\n filename=\"quarterly report for the northern region.pdf\""[..]);
+/// assert_eq!(room, 22);
+/// let room = mail::write_mime_param_at("size", "1024", room, &mut out)?;
+/// assert_eq!(room, 22 - 11);
+/// # Ok::<(), parse_net::WriteError>(())
+/// ```
+pub fn write_mime_param_at(
+    name: &str,
+    value: &str,
+    room_first_line: usize,
+    out: &mut impl Sink,
+) -> core::result::Result<usize, WriteError> {
+    write_param(name, value, room_first_line, out)
 }
 
 #[cfg(test)]
@@ -961,6 +1071,79 @@ mod tests {
         assert_eq!(
             write_mime_param("f", &"\u{e9}".repeat(1000), &mut out),
             Err(WriteError::OutOfRange)
+        );
+    }
+
+    fn written_at(name: &str, value: &str, room: usize) -> (String, usize) {
+        let mut buf = vec![0u8; 4096];
+        let mut out = crate::SliceSink::new(&mut buf);
+        let left = write_mime_param_at(name, value, room, &mut out).unwrap();
+        (String::from_utf8(out.written().to_vec()).unwrap(), left)
+    }
+
+    #[test]
+    fn test_write_mime_param_at_room() {
+        // `; charset=utf-8` is 15 columns: it fits in 15, not in 14.
+        assert_eq!(
+            written_at("charset", "utf-8", 15),
+            (String::from("; charset=utf-8"), 0)
+        );
+        assert_eq!(
+            written_at("charset", "utf-8", 14),
+            (String::from(";\r\n charset=utf-8"), 64)
+        );
+        assert_eq!(
+            written_at("charset", "utf-8", 0),
+            (String::from(";\r\n charset=utf-8"), 64)
+        );
+        assert_eq!(written_at("n", "a b", 9), (String::from("; n=\"a b\""), 0));
+        assert_eq!(
+            written_at("n", "a b", 8),
+            (String::from(";\r\n n=\"a b\""), 70)
+        );
+        assert_eq!(
+            written_at("f", "caf\u{e9}", 21),
+            (String::from("; f*=UTF-8''caf%C3%A9"), 0)
+        );
+        assert_eq!(
+            written_at("f", "caf\u{e9}", 20),
+            (String::from(";\r\n f*=UTF-8''caf%C3%A9"), 58)
+        );
+        // A one-line form of 78 columns goes on a line of its own, where its
+        // 77 leave the column for a `;`.
+        let v = "x".repeat(78 - 3 - 1);
+        let (w, left) = written_at("a", &v, 78);
+        assert_eq!((w.len(), left), (78, 0));
+        let (w, left) = written_at("a", &v, 10);
+        assert_eq!((w.len(), left), (80, 1));
+        // Too long for one line at all: sections, as `write_mime_param`.
+        let long = "x".repeat(200);
+        for room in [0, 10, 78] {
+            let (w, left) = written_at("filename", &long, room);
+            assert!(w.starts_with(";\r\n filename*0*=UTF-8''"), "{w}");
+            let last = w.rsplit("\r\n").next().unwrap();
+            assert_eq!(left, 78 - last.len());
+        }
+        // Calls chain on what is left.
+        let mut buf = vec![0u8; 256];
+        let mut out = crate::SliceSink::new(&mut buf);
+        let mut room = 78 - "Content-Type: text/plain".len();
+        for (n, v) in [
+            ("charset", "utf-8"),
+            ("format", "flowed"),
+            ("delsp", "yes"),
+            ("name", "a long attachment name.txt"),
+        ] {
+            room = write_mime_param_at(n, v, room, &mut out).unwrap();
+        }
+        assert_eq!(
+            out.written(),
+            b"; charset=utf-8; format=flowed; delsp=yes;\r\n name=\"a long attachment name.txt\""
+        );
+        assert_eq!(room, 78 - 34);
+        assert_eq!(
+            write_mime_param_at("a*", "x", 78, &mut crate::SliceSink::new(&mut [0u8; 8])),
+            Err(WriteError::NotToken)
         );
     }
 }

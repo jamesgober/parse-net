@@ -54,6 +54,30 @@ bytes, in `Q`. The
 `find` walks the list through the iterator, where `Params::get` skips the
 names it does not want.
 
+## What 0.9.2 changed
+
+Instructions per call (callgrind), 0.9.1 against 0.9.2 built side by side:
+`write_mime_param` on a 44-byte quoted file name 3,271 to 2,292 (-30%), on
+a non-ASCII one 2,088 to 1,974 (-5.5%); `decode_words` on two `Q` words
+5,462 to 5,295 (-3%). `decode_words` on `B` words, `encode_words`, and
+`encode_words_b` stayed within 0.5%. The quoted form now writes the runs
+between escapes whole, an ASCII value's controls are checked a byte at a time
+rather than a `char` at a time, the one-line form is chosen once for both of
+the writer's passes, and a `Q` word's plain bytes go out as one run.
+
+The new calls: `decode_phrase` on `"Doe, Jane" (Sales)` 1,204 instructions
+(1,802 before its ASCII words went out whole), on two `Q` words 3,179;
+`write_mime_param_at` on the file name after `Content-Disposition:
+attachment` 2,324.
+
+The wall-clock rows for 0.9.2 wait for a quiet machine: the run of
+2026-11-06 shared the host with other builds (load average 350 on 32
+threads, every row about ten times its 0.9.1 time). Read on that run and on
+Windows under load, `parse_mailbox` and `decode_phrase` together took 31% to
+47% of the time `mailparse::addrparse` takes for the mailbox and its display
+name (a quoted name with a comment, and two `Q` words), which allocates
+`String`s; the ratio is kept for the table until the quiet run.
+
 ## What 0.9.1 changed
 
 Instructions per call (callgrind), 0.9.0 against 0.9.1 built side by side:

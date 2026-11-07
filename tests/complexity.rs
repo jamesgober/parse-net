@@ -65,6 +65,10 @@ fn decode(v: &[u8], limits: &Limits) -> Outcome {
     OUT.with_borrow_mut(|out| outcome(mail::decode_words(v, limits, out)))
 }
 
+fn phrase(v: &[u8], limits: &Limits) -> Outcome {
+    OUT.with_borrow_mut(|out| outcome(mail::decode_phrase(v, limits, out)))
+}
+
 fn fold_text(v: &[u8]) -> Outcome {
     OUT.with_borrow_mut(|out| {
         mail::fold("Subject", v, &mut pn::SliceSink::new(out)).map_err(|_| ErrorKind::OutOfRange)
@@ -594,6 +598,34 @@ fn cases() -> Vec<Case> {
             },
             expect: Ok(()),
             full: |v| decode(v, &FULL),
+        },
+        Case {
+            name: "phrase, many words, quoted strings, and comments",
+            input: |n| build("", |_| "Jane \"Q. Doe\" (x) ".into(), "z", n),
+            default: |v| phrase(v, &Limits::DEFAULT),
+            expect: Ok(()),
+            full: |v| phrase(v, &FULL),
+        },
+        Case {
+            name: "phrase, many encoded words",
+            input: |n| build("", |_| "=?UTF-8?Q?a=C3=A9?= ".into(), "z", n),
+            default: |v| phrase(v, &Limits::DEFAULT),
+            expect: Err(ErrorKind::TooManyMembers),
+            full: |v| phrase(v, &FULL),
+        },
+        Case {
+            name: "phrase, encoded-word candidates that never close",
+            input: |n| build("", |_| "=?a?Q?b ".into(), "z", n),
+            default: |v| phrase(v, &Limits::DEFAULT),
+            expect: Ok(()),
+            full: |v| phrase(v, &FULL),
+        },
+        Case {
+            name: "phrase, one atom of candidates",
+            input: |n| build("", |_| "=?UTF-8?Q?a".into(), "?=", n),
+            default: |v| phrase(v, &Limits::DEFAULT),
+            expect: Ok(()),
+            full: |v| phrase(v, &FULL),
         },
         Case {
             name: "fold, many words",

@@ -70,3 +70,12 @@ error's offset.
   James). Before 1.0, web-net settles whether
   `Strict-Transport-Security` needs the same shape without a leading `;`;
   smtp-net does not need it (ROADMAP).
+
+## Since 0.9.1
+
+- smtp-net, adopting 0.9.1, asked for three things. A display name as text:
+  0.9.2 adds `mail::decode_phrase` (D-081), which gate-net will use for login
+  display names too. A parameter after other text on a line: 0.9.2 adds
+  `mail::write_mime_param_at` (D-082). `class::is_atext`: public since 0.5,
+  nothing to do.
+- No consumer request is open.

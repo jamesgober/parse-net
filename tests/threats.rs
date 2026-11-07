@@ -72,6 +72,14 @@ fn test_encoded_word_crlf_refused() {
             ErrorKind::ControlInDecoded,
             "{word:?}"
         );
+        // The same word as a display name: refused as decoded, or, for the
+        // `[` no phrase may hold, before it is decoded.
+        let k = kind(mail::decode_phrase(word, &Limits::DEFAULT, &mut out));
+        assert!(
+            k == ErrorKind::ControlInDecoded
+                || (k == ErrorKind::InvalidByte && word.contains(&b'[')),
+            "{word:?}: {k:?}"
+        );
     }
     assert_eq!(
         mail::decode_words(b"=?UTF-8?Q?a_b?=", &Limits::DEFAULT, &mut out),
@@ -93,6 +101,35 @@ fn test_encoded_word_crlf_refused() {
     assert_eq!(
         mail::decode_words(b"=?ISO-8859-1?Q?=A0=C2?=", &Limits::DEFAULT, &mut out),
         Ok("\u{a0}\u{c2}")
+    );
+}
+
+#[test]
+fn test_display_name_controls_refused() {
+    let mut out = [0u8; 64];
+    // A display name reaches a screen or a log: no control character in it,
+    // raw, quoted, escaped, or encoded, and no C1 in UTF-8 (D-081).
+    for name in [
+        &b"Jane\x1b[2J Doe"[..],
+        b"\"Jane\x1b[2J\" Doe",
+        b"\"Jane\\\x1b[2J\" Doe",
+        b"Jane\xc2\x9b2J Doe",
+        b"\"Jane\xc2\x85\"",
+        b"\"Jane\\\xc2\\\x85\"",
+        b"Jane\r\nBcc: x",
+        b"Jane\nDoe",
+        b"Jane\x00Doe",
+        b"Jane\x7fDoe",
+        b"=?UTF-8?Q?Jane=0D=0ABcc:_x?=",
+    ] {
+        assert!(
+            mail::decode_phrase(name, &Limits::DEFAULT, &mut out).is_err(),
+            "{name:?}"
+        );
+    }
+    assert_eq!(
+        mail::decode_phrase(b"\"Jane\tDoe\"", &Limits::DEFAULT, &mut out),
+        Ok("Jane\tDoe")
     );
 }
 

@@ -13,6 +13,54 @@
 
 ---
 
+## [0.9.2] - 2026-11-07
+
+Two additions smtp-net asked for while adopting 0.9.1, and faster MIME
+parameter writing. No 0.9.1 call changes its signature or its output.
+
+### Added
+
+- `mail::decode_phrase`: the text of a `phrase` (RFC 5322 section 3.2.5),
+  such as the display name `parse_mailbox` returns raw. Comments are
+  dropped, quoted strings lose their quotes and their quoted pairs are
+  unescaped, and the words are joined by one space; RFC 2047 encoded words
+  are decoded where section 5 allows them in a phrase, a whole atom between
+  whitespace, and two of them with only whitespace between are joined with
+  none (section 6.2). The text meets `decode_words`' rules: UTF-8, no control
+  character but HTAB, C1 included. For smtp-net and gate-net (D-081).
+- `mail::write_mime_param_at(name, value, room_first_line, out)`:
+  `write_mime_param` for a parameter that does not start a line. A one-line
+  form that does not fit in the room goes on a new line, `;CRLF name=value`,
+  before the value is split into sections, and the call returns the columns
+  left on its last line, so parameters chain. With a room of 78 it writes
+  what `write_mime_param` writes (D-082).
+- Fuzz target `mail_phrase` (38 targets): plain phrases read back as their
+  words, any text through a quoted string reads back unchanged, and every
+  display name `parse_mailbox` accepts decodes or fails with a listed error;
+  `mime_params` now writes mid-line too and checks the room returned.
+  Property tests for both functions, threat cases for display names, complexity cases,
+  counting-allocator coverage, and benchmark rows.
+
+### Performance
+
+- `write_mime_param` on a quoted value: 30% fewer instructions (3,271 to
+  2,292), from writing the runs between escapes whole and checking an ASCII
+  value's controls a byte at a time; 5.5% on an extended value.
+- `decode_words` on `Q` words: 3% fewer instructions (5,462 to 5,295), from
+  writing runs of plain bytes whole.
+
+### Notes
+
+- `class::is_atext`, which smtp-net asked for, has been public since 0.5;
+  nothing changed.
+- The `list` fuzz target found its split point by parsing the value up to
+  every comma, which is quadratic on a comment that holds many escaped
+  commas: one 3.5 KB input took 130 ms a run. It now finds the commas
+  outside quotes and comments in one pass (1.5 ms on that input). The
+  library took 10 microseconds on it; only the harness changed.
+
+---
+
 ## [0.9.1] - 2026-11-05
 
 Two additions consumers asked for while adopting 0.9.0. No 0.9.0 call

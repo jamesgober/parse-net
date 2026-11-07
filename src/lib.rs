@@ -73,7 +73,7 @@
 //!
 //! ## Status
 //!
-//! Beta, `0.9.1`: every planned field, measured against the Rust crates that
+//! Beta, `0.9.2`: every planned field, measured against the Rust crates that
 //! do the same work (`docs/PERFORMANCE.md`), reviewed and hardened
 //! (`docs/SECURITY.md`), and in use by published consumers (http-net,
 //! cookie-net, form-net). The public API is written down in `docs/API.md`,

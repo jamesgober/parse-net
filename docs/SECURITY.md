@@ -105,10 +105,10 @@ field of many parameters cost the square of its length (D-072).
 
 ## Fuzzing
 
-37 cargo-fuzz targets cover every parser, every writer's round trip, and
+38 cargo-fuzz targets cover every parser, every writer's round trip, and
 four differential comparisons (`diff_http_date` against `httpdate`,
 `diff_media_type` against `mime`, `diff_sfv` against `sfv`, `diff_b64`
-against `base64` for `B` encoded words). Each of the 33
+against `base64` for `B` encoded words). Each of the 34
 parser targets runs under the counting allocator (a parse that allocates
 fails the run), checks that every error it sees prints as exactly its kind's message and
 position, with no input bytes, and asserts the properties its parser

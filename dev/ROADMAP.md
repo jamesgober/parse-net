@@ -112,6 +112,7 @@ Exit: four consumers end to end; no breaking change for one full release cycle; 
 
 - [ ] smtp-net and web-net built on it; ws-net on it (from 0.8); cookie-net and form-net on `^0.7` or later; API frozen except for fixes found by consumers; `0.9.x` release candidates.
 - [x] 0.9.1: `param::parse_optional` for RFC 6455 extension parameters, the gap ws-net found adopting 0.9.0 (D-079), and `mail::encode_words_b` with `B` decoding in `decode_words`, for smtp-net (D-080). Additive, except that `decode_words` reads `B` words it refused.
+- [x] 0.9.2: `mail::decode_phrase` for display names (D-081) and `mail::write_mime_param_at` for parameters after other text on a line (D-082), the gaps smtp-net found adopting 0.9.1; `class::is_atext`, the third, was already public. Additive; `write_mime_param` 30% faster on quoted values.
 
 ### Pre-1.0 polish pass (DONE at 0.9.0, 2026-11-03)
 

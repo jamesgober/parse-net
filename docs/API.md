@@ -2124,7 +2124,7 @@ Conformance: the httpwg `structured-field-tests` suite runs in full (every parse
 
 ## Email lexical layer: `mail`
 
-`MAIL-1` to `MAIL-14` | P1 (MAIL-2, MAIL-5, MAIL-6, MAIL-11, MAIL-12 P2) | 0.5
+`MAIL-1` to `MAIL-16` | P1 (MAIL-2, MAIL-5, MAIL-6, MAIL-11, MAIL-12 P2) | 0.5
 
 ```rust
 pub mod mail {
@@ -2137,8 +2137,10 @@ pub mod mail {
     pub fn decode_words<'b>(value: &[u8], limits: &Limits, out: &'b mut [u8]) -> Result<&'b str, ParseError>;
     pub fn parse_mime_params(s: &[u8], limits: &Limits) -> Result<(MimeParams<'_>, usize), ParseError>;
     pub fn write_mime_param(name: &str, value: &str, out: &mut impl Sink) -> Result<(), WriteError>;
+    pub fn write_mime_param_at(name: &str, value: &str, room_first_line: usize, out: &mut impl Sink) -> Result<usize, WriteError>;   // 0.9.2 (D-082)
     pub fn parse_addr_spec(value: &[u8]) -> Result<AddrSpec<'_>, ParseError>;
     pub fn parse_mailbox(value: &[u8], limits: &Limits) -> Result<Mailbox<'_>, ParseError>;
+    pub fn decode_phrase<'b>(value: &[u8], limits: &Limits, out: &'b mut [u8]) -> Result<&'b str, ParseError>;   // 0.9.2 (D-081)
     pub fn parse_msg_id(value: &[u8]) -> Result<MsgId<'_>, ParseError>;
     pub fn write_msg_id(left: &str, right: &str, out: &mut impl Sink) -> Result<(), WriteError>;
     pub use crate::MailDate;
@@ -2191,10 +2193,12 @@ The grammar smtp-net needs to write mail and gate-net needs to validate login ad
 | MAIL-8 | RFC 2231 (`get`, `decode_into`, `Continuation`) | P1, 2, 0.5 | the reassembly in [PLAN 7.12](../dev/PLAN.md#712-rfc-2231-reassembly-without-allocation): sections `name*0`, `name*1*`, ... numbered from 0 without gaps or duplicates; a charset only on section 0; decoded in order into `out`; `attribute-char` keeps `{` and `}`; a section given twice is `SectionGap`; decoded controls, C1 split across sections included, and the US-ASCII rule hold over the whole value | `SectionGap`, `TooManySections`, EXT-1 and EXT-2 errors, `BufferTooSmall` |
 | MAIL-9 | `write_mime_param` | P1, 1, 0.5 | `; name=token`, `; name="quoted"`, or, for non-ASCII or long values, `; name*=UTF-8''...` split into `name*0*`, `name*1*` sections so no line passes 78 columns | `NotToken` (name), `Forbidden { at }` (control), `OutOfRange` (a name that leaves no room on a line, or more than 32 sections), `Full` |
 | MAIL-10 | `parse_addr_spec`, `AddrSpec`, `LocalPart`, `Domain` | P1, 1, 0.5 | RFC 5322 section 3.4.1 without obsolete forms, comments, or folding: `dot-atom` or quoted local part, `@`, `dot-atom` domain or `[domain-literal]`; local part at most 64 octets and the whole address at most 254 (RFC 5321 section 4.5.3.1); non-ASCII accepted only as valid UTF-8 (RFC 6532), never as raw obs-text; `is_ascii` false means SMTPUTF8 is needed | `InvalidAddrSpec` (a leading, trailing, or doubled dot, a missing `@`, a comment), `TooLong`, `InvalidUtf8` |
-| MAIL-11 | `parse_mailbox`, `Mailbox` | P2, 2, 0.5 | `[display-name] "<" addr-spec ">" [CFWS]` or a bare `addr-spec`; the display name is returned raw (phrases or encoded words; decode with `decode_words`), and is `None` when only comments stand there | as MAIL-10, `UnterminatedQuote`, `UnbalancedComment` |
+| MAIL-11 | `parse_mailbox`, `Mailbox` | P2, 2, 0.5 | `[display-name] "<" addr-spec ">" [CFWS]` or a bare `addr-spec`; the display name is returned raw (phrases or encoded words; read it as text with `decode_phrase`, MAIL-15), and is `None` when only comments stand there | as MAIL-10, `UnterminatedQuote`, `UnbalancedComment` |
 | MAIL-12 | `parse_msg_id`, `write_msg_id` | P2, 2, 0.5 | `"<" id-left "@" id-right ">"`, `dot-atom-text` on both sides (or a `no-fold-literal` on the right) | `InvalidAddrSpec`; writer: `Forbidden`, `OutOfRange` (over 998 bytes), `Full` |
 | MAIL-13 | `MailDate` re-export | P1, 1, 0.5 | DAT-11 to DAT-13 | |
 | MAIL-14 | `is_field_name` | P1, 3, 0.5 | `ftext = %d33-57 / %d59-126` (RFC 5322 section 3.6.8), non-empty | none |
+| MAIL-15 | `decode_phrase` | P1, 2, 0.9.2 (D-081) | a `phrase` (RFC 5322 section 3.2.5) as text into `out`: comments dropped, quoted strings unquoted with quoted pairs unescaped, words joined by one space, `CRLF WSP` folds as whitespace; an encoded word decoded only as a whole atom between whitespace (RFC 2047 section 5), two separated only by whitespace joined (section 6.2), read as MAIL-6 reads them; no control character but HTAB in the text, C1 included; nothing written on error | `Empty` (no word), `InvalidByte` (a special outside a quoted string or comment), control kinds, `Control` (C1), `InvalidUtf8`, `UnterminatedQuote`, `UnbalancedComment`, `CommentTooDeep`, the MAIL-6 encoded-word errors, `TooManyMembers`, `BufferTooSmall` |
+| MAIL-16 | `write_mime_param_at` | P1, 1, 0.9.2 (D-082) | MAIL-9 after other text: the one-line form goes on the current line when it fits in `room_first_line`, else on a new line (`;CRLF name=value`), else in sections; the `;` always on the current line; returns the columns left on the last line, so calls chain; a room of 78 writes what MAIL-9 writes | as MAIL-9 |
 
 ```rust
 use parse_net::{mail, SliceSink, Limits};
@@ -2321,7 +2325,9 @@ The 0.2 review of this API against each consumer's needs. "Moves" means the cons
 | `Date` header | `MailDate::new`, `write_to` |
 | header folding | `mail::fold` |
 | `Subject` and display names | `mail::encode_words` (Q), `mail::encode_words_b` (B, 0.9.1, for mostly non-ASCII text) |
-| `Content-Type` and `Content-Disposition` with RFC 2231 | `media::write`, `mail::write_mime_param` |
+| `Content-Type` and `Content-Disposition` with RFC 2231 | `media::write`, `mail::write_mime_param`, `mail::write_mime_param_at` after other text on the line (0.9.2) |
+| display names of received addresses as text | `mail::parse_mailbox`, then `mail::decode_phrase` (0.9.2) |
+| whether a display name can go out as an atom phrase | `class::is_atext` |
 | reading parameters of received parts | `mail::parse_mime_params`, `MimeParams::decode_into` |
 | addresses | `mail::parse_addr_spec`, `AddrSpec::is_ascii` (SMTPUTF8), `parse_mailbox` |
 | `Message-ID` | `mail::write_msg_id`, `parse_msg_id` |

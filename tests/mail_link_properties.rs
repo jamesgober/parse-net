@@ -53,7 +53,12 @@ proptest! {
                 }
             }
             let _ = mail::parse_addr_spec(input);
-            let _ = mail::parse_mailbox(input, &Limits::DEFAULT);
+            if let Ok(m) = mail::parse_mailbox(input, &Limits::DEFAULT) {
+                if let Some(name) = m.display_name {
+                    let _ = mail::decode_phrase(name, &Limits::DEFAULT, &mut out);
+                }
+            }
+            let _ = mail::decode_phrase(input, &Limits::DEFAULT, &mut out);
             let _ = mail::parse_msg_id(input);
         }
     }
@@ -155,6 +160,38 @@ proptest! {
         prop_assert_eq!(used, written.len());
         let mut dec = vec![0u8; 8192];
         prop_assert_eq!(p.decode_into("filename", &mut dec).expect("decodes"), Some(value.as_str()));
+    }
+
+    #[test]
+    fn test_mime_param_at_room(name in "[a-z]{1,24}", value in "\\PC{0,120}", room in 0usize..100) {
+        let mut buf = vec![0u8; 8192];
+        let mut out = SliceSink::new(&mut buf);
+        let left = mail::write_mime_param_at(&name, &value, room, &mut out).expect("no control characters");
+        let written = out.written().to_vec();
+        // The first line takes no more than the room (the `;` always goes
+        // there); every other line keeps to 78 columns.
+        let mut lines = written.split(|&b| b == b'\n');
+        let first = lines.next().unwrap_or(&[]);
+        let first = first.strip_suffix(b"\r").unwrap_or(first);
+        prop_assert!(first.len() <= room.max(1), "{:?}", String::from_utf8_lossy(&written));
+        prop_assert!(lines.all(|l| l.strip_suffix(b"\r").unwrap_or(l).len() <= 78));
+        // What is left is what the last line leaves.
+        match written.iter().rposition(|&b| b == b'\n') {
+            None => prop_assert_eq!(left, room - written.len()),
+            Some(i) => prop_assert_eq!(left, 78 - (written.len() - i - 1)),
+        }
+        let (p, used) = mail::parse_mime_params(&written, &Limits::DEFAULT).expect("written parameter parses");
+        prop_assert_eq!(used, written.len());
+        let mut dec = vec![0u8; 8192];
+        prop_assert_eq!(p.decode_into(&name, &mut dec).expect("decodes"), Some(value.as_str()));
+        // With the room of a fresh line it writes what `write_mime_param` writes.
+        let mut whole = vec![0u8; 8192];
+        let mut w = SliceSink::new(&mut whole);
+        mail::write_mime_param(&name, &value, &mut w).expect("no control characters");
+        let mut at = vec![0u8; 8192];
+        let mut a = SliceSink::new(&mut at);
+        let _ = mail::write_mime_param_at(&name, &value, 78, &mut a).expect("no control characters");
+        prop_assert_eq!(w.written(), a.written());
     }
 
     #[test]
