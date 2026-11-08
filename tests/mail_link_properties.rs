@@ -168,6 +168,8 @@ proptest! {
         let mut out = SliceSink::new(&mut buf);
         let left = mail::write_mime_param_at(&name, &value, room, &mut out).expect("no control characters");
         let written = out.written().to_vec();
+        // A room past 78 is read as 78 (D-084).
+        let room = room.min(78);
         // The first line takes no more than the room (the `;` always goes
         // there); every other line keeps to 78 columns.
         let mut lines = written.split(|&b| b == b'\n');

@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 473becf889d1644f6250d2f32c54454caabe91e7c1169dfb372ae1082073d055 # shrinks to text = "\u{abc}", room = 0
+cc 3c718e48d42307965f55f63b4ffcc13c3cfb54fad928622d9c7ee4605a5bf702 # shrinks to name = "a", value = "", room = 79

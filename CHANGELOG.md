@@ -13,6 +13,41 @@
 
 ---
 
+## [0.9.3] - 2026-11-08
+
+Fixes from a review of the code added since 0.9.0, and a faster
+`Cache-Control` reader. No call changes its signature.
+
+### Fixed
+
+- `mail::decode_phrase` decoded an encoded word with a comment or a quoted
+  string right before it: `(c)=?UTF-8?Q?a?=` read as `a`, and
+  `"x"=?UTF-8?Q?a?=` as `x a`. RFC 2047 section 5 wants whitespace on both
+  sides of an encoded word in a phrase, and 0.9.2 checked only the side
+  after it. Both are now text, as the mirror cases were (D-084).
+- `mail::write_mime_param_at` with a room past 78 could put a whole value on
+  the first line, past 78 columns, and past 998 bytes for a long one. A room
+  past 78 is now read as 78, as `encode_words` caps its own (D-084).
+
+### Changed
+
+- `response_cache_control` and `request_cache_control` compare directive
+  names as two or three words instead of byte by byte: 881 to 823
+  instructions (-6.6%) for `public, max-age=31536000, immutable`.
+
+### Documentation
+
+- `decode_phrase`: folds are read between words and inside comments; a
+  quoted string must be unfolded first (`mail::unfold`), as for
+  `parse_mime_params` (D-078). An empty word, `""` or an encoded word with no
+  text, counts as a word.
+- The question left open for web-net, whether `Strict-Transport-Security`
+  needs the optional-parameter shape without a leading `;`, is closed:
+  web-net writes HSTS and reads none, and its grammar stays PN-18 for 1.x
+  (D-083).
+
+---
+
 ## [0.9.2] - 2026-11-07
 
 Two additions smtp-net asked for while adopting 0.9.1, and faster MIME
@@ -559,7 +594,9 @@ The scaffold and the plan. No parsing code yet.
   (0.1 to 1.0 with exit criteria).
 - `fuzz/` crate skeleton; targets arrive with the parsers they cover.
 
-[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/jamesgober/parse-net/compare/v0.9.2...v0.9.3
+[0.9.2]: https://github.com/jamesgober/parse-net/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/jamesgober/parse-net/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/jamesgober/parse-net/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/jamesgober/parse-net/compare/v0.7.0...v0.8.0

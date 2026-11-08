@@ -28,7 +28,7 @@ strictness.
 | `parse_media_type` and `charset` | `text/html; charset=utf-8` | 20.6 ns | 37.6 ns (`mime` 0.3.17) | 45% | met |
 | `parse_content_disposition` and `filename` | `attachment; filename="a.txt"; filename*=UTF-8''%E2%82%AC.txt` | 108 ns | 173 ns (`mailparse`; `content_disposition` 0.4.0 178 ns) | 38% | met |
 | `best_media` | Chrome's navigation `Accept`, 3 offers | 444 ns | 630 ns (`mime` and a selection loop) | 30% | met |
-| `response_cache_control` | `public, max-age=31536000, immutable` | 37.8 ns | 50.7 ns (`headers`) | 25% | met |
+| `response_cache_control` | `public, max-age=31536000, immutable` | 37.8 ns | 50.7 ns (`headers`) | 25% | met; 6.6% fewer instructions at 0.9.3, wall clock waits for a quiet run |
 | `client_address` | 3-hop `X-Forwarded-For`, IPv4 | 37.6 ns | no Rust crate resolves through trusted proxies | n/a | estimate 60 ns: met |
 | `mail::encode_words` | 36-byte UTF-8 subject (PLAN row: 40 bytes) | 176 ns | no allocation-free Rust encoder | n/a | estimate 200 ns: met |
 | `mail::encode_words_b` | the same subject; 39 bytes of Japanese | 92.2 ns; 103 ns (`encode_words` 131 ns) | no allocation-free Rust encoder | n/a | none set |
@@ -53,6 +53,21 @@ bytes, in `Q`. The
 `parse_optional` row reads 4.6 ns more than `parse` on the valued list:
 `find` walks the list through the iterator, where `Params::get` skips the
 names it does not want.
+
+## What 0.9.3 changed
+
+Instructions per call (callgrind), 0.9.2 against 0.9.3:
+`response_cache_control` on `public, max-age=31536000, immutable` 881 to 823
+(-6.6%). The directive names were compared a byte at a time after the
+length had picked the candidate; the length is a constant there, so the
+name is now compared as two or three overlapping words with `0x20` OR-ed
+into every byte of a word at once (a test checks it against the byte rule
+for every name, every position, and every byte value). Skipping whitespace
+after a directive only when there is some saved 4 more and was left out.
+The `decode_phrase` fix reads one byte, and only for an atom that starts
+with `=?`: 3,179 to 3,180 on two `Q` words, 1,204 to 1,197 on a quoted name
+with a comment. `write_mime_param_at` on the file name after
+`Content-Disposition: attachment`: 2,324 to 2,300.
 
 ## What 0.9.2 changed
 

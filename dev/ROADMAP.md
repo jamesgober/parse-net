@@ -113,6 +113,7 @@ Exit: four consumers end to end; no breaking change for one full release cycle; 
 - [ ] smtp-net and web-net built on it; ws-net on it (from 0.8); cookie-net and form-net on `^0.7` or later; API frozen except for fixes found by consumers; `0.9.x` release candidates.
 - [x] 0.9.1: `param::parse_optional` for RFC 6455 extension parameters, the gap ws-net found adopting 0.9.0 (D-079), and `mail::encode_words_b` with `B` decoding in `decode_words`, for smtp-net (D-080). Additive, except that `decode_words` reads `B` words it refused.
 - [x] 0.9.2: `mail::decode_phrase` for display names (D-081) and `mail::write_mime_param_at` for parameters after other text on a line (D-082), the gaps smtp-net found adopting 0.9.1; `class::is_atext`, the third, was already public. Additive; `write_mime_param` 30% faster on quoted values.
+- [x] 0.9.3: fixes from a review of the code added since 0.9.0 (D-084), `Cache-Control` names compared as words (6.6% fewer instructions), and the HSTS question closed (D-083). No signature changes.
 
 ### Pre-1.0 polish pass (DONE at 0.9.0, 2026-11-03)
 
@@ -121,7 +122,7 @@ James's standing rule: go back and fix any issues and tune performance before ge
 - [x] Every accepted gap, deferred item, known issue, and missed target revisited; the `encode-lib` helpers stay blocked on encode-lib, and they and the other open items are in the readiness note.
 - [x] A fresh performance pass: every row profiled, `byte_ranges` (21% to 76%), `Content-Disposition` (24% to 42%), and `client_address` tuned, and the cost of D-072 taken back (D-074). Every row is at least 30% ahead.
 - [x] The security and edge-case review again, by three independent reviews: 46 defects found and fixed, each with a regression test; every fuzz target 24 hours on the release code.
-- [ ] Before 1.0: ask the other parameter users whether they need the optional-value shape (D-079). smtp-net does not: ESMTP parameters are space-separated, and MIME parameters (`mail::parse_mime_params`) always carry a value. web-net's `Strict-Transport-Security` (RFC 6797, `max-age=...; includeSubDomains`) does, but it has no leading `;`; settle that with web-net.
+- [x] Before 1.0: ask the other parameter users whether they need the optional-value shape (D-079). smtp-net does not: ESMTP parameters are space-separated, and MIME parameters (`mail::parse_mime_params`) always carry a value. web-net's `Strict-Transport-Security` (RFC 6797, `max-age=...; includeSubDomains`) has no leading `;`, but web-net writes HSTS and reads none, so it is not needed before 1.0 (D-083).
 
 Repeat before the first release candidate if the code changes: a fresh benchmark on a quiet machine, the threat table against the code, and the 24-hour run.
 

@@ -54,6 +54,8 @@ fuzz_target!(|data: &[u8]| {
         let mut sink = SliceSink::new(&mut buf);
         match mail::write_mime_param_at("filename", value, room, &mut sink) {
             Ok(left) => {
+                // A room past 78 is read as 78 (D-084).
+                let room = room.min(78);
                 let written = sink.written();
                 for (i, line) in written.split(|&b| b == b'\n').enumerate() {
                     let line = line.strip_suffix(b"\r").unwrap_or(line);
