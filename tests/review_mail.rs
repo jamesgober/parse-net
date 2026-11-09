@@ -365,3 +365,50 @@ fn test_continuation_decodes_after_the_checks() {
     let mut sink = SliceSink::new(&mut out);
     assert!(mail::encode_words("a", 60, &mut sink).is_ok());
 }
+
+// From the 0.9.3 review of the code added since 0.9.0 (`decode_phrase`,
+// `write_mime_param_at`, `B` words, `param::parse_optional`).
+
+fn phrase(v: &[u8]) -> Result<String, (K, usize)> {
+    let mut buf = vec![0u8; v.len() * 2 + 16];
+    mail::decode_phrase(v, &L, &mut buf)
+        .map(String::from)
+        .map_err(|e| (e.kind(), e.offset()))
+}
+
+#[test]
+fn test_phrase_encoded_word_needs_space_before_it() {
+    // RFC 2047 section 5 (3): an encoded word in a phrase is separated by
+    // whitespace from any adjacent word or special, on both sides. 0.9.2
+    // checked only the side after it.
+    assert_eq!(phrase(b"(c)=?UTF-8?Q?a?=").unwrap(), "=?UTF-8?Q?a?=");
+    assert_eq!(phrase(b"\"x\"=?UTF-8?Q?a?=").unwrap(), "x =?UTF-8?Q?a?=");
+    assert_eq!(phrase(b"(c)\r\n =?UTF-8?Q?a?=").unwrap(), "a");
+    assert_eq!(phrase(b"\"x\"\t=?UTF-8?Q?a?=").unwrap(), "x a");
+}
+
+#[test]
+fn test_mime_param_at_room_past_a_line() {
+    // The room is 78 less what the line holds; a larger one would put a
+    // whole value on one line past 78 columns, and past 998 bytes the
+    // header could not be sent.
+    let long = "x".repeat(1200);
+    for room in [79, 500, usize::MAX] {
+        let mut buf = vec![0u8; 4096];
+        let mut out = SliceSink::new(&mut buf);
+        let left = mail::write_mime_param_at("filename", &long, room, &mut out).unwrap();
+        let w = std::str::from_utf8(out.written()).unwrap();
+        assert!(w.split("\r\n").all(|line| line.len() <= 78), "{room}");
+        assert_eq!(left, 78 - w.rsplit("\r\n").next().unwrap().len());
+    }
+    let mut buf = [0u8; 64];
+    let mut out = SliceSink::new(&mut buf);
+    assert_eq!(
+        mail::write_mime_param_at("charset", "utf-8", usize::MAX, &mut out),
+        Ok(78 - 15)
+    );
+    assert!(matches!(
+        mail::write_mime_param_at("a", "b", 1000, &mut SliceSink::new(&mut [0u8; 2])),
+        Err(WriteError::Full)
+    ));
+}

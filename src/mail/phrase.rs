@@ -107,10 +107,16 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
             .iter()
             .position(|&c| !is_word_byte(c))
             .unwrap_or(rest.len());
-        // An encoded word is a whole atom between whitespace; next to a
-        // special or a comment it is text.
-        let alone = end == v.len() || words::ws_len(v, end) > 0;
-        let encoded = if alone && rest.starts_with(b"=?") {
+        // An encoded word is a whole atom between whitespace (RFC 2047
+        // section 5); next to a special, a comment, or a quoted string, on
+        // either side, it is text. An atom starts at the start, or after
+        // whitespace (a fold ends in SP or HTAB), a `)`, or a `"`, so the
+        // byte before it tells which.
+        let alone = || {
+            let before = i == 0 || matches!(v.get(i - 1), Some(b' ' | b'\t'));
+            before && (end == v.len() || words::ws_len(v, end) > 0)
+        };
+        let encoded = if rest.starts_with(b"=?") && alone() {
             words::shape(v.get(..end).unwrap_or(&[]), i)?
         } else {
             None
@@ -154,9 +160,15 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
 /// Decodes a `phrase` (RFC 5322 section 3.2.5), such as the display name
 /// [`parse_mailbox`](super::parse_mailbox) returns raw, into `out` and returns
 /// its text: comments are dropped, quoted strings lose their quotes and
-/// their quoted pairs are unescaped, and the words are joined by one space.
+/// their quoted pairs are unescaped, and the words are joined by one space;
+/// an empty word, `""` or an encoded word with no text, still counts as one.
+/// `CRLF WSP` folds are read as whitespace between words and inside
+/// comments; a quoted string must be unfolded first
+/// ([`unfold`](super::unfold)), as in
+/// [`parse_mime_params`](super::parse_mime_params).
 /// RFC 2047 encoded words are decoded where section 5 allows them in a
-/// phrase: a whole atom between whitespace, never inside a quoted string;
+/// phrase: a whole atom with whitespace, or the start or end of the phrase,
+/// on both sides, so never inside a quoted string or against a comment;
 /// two encoded words with only whitespace between them are joined with none
 /// (section 6.2). Encoded words are read as
 /// [`decode_words`](super::decode_words) reads them, and every byte of the
@@ -271,6 +283,19 @@ mod tests {
         assert_eq!(dec(b"\"=?UTF-8?Q?a?=\"").unwrap(), "=?UTF-8?Q?a?=");
         assert_eq!(dec(b"=?UTF-8?Q?a?=(c)").unwrap(), "=?UTF-8?Q?a?=");
         assert_eq!(dec(b"=?UTF-8?Q?a?=\"b\"").unwrap(), "=?UTF-8?Q?a?= b");
+        // The same on the side before the word.
+        assert_eq!(dec(b"(c)=?UTF-8?Q?a?=").unwrap(), "=?UTF-8?Q?a?=");
+        assert_eq!(dec(b"\"x\"=?UTF-8?Q?a?=").unwrap(), "x =?UTF-8?Q?a?=");
+        assert_eq!(dec(b"(c) =?UTF-8?Q?a?=").unwrap(), "a");
+        assert_eq!(dec(b"\"x\" =?UTF-8?Q?a?=").unwrap(), "x a");
+        assert_eq!(
+            dec(b"=?UTF-8?Q?a?= (c)=?UTF-8?Q?b?=").unwrap(),
+            "a =?UTF-8?Q?b?="
+        );
+        // An empty encoded word is an empty word, as an empty quoted string is.
+        assert_eq!(dec(b"=?UTF-8?B??=").unwrap(), "");
+        assert_eq!(dec(b"x =?UTF-8?Q??= y").unwrap(), "x  y");
+        assert_eq!(dec(b"x \"\" y").unwrap(), "x  y");
         // Not the shape of an encoded word: text.
         assert_eq!(dec(b"=?x").unwrap(), "=?x");
         assert_eq!(dec(b"a=?UTF-8?Q?b?=").unwrap(), "a=?UTF-8?Q?b?=");

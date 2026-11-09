@@ -83,6 +83,13 @@ in `tests/review_core.rs`, `tests/review_security.rs`, or
 `tests/review_mail.rs`. Fuzz targets check what they are written to check;
 that is why the review ran, and why it runs again before 1.0.
 
+At 0.9.3 an independent review of the code added since 0.9.0
+(`param::parse_optional`, the `B` codec, `encode_words_b`, `decode_phrase`,
+`write_mime_param_at`) found one defect, an encoded word decoded with a
+comment or quoted string right before it in a phrase, and one misuse left
+open, a room past 78 in `write_mime_param_at`. Both are fixed, with
+regressions in `tests/review_mail.rs` (D-084).
+
 ## Resource bounds
 
 Every parse is bounded by [`Limits`](API.md) (defaults in the `Limits`

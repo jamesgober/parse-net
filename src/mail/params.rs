@@ -891,7 +891,8 @@ pub fn write_mime_param(
 /// on, for the next call. A one-line form that does not fit in the room goes
 /// on a new line, `;CRLF name=value`, before the value is split into
 /// sections; the `;` always goes on the current line. With a
-/// `room_first_line` of 78 the output is that of [`write_mime_param`].
+/// `room_first_line` of 78 the output is that of [`write_mime_param`]; a
+/// larger room is read as 78, so no line passes 78 columns.
 ///
 /// # Errors
 ///
@@ -918,7 +919,7 @@ pub fn write_mime_param_at(
     room_first_line: usize,
     out: &mut impl Sink,
 ) -> core::result::Result<usize, WriteError> {
-    write_param(name, value, room_first_line, out)
+    write_param(name, value, room_first_line.min(LINE), out)
 }
 
 #[cfg(test)]
@@ -1145,5 +1146,17 @@ mod tests {
             write_mime_param_at("a*", "x", 78, &mut crate::SliceSink::new(&mut [0u8; 8])),
             Err(WriteError::NotToken)
         );
+        // A room past 78 is read as 78: no line grows past it.
+        for room in [79, 500, usize::MAX] {
+            assert_eq!(written_at("a", &v, room), written_at("a", &v, 78));
+            assert_eq!(
+                written_at("filename", &long, room),
+                written_at("filename", &long, 78)
+            );
+            assert_eq!(
+                written_at("charset", "utf-8", room),
+                (String::from("; charset=utf-8"), 63)
+            );
+        }
     }
 }

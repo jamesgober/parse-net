@@ -433,28 +433,60 @@ fn number(
 /// Whether the token `n` equals `lower`, a lowercase name of letters and
 /// `-`, ignoring ASCII case. Among token bytes, `b | 0x20` maps exactly `A-Z`
 /// onto `a-z` and leaves `-` alone (the only other byte it maps onto `-` is
-/// CR, which is not a token byte), so one OR per byte suffices.
-fn is_name(n: &[u8], lower: &[u8]) -> bool {
-    n.len() == lower.len() && n.iter().zip(lower).all(|(&b, &p)| b | 0x20 == p)
+/// CR, which is not a token byte), so one OR per byte suffices. The length
+/// is a constant, so the bytes are compared as two to three overlapping
+/// words, OR-ing `0x20` into each byte of a word at once.
+#[inline]
+fn is_name<const N: usize>(n: &[u8], lower: &[u8; N]) -> bool {
+    let Ok(a) = <&[u8; N]>::try_from(n) else {
+        return false;
+    };
+    if N < 4 {
+        return a.iter().zip(lower).all(|(&b, &p)| b | 0x20 == p);
+    }
+    if N < 8 {
+        let w = |s: &[u8; N], at: usize| {
+            s.get(at..at + 4)
+                .and_then(|c| <[u8; 4]>::try_from(c).ok())
+                .map_or(0, u32::from_le_bytes)
+        };
+        return w(a, 0) | 0x2020_2020 == w(lower, 0)
+            && w(a, N - 4) | 0x2020_2020 == w(lower, N - 4);
+    }
+    let w = |s: &[u8; N], at: usize| {
+        s.get(at..at + 8)
+            .and_then(|c| <[u8; 8]>::try_from(c).ok())
+            .map_or(0, u64::from_le_bytes)
+    };
+    let mut at = 0;
+    loop {
+        let i = at.min(N - 8);
+        if w(a, i) | 0x2020_2020_2020_2020 != w(lower, i) {
+            return false;
+        }
+        at += 8;
+        if at >= N {
+            return true;
+        }
+    }
 }
 
 /// The index of a response directive name, dispatched on length first.
 fn response_slot(n: &[u8]) -> Option<usize> {
-    let is = |s: &[u8]| is_name(n, s);
     match n.len() {
-        6 if is(b"public") => Some(5),
-        7 if is(b"max-age") => Some(0),
-        7 if is(b"private") => Some(4),
-        8 if is(b"s-maxage") => Some(1),
-        8 if is(b"no-cache") => Some(2),
-        8 if is(b"no-store") => Some(3),
-        9 if is(b"immutable") => Some(10),
-        12 if is(b"no-transform") => Some(9),
-        14 if is(b"stale-if-error") => Some(12),
-        15 if is(b"must-revalidate") => Some(6),
-        15 if is(b"must-understand") => Some(8),
-        16 if is(b"proxy-revalidate") => Some(7),
-        22 if is(b"stale-while-revalidate") => Some(11),
+        6 if is_name(n, b"public") => Some(5),
+        7 if is_name(n, b"max-age") => Some(0),
+        7 if is_name(n, b"private") => Some(4),
+        8 if is_name(n, b"s-maxage") => Some(1),
+        8 if is_name(n, b"no-cache") => Some(2),
+        8 if is_name(n, b"no-store") => Some(3),
+        9 if is_name(n, b"immutable") => Some(10),
+        12 if is_name(n, b"no-transform") => Some(9),
+        14 if is_name(n, b"stale-if-error") => Some(12),
+        15 if is_name(n, b"must-revalidate") => Some(6),
+        15 if is_name(n, b"must-understand") => Some(8),
+        16 if is_name(n, b"proxy-revalidate") => Some(7),
+        22 if is_name(n, b"stale-while-revalidate") => Some(11),
         _ => None,
     }
 }
@@ -497,16 +529,15 @@ impl ResponseBuilder {
 
 /// The index of a request directive name, dispatched on length first.
 fn request_slot(n: &[u8]) -> Option<usize> {
-    let is = |s: &[u8]| is_name(n, s);
     match n.len() {
-        7 if is(b"max-age") => Some(0),
-        8 if is(b"no-cache") => Some(3),
-        8 if is(b"no-store") => Some(4),
-        9 if is(b"max-stale") => Some(1),
-        9 if is(b"min-fresh") => Some(2),
-        12 if is(b"no-transform") => Some(5),
-        14 if is(b"only-if-cached") => Some(6),
-        14 if is(b"stale-if-error") => Some(7),
+        7 if is_name(n, b"max-age") => Some(0),
+        8 if is_name(n, b"no-cache") => Some(3),
+        8 if is_name(n, b"no-store") => Some(4),
+        9 if is_name(n, b"max-stale") => Some(1),
+        9 if is_name(n, b"min-fresh") => Some(2),
+        12 if is_name(n, b"no-transform") => Some(5),
+        14 if is_name(n, b"only-if-cached") => Some(6),
+        14 if is_name(n, b"stale-if-error") => Some(7),
         _ => None,
     }
 }
@@ -904,5 +935,46 @@ mod tests {
             Err(WriteError::Full)
         ));
         assert!(out.is_empty());
+    }
+
+    /// The word compare of `is_name` against the per-byte rule it replaces,
+    /// for every directive name with each byte set to every value in turn,
+    /// and for names one byte short or long.
+    #[test]
+    fn test_is_name_matches_bytewise() {
+        fn check<const N: usize>(lower: &[u8; N]) {
+            let reference =
+                |n: &[u8]| n.len() == N && n.iter().zip(lower).all(|(&b, &p)| b | 0x20 == p);
+            let mut n = *lower;
+            for i in 0..N {
+                for b in 0..=255u8 {
+                    n[i] = b;
+                    assert_eq!(is_name(&n, lower), reference(&n), "{lower:?} at {i} = {b}");
+                }
+                n[i] = lower[i].to_ascii_uppercase();
+                assert!(is_name(&n, lower));
+            }
+            assert!(!is_name(&lower[..N - 1], lower));
+            let mut long = lower.to_vec();
+            long.push(b'a');
+            assert!(!is_name(&long, lower));
+        }
+        check(b"abc");
+        check(b"public");
+        check(b"max-age");
+        check(b"private");
+        check(b"s-maxage");
+        check(b"no-cache");
+        check(b"no-store");
+        check(b"immutable");
+        check(b"max-stale");
+        check(b"min-fresh");
+        check(b"no-transform");
+        check(b"only-if-cached");
+        check(b"stale-if-error");
+        check(b"must-revalidate");
+        check(b"must-understand");
+        check(b"proxy-revalidate");
+        check(b"stale-while-revalidate");
     }
 }

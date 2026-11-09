@@ -67,9 +67,9 @@ error's offset.
   (D-079).
 - smtp-net needed `encode_words_b`, which waited on encode-lib. 0.9.1 adds
   it and `B` decoding with a private codec (D-080, in the table above for
-  James). Before 1.0, web-net settles whether
-  `Strict-Transport-Security` needs the same shape without a leading `;`;
-  smtp-net does not need it (ROADMAP).
+  James). Whether `Strict-Transport-Security` needs the same shape without
+  a leading `;` is settled: web-net writes HSTS and reads none, so it waits
+  for PN-18 in 1.x (D-083); smtp-net does not need it.
 
 ## Since 0.9.1
 
@@ -79,3 +79,11 @@ error's offset.
   `mail::write_mime_param_at` (D-082). `class::is_atext`: public since 0.5,
   nothing to do.
 - No consumer request is open.
+
+## Since 0.9.2
+
+- A review of the code added since 0.9.0 found one defect and one misuse,
+  fixed in 0.9.3 (D-084, `docs/SECURITY.md`).
+- `response_cache_control`: 6.6% fewer instructions in 0.9.3; the margin
+  over `headers` is read again on the next quiet run.
+- The HSTS question for web-net is closed (D-083).
