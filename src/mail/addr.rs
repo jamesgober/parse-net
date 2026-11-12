@@ -24,6 +24,28 @@ fn refused(v: &[u8], at: usize, kind: ErrorKind) -> ParseError {
     }
 }
 
+/// Checks that `seg` is UTF-8 without a C1 control (U+0080 to U+009F, which
+/// UTF-8 writes as `C2 80` to `C2 9F`): RFC 6532 allows any UTF-8, but no
+/// address needs a control, and every decoder in the crate refuses them.
+fn check_utf8(seg: &[u8], base: usize) -> Result<()> {
+    if let Err(e) = core::str::from_utf8(seg) {
+        return err(ErrorKind::InvalidUtf8, base + e.valid_up_to());
+    }
+    // A C1 control is `C2` then `80` to `9F`; ASCII text has no `C2`.
+    let mut from = 0usize;
+    while let Some(i) = seg
+        .get(from..)
+        .and_then(|s| crate::scan::find_byte(0xc2, s))
+    {
+        let at = from + i;
+        if matches!(seg.get(at + 1), Some(0x80..=0x9f)) {
+            return err(ErrorKind::InvalidAddrSpec, base + at);
+        }
+        from = at + 1;
+    }
+    Ok(())
+}
+
 /// Checks `seg` as a `dot-atom-text` with RFC 6532 UTF-8: atoms of `atext` or
 /// non-ASCII UTF-8, joined by single dots. `base` offsets the errors.
 fn check_dot_atom(seg: &[u8], base: usize) -> Result<()> {
@@ -40,7 +62,14 @@ fn check_dot_atom(seg: &[u8], base: usize) -> Result<()> {
                 return err(ErrorKind::InvalidAddrSpec, base + i);
             }
             prev_dot = true;
-        } else if class::is_atext(b) || b >= 0x80 {
+        } else if class::is_atext(b) {
+            prev_dot = false;
+        } else if b >= 0x80 {
+            // Valid UTF-8, so `80` to `9F` after `C2` is a C1 control, as in
+            // `check_utf8`; ASCII never reaches this branch.
+            if b <= 0x9f && i > 0 && seg.get(i - 1) == Some(&0xc2) {
+                return err(ErrorKind::InvalidAddrSpec, base + i - 1);
+            }
             prev_dot = false;
         } else {
             return Err(refused(seg, i, ErrorKind::InvalidAddrSpec).shifted(base));
@@ -54,9 +83,7 @@ fn check_dot_atom(seg: &[u8], base: usize) -> Result<()> {
 
 /// `dtext` with RFC 6532 UTF-8: `%d33-90 / %d94-126`, or non-ASCII.
 fn check_dtext(seg: &[u8], base: usize) -> Result<()> {
-    if let Err(e) = core::str::from_utf8(seg) {
-        return err(ErrorKind::InvalidUtf8, base + e.valid_up_to());
-    }
+    check_utf8(seg, base)?;
     match seg
         .iter()
         .position(|&b| !matches!(b, 33..=90 | 94..=126 | 0x80..))
@@ -154,12 +181,17 @@ pub enum Domain<'a> {
 /// comments, or folding: a `dot-atom` or quoted local part, `@`, and a
 /// `dot-atom` domain or `[domain-literal]`. The local part is at most 64
 /// octets and the address at most 254; non-ASCII is accepted only as valid
-/// UTF-8 (RFC 6532). Surrounding SP and HTAB are stripped.
+/// UTF-8 (RFC 6532), without C1 controls. Surrounding SP and HTAB are
+/// stripped.
+///
+/// What an address means is the caller's: Unicode normalisation, invisible
+/// characters such as U+200B, IDNA for the domain, and whether a domain
+/// literal (`[192.0.2.1]`) is allowed at all are policy, not grammar.
 ///
 /// # Errors
 ///
 /// [`ErrorKind::InvalidAddrSpec`] (a leading, trailing, or doubled dot, a
-/// missing `@`, a comment, a byte outside the grammar);
+/// missing `@`, a comment, a byte outside the grammar, a C1 control);
 /// [`ErrorKind::TooLong`]; [`ErrorKind::InvalidUtf8`];
 /// [`ErrorKind::UnterminatedQuote`].
 ///
@@ -172,6 +204,7 @@ pub enum Domain<'a> {
 /// assert_eq!(a.domain, Domain::Literal(b"192.0.2.1"));
 /// assert!(!mail::parse_addr_spec("j\u{f6}rg@example.de".as_bytes())?.is_ascii());
 /// assert!(mail::parse_addr_spec(b"user(comment)@example.com").is_err());
+/// assert!(mail::parse_addr_spec(b"a\xc2\x85b@example.com").is_err());
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn parse_addr_spec(value: &[u8]) -> Result<AddrSpec<'_>> {
@@ -183,9 +216,7 @@ pub fn parse_addr_spec(value: &[u8]) -> Result<AddrSpec<'_>> {
 fn addr_spec(v: &[u8]) -> Result<AddrSpec<'_>> {
     let (local, at) = if v.first() == Some(&b'"') {
         let (q, used) = parse_quoted(v)?;
-        if let Err(e) = core::str::from_utf8(q.raw()) {
-            return err(ErrorKind::InvalidUtf8, 1 + e.valid_up_to());
-        }
+        check_utf8(q.raw(), 1)?;
         (LocalPart::Quoted(q), used)
     } else {
         let at = v.iter().position(|&b| b == b'@').unwrap_or(v.len());
@@ -220,6 +251,22 @@ fn addr_spec(v: &[u8]) -> Result<AddrSpec<'_>> {
     Ok(AddrSpec { local, domain })
 }
 
+/// `s` without leading and trailing SP, HTAB, and folds; the phrase walk
+/// accepted CRLF only before SP or HTAB.
+fn trim_fws(s: &[u8]) -> &[u8] {
+    let mut s = trim_ows(s);
+    if !matches!(s.first(), Some(b'\r')) && !matches!(s.last(), Some(b'\n')) {
+        return s;
+    }
+    loop {
+        s = match s {
+            [b' ' | b'\t', rest @ ..] | [b'\r', b'\n', rest @ ..] => rest,
+            [rest @ .., b' ' | b'\t'] | [rest @ .., b'\r', b'\n'] => rest,
+            _ => return s,
+        };
+    }
+}
+
 /// A mailbox: an optional display name and an address.
 ///
 /// # Examples
@@ -227,23 +274,47 @@ fn addr_spec(v: &[u8]) -> Result<AddrSpec<'_>> {
 /// ```
 /// use parse_net::{mail::{self, Domain}, Limits};
 ///
-/// let m = mail::parse_mailbox(b"Jane Doe <jane@example.com>", &Limits::DEFAULT)?;
+/// let m = mail::parse_mailbox(b"Jane Doe <jane@example.com>")?;
 /// assert_eq!(m.display_name, Some(&b"Jane Doe"[..]));
 /// assert_eq!(m.addr.domain, Domain::DotAtom(b"example.com"));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Mailbox<'a> {
-    /// The display name as sent (words, quoted strings, comments, possibly
-    /// encoded words: decode with [`decode_words`](super::decode_words)).
+    /// The display name as sent: words, quoted strings, comments, folds,
+    /// and possibly encoded words. Decode it with
+    /// [`decode_phrase`](super::decode_phrase), which unfolds, drops the
+    /// quotes and comments, and decodes the words.
     pub display_name: Option<&'a [u8]>,
     /// The address.
     pub addr: AddrSpec<'a>,
 }
 
+/// [`parse_mailbox_with_limits`] under [`Limits::DEFAULT`], the call to use
+/// unless a limit needs changing.
+///
+/// # Errors
+///
+/// As [`parse_mailbox_with_limits`].
+///
+/// # Examples
+///
+/// ```
+/// let m = parse_net::mail::parse_mailbox(b"Jane Doe <jane@example.com>")?;
+/// assert_eq!(m.display_name, Some(&b"Jane Doe"[..]));
+/// assert_eq!(m.addr.domain, parse_net::mail::Domain::DotAtom(b"example.com"));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
+#[inline]
+pub fn parse_mailbox(value: &[u8]) -> Result<Mailbox<'_>> {
+    parse_mailbox_with_limits(value, &Limits::DEFAULT)
+}
+
 /// Parses a `mailbox` (RFC 5322 section 3.4): `[display-name] "<" addr-spec
 /// ">"` or a bare `addr-spec`. The display name is checked as a phrase
-/// (atoms, dots, quoted strings, comments, UTF-8) and returned raw.
+/// (atoms, dots, quoted strings, comments, folds between words, UTF-8) and
+/// returned raw. A fold inside a quoted string is refused: unfold the field
+/// first ([`unfold`](super::unfold)) to read one.
 ///
 /// # Errors
 ///
@@ -255,12 +326,12 @@ pub struct Mailbox<'a> {
 /// ```
 /// use parse_net::{mail, Limits};
 ///
-/// let m = mail::parse_mailbox(b"\"Doe, John\" <john@example.com>", &Limits::DEFAULT)?;
+/// let m = mail::parse_mailbox(b"\"Doe, John\" <john@example.com>")?;
 /// assert_eq!(m.display_name, Some(&b"\"Doe, John\""[..]));
-/// assert!(mail::parse_mailbox(b"john@example.com", &Limits::DEFAULT)?.display_name.is_none());
+/// assert!(mail::parse_mailbox(b"john@example.com")?.display_name.is_none());
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn parse_mailbox<'a>(value: &'a [u8], limits: &Limits) -> Result<Mailbox<'a>> {
+pub fn parse_mailbox_with_limits<'a>(value: &'a [u8], limits: &Limits) -> Result<Mailbox<'a>> {
     let lead = skip_ows(value);
     let v = trim_ows(value);
     // Find the `<` outside quoted strings and comments, checking the phrase.
@@ -291,6 +362,13 @@ pub fn parse_mailbox<'a>(value: &'a [u8], limits: &Limits) -> Result<Mailbox<'a>
                     .0;
             }
             Some(b' ' | b'\t') => i += 1,
+            // A fold (CRLF then SP or HTAB) is FWS, as between any two words
+            // of a phrase (RFC 5322 section 3.2.2).
+            Some(b'\r')
+                if v.get(i + 1) == Some(&b'\n') && matches!(v.get(i + 2), Some(b' ' | b'\t')) =>
+            {
+                i += 3;
+            }
             Some(&b) if class::is_atext(b) || b == b'.' || b >= 0x80 => {
                 has_word = true;
                 i += 1;
@@ -316,7 +394,7 @@ pub fn parse_mailbox<'a>(value: &'a [u8], limits: &Limits) -> Result<Mailbox<'a>
     if end < v.len() {
         return Err(refused(v, end, ErrorKind::InvalidAddrSpec).shifted(lead));
     }
-    let display = trim_ows(v.get(..lt).unwrap_or(&[]));
+    let display = trim_fws(v.get(..lt).unwrap_or(&[]));
     if let Err(e) = core::str::from_utf8(display) {
         return err(ErrorKind::InvalidUtf8, lead + e.valid_up_to());
     }
@@ -471,6 +549,26 @@ mod tests {
 
     #[test]
     fn test_addr_spec_edge_cases() {
+        // C1 controls are refused in every part.
+        let c1 = |v: &[u8]| {
+            parse_addr_spec(v)
+                .map(|_| ())
+                .map_err(|e| (e.kind(), e.offset()))
+        };
+        assert_eq!(
+            c1(b"a\xc2\x85b@example.com"),
+            Err((ErrorKind::InvalidAddrSpec, 1))
+        );
+        assert_eq!(
+            c1(b"\"a\xc2\x9f\"@example.com"),
+            Err((ErrorKind::InvalidAddrSpec, 2))
+        );
+        assert_eq!(
+            c1(b"a@ex\xc2\x80.com"),
+            Err((ErrorKind::InvalidAddrSpec, 4))
+        );
+        assert_eq!(c1(b"a@[\xc2\x80]"), Err((ErrorKind::InvalidAddrSpec, 3)));
+        assert!(c1(b"a\xc2\xa0b@example.com").is_ok());
         let a = parse_addr_spec(b"\"john doe\"@example.com").unwrap();
         assert!(matches!(a.local, LocalPart::Quoted(q) if q.eq_bytes(b"john doe")));
         assert_eq!(a.domain, Domain::DotAtom(b"example.com"));
@@ -524,30 +622,58 @@ mod tests {
     #[test]
     fn test_mailbox_forms() {
         let l = Limits::DEFAULT;
-        let m = parse_mailbox(b"John Q. Public <jqp@example.com>", &l).unwrap();
+        let m = parse_mailbox_with_limits(b"John Q. Public <jqp@example.com>", &l).unwrap();
         assert_eq!(m.display_name, Some(&b"John Q. Public"[..]));
-        let m = parse_mailbox(b"=?UTF-8?Q?J=C3=B6rg?= (work) <j@example.de>", &l).unwrap();
+        let m =
+            parse_mailbox_with_limits(b"=?UTF-8?Q?J=C3=B6rg?= (work) <j@example.de>", &l).unwrap();
         assert_eq!(m.display_name, Some(&b"=?UTF-8?Q?J=C3=B6rg?= (work)"[..]));
-        let m = parse_mailbox(b"<a@b.c>", &l).unwrap();
+        let m = parse_mailbox_with_limits(b"<a@b.c>", &l).unwrap();
         assert!(m.display_name.is_none());
+        // A fold between the words of a display name is FWS.
+        let m = parse_mailbox_with_limits(b"John\r\n Doe\r\n\t<j@example.com>", &l).unwrap();
+        assert_eq!(m.display_name, Some(&b"John\r\n Doe"[..]));
+        let mut buf = [0u8; 16];
         assert_eq!(
-            parse_mailbox(b"\"a <b@c.d>", &l).unwrap_err().kind(),
+            super::super::decode_phrase(m.display_name.unwrap(), &mut buf).unwrap(),
+            "John Doe"
+        );
+        let m = parse_mailbox_with_limits(b"\r\n John <j@example.com>", &l).unwrap();
+        assert_eq!(m.display_name, Some(&b"John"[..]));
+        assert_eq!(
+            parse_mailbox_with_limits(b"John\r\nDoe <j@example.com>", &l)
+                .unwrap_err()
+                .kind(),
+            ErrorKind::BareCr
+        );
+        assert!(parse_mailbox_with_limits(b"\"John\r\n Doe\" <j@example.com>", &l).is_err());
+        assert_eq!(
+            parse_mailbox_with_limits(b"\"a <b@c.d>", &l)
+                .unwrap_err()
+                .kind(),
             ErrorKind::UnterminatedQuote
         );
         assert_eq!(
-            parse_mailbox(b"(x <a@b.c>", &l).unwrap_err().kind(),
+            parse_mailbox_with_limits(b"(x <a@b.c>", &l)
+                .unwrap_err()
+                .kind(),
             ErrorKind::UnbalancedComment
         );
         assert_eq!(
-            parse_mailbox(b"a@b <a@b.c>", &l).unwrap_err().kind(),
+            parse_mailbox_with_limits(b"a@b <a@b.c>", &l)
+                .unwrap_err()
+                .kind(),
             ErrorKind::InvalidAddrSpec
         );
         assert_eq!(
-            parse_mailbox(b"x <a..b@c.d>", &l).unwrap_err().kind(),
+            parse_mailbox_with_limits(b"x <a..b@c.d>", &l)
+                .unwrap_err()
+                .kind(),
             ErrorKind::InvalidAddrSpec
         );
         assert_eq!(
-            parse_mailbox(b"x a@b.c>", &l).unwrap_err().kind(),
+            parse_mailbox_with_limits(b"x a@b.c>", &l)
+                .unwrap_err()
+                .kind(),
             ErrorKind::InvalidAddrSpec
         );
     }

@@ -6,7 +6,7 @@
 //! ```
 //! use parse_net::{self as pn, cache::Writer};
 //!
-//! let cc = pn::response_cache_control(b"public, max-age=\"60\", MAX-AGE=5, x-ext=1")?;
+//! let cc = pn::parse_response_cache_control(b"public, max-age=\"60\", MAX-AGE=5, x-ext=1")?;
 //! assert_eq!((cc.public, cc.max_age, cc.duplicates, cc.unknown), (true, Some(60), true, 1));
 //!
 //! let mut buf = [0u8; 64];
@@ -85,15 +85,37 @@ struct Budget {
     empty: usize,
 }
 
+/// What a walk does with each directive.
+trait Visit<'a> {
+    /// Whether a member that does not parse is skipped (and reported to
+    /// [`skipped`](Self::skipped)) instead of refusing the field.
+    const LENIENT: bool;
+    fn directive(&mut self, d: Directive<'a>);
+    fn skipped(&mut self) {}
+}
+
+/// The validating walk of [`parse`]: nothing to record, nothing skipped.
+struct Validate;
+
+impl Visit<'_> for Validate {
+    const LENIENT: bool = false;
+    fn directive(&mut self, _: Directive<'_>) {}
+}
+
 /// Validates a `Cache-Control` value in one pass over `v` (OWS already
-/// trimmed), calling `f` for each directive and adding to `budget`. Empty
+/// trimmed), handing each directive to `visit` and adding to `budget`. Empty
 /// list elements are skipped up to `max_empty_elements`. The cursor is a
 /// shrinking slice; offsets are computed only for an error.
-fn walk<'a>(
+///
+/// When the visitor is lenient, a member that does not parse is skipped up
+/// to the next comma outside a quoted string, so one bad extension cannot
+/// hide a `no-store` beside it. Control bytes and the list limits stay
+/// errors either way.
+fn walk<'a, V: Visit<'a>>(
     v: &'a [u8],
     limits: &Limits,
     budget: &mut Budget,
-    mut f: impl FnMut(Directive<'a>),
+    visit: &mut V,
 ) -> Result<()> {
     let at = |rest: &[u8]| v.len() - rest.len();
     let mut rest = v;
@@ -116,34 +138,104 @@ fn walk<'a>(
             }
             _ => {}
         }
-        let (d, tail) = directive(rest).map_err(|e| e.shifted(at(rest)))?;
-        budget.count += 1;
-        if budget.count > usize::from(limits.list_members) {
-            return Err(ParseError::new(ErrorKind::TooManyMembers, at(rest)));
-        }
-        f(d);
-        rest = skip_ws(tail);
-        match rest {
-            [] => return Ok(()),
-            [b',', tail @ ..] => {
-                rest = tail;
-                after_comma = true;
-            }
-            _ => return Err(bad(rest, 0).shifted(at(rest))),
-        }
+        let member = rest;
+        let tail = match directive(member) {
+            Ok((d, tail)) => match skip_ws(tail) {
+                tail @ ([] | [b',', ..]) => {
+                    budget.count += 1;
+                    if budget.count > usize::from(limits.list_members) {
+                        return Err(ParseError::new(ErrorKind::TooManyMembers, at(member)));
+                    }
+                    visit.directive(d);
+                    tail
+                }
+                tail => {
+                    let e = bad(tail, 0).shifted(at(tail));
+                    skip_bad(e, member, at(member), limits, budget, visit)?
+                }
+            },
+            Err(e) => skip_bad(
+                e.shifted(at(member)),
+                member,
+                at(member),
+                limits,
+                budget,
+                visit,
+            )?,
+        };
+        let [_, next @ ..] = tail else {
+            return Ok(());
+        };
+        rest = next;
+        after_comma = true;
     }
 }
 
+/// A member that did not parse, with `e` its error relative to the value:
+/// refused, or for a lenient visitor skipped up to the next comma outside a
+/// quoted string, which is returned.
+#[cold]
+#[inline(never)]
+fn skip_bad<'a, V: Visit<'a>>(
+    e: ParseError,
+    member: &'a [u8],
+    at: usize,
+    limits: &Limits,
+    budget: &mut Budget,
+    visit: &mut V,
+) -> Result<&'a [u8]> {
+    if !V::LENIENT || is_control_error(e.kind()) {
+        return Err(e);
+    }
+    let tail = skip_member(member).map_err(|x| x.shifted(at))?;
+    budget.count += 1;
+    if budget.count > usize::from(limits.list_members) {
+        return Err(ParseError::new(ErrorKind::TooManyMembers, at));
+    }
+    visit.skipped();
+    Ok(tail)
+}
+
+/// Whether `kind` names a control byte, which no field value holds.
+const fn is_control_error(kind: ErrorKind) -> bool {
+    matches!(
+        kind,
+        ErrorKind::BareCr | ErrorKind::LineFeed | ErrorKind::Nul | ErrorKind::Control
+    )
+}
+
+/// The rest of `s` from the first comma outside a quoted string (empty when
+/// there is none; an unclosed quote runs to the end). Control bytes are
+/// refused; offsets are relative to `s`.
+fn skip_member(s: &[u8]) -> Result<&[u8]> {
+    let (mut quoted, mut escaped) = (false, false);
+    for (i, &b) in s.iter().enumerate() {
+        if crate::scan::is_control(b) {
+            return Err(ParseError::new(control_kind(b), i));
+        }
+        if escaped {
+            escaped = false;
+        } else if quoted && b == b'\\' {
+            escaped = true;
+        } else if b == b'"' {
+            quoted = !quoted;
+        } else if b == b',' && !quoted {
+            return Ok(s.get(i..).unwrap_or(&[]));
+        }
+    }
+    Ok(&[])
+}
+
 /// Runs [`walk`] over a whole field value, offsets relative to it.
-fn walk_value<'a>(
+fn walk_value<'a, V: Visit<'a>>(
     value: &'a [u8],
     limits: &Limits,
     budget: &mut Budget,
-    f: impl FnMut(Directive<'a>),
+    visit: &mut V,
 ) -> Result<&'a [u8]> {
     let lead = skip_ows(value);
     let v = trim_ows(value);
-    walk(v, limits, budget, f).map_err(|e| e.shifted(lead))?;
+    walk(v, limits, budget, visit).map_err(|e| e.shifted(lead))?;
     Ok(v)
 }
 
@@ -261,7 +353,7 @@ impl<'a> Iterator for DirectiveIter<'a> {
 /// ```
 pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<Directives<'a>> {
     let mut budget = Budget::default();
-    let text = walk_value(value, limits, &mut budget, |_| {})?;
+    let text = walk_value(value, limits, &mut budget, &mut Validate)?;
     let count = budget.count;
     Ok(Directives { text, count })
 }
@@ -271,14 +363,16 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<Directives<'a>> {
 /// Unknown directives are counted in `unknown` and available raw through
 /// [`parse`]. A directive given twice keeps its first value and sets
 /// `duplicates` (RFC 9111 section 4.2.1); an argument that does not fit
-/// (`max-age=60s`) leaves the field `None` and sets `invalid_values`: treat
-/// such a response as stale. Conflicting directives (`private, public`) are
-/// both reported.
+/// (`max-age=60s`) leaves the field `None` and sets `invalid_values`, and so
+/// does a directive that does not parse at all (`ext=a b`), which is skipped
+/// up to the next comma while every other directive is still read. Treat
+/// such a response as stale; a cache that must fail closed does not store
+/// it. Conflicting directives (`private, public`) are both reported.
 ///
 /// # Examples
 ///
 /// ```
-/// let cc = parse_net::response_cache_control(b"max-age=60, s-maxage=60s, immutable")?;
+/// let cc = parse_net::parse_response_cache_control(b"max-age=60, s-maxage=60s, immutable")?;
 /// assert_eq!(cc.max_age, Some(60));
 /// assert!(cc.immutable);
 /// assert!(cc.s_maxage.is_none() && cc.invalid_values);
@@ -315,18 +409,20 @@ pub struct ResponseDirectives {
     pub stale_if_error: Option<u32>,
     /// A known directive appeared more than once.
     pub duplicates: bool,
-    /// A known directive had an argument that does not fit its grammar.
+    /// A known directive had an argument that does not fit its grammar, or
+    /// a directive did not parse and was skipped.
     pub invalid_values: bool,
     /// The number of extension directives (saturating).
     pub unknown: u16,
 }
 
-/// The request directives (RFC 9111 section 5.2.1).
+/// The request directives (RFC 9111 section 5.2.1), read as
+/// [`ResponseDirectives`] are.
 ///
 /// # Examples
 ///
 /// ```
-/// let req = parse_net::request_cache_control(b"no-store, min-fresh=30, max-age=1, max-age=2")?;
+/// let req = parse_net::parse_request_cache_control(b"no-store, min-fresh=30, max-age=1, max-age=2")?;
 /// assert!(req.no_store);
 /// assert_eq!((req.min_fresh, req.max_age, req.duplicates), (Some(30), Some(1), true));
 /// # Ok::<(), parse_net::ParseError>(())
@@ -352,7 +448,8 @@ pub struct RequestDirectives {
     pub stale_if_error: Option<u32>,
     /// A known directive appeared more than once.
     pub duplicates: bool,
-    /// A known directive had an argument that does not fit its grammar.
+    /// A known directive had an argument that does not fit its grammar, or
+    /// a directive did not parse and was skipped.
     pub invalid_values: bool,
     /// The number of extension directives (saturating).
     pub unknown: u16,
@@ -498,8 +595,14 @@ struct ResponseBuilder {
     seen: [bool; 13],
 }
 
-impl ResponseBuilder {
-    fn push(&mut self, d: Directive<'_>) {
+impl Visit<'_> for ResponseBuilder {
+    const LENIENT: bool = true;
+
+    fn skipped(&mut self) {
+        self.r.invalid_values = true;
+    }
+
+    fn directive(&mut self, d: Directive<'_>) {
         let r = &mut self.r;
         let Some(slot) = response_slot(d.name) else {
             r.unknown = r.unknown.saturating_add(1);
@@ -549,8 +652,14 @@ struct RequestBuilder {
     seen: [bool; 8],
 }
 
-impl RequestBuilder {
-    fn push(&mut self, d: Directive<'_>) {
+impl Visit<'_> for RequestBuilder {
+    const LENIENT: bool = true;
+
+    fn skipped(&mut self) {
+        self.r.invalid_values = true;
+    }
+
+    fn directive(&mut self, d: Directive<'_>) {
         let r = &mut self.r;
         let Some(slot) = request_slot(d.name) else {
             r.unknown = r.unknown.saturating_add(1);
@@ -589,22 +698,25 @@ impl RequestBuilder {
 ///
 /// # Errors
 ///
-/// As [`parse`]: only structural errors; unknown directives and bad
-/// arguments are reported in the struct.
+/// Only a control byte ([`ErrorKind::BareCr`], [`ErrorKind::LineFeed`],
+/// [`ErrorKind::Nul`], [`ErrorKind::Control`]) and the list limits
+/// ([`ErrorKind::TooManyMembers`], [`ErrorKind::TooManyEmptyElements`]):
+/// unknown directives, bad arguments, and directives that do not parse are
+/// reported in the struct.
 ///
 /// # Examples
 ///
 /// ```
-/// let cc = parse_net::response_cache_control(b"max-age=99999999999999999999, private, public")?;
+/// let cc = parse_net::parse_response_cache_control(b"max-age=99999999999999999999, private, public")?;
 /// assert_eq!(cc.max_age, Some(2_147_483_648));
 /// assert!(cc.private && cc.public);
+/// let cc = parse_net::parse_response_cache_control(b"private, no-store, ext=a b")?;
+/// assert!(cc.private && cc.no_store && cc.invalid_values);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn response_cache_control(value: &[u8]) -> Result<ResponseDirectives> {
+pub fn parse_response_cache_control(value: &[u8]) -> Result<ResponseDirectives> {
     let mut b = ResponseBuilder::default();
-    let _ = walk_value(value, &Limits::DEFAULT, &mut Budget::default(), |d| {
-        b.push(d)
-    })?;
+    let _ = walk_value(value, &Limits::DEFAULT, &mut Budget::default(), &mut b)?;
     Ok(b.r)
 }
 
@@ -612,21 +724,19 @@ pub fn response_cache_control(value: &[u8]) -> Result<ResponseDirectives> {
 ///
 /// # Errors
 ///
-/// As [`parse`].
+/// As [`parse_response_cache_control`].
 ///
 /// # Examples
 ///
 /// ```
-/// let req = parse_net::request_cache_control(b"max-stale, no-cache")?;
+/// let req = parse_net::parse_request_cache_control(b"max-stale, no-cache")?;
 /// assert_eq!(req.max_stale, Some(None));
 /// assert!(req.no_cache);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn request_cache_control(value: &[u8]) -> Result<RequestDirectives> {
+pub fn parse_request_cache_control(value: &[u8]) -> Result<RequestDirectives> {
     let mut b = RequestBuilder::default();
-    let _ = walk_value(value, &Limits::DEFAULT, &mut Budget::default(), |d| {
-        b.push(d)
-    })?;
+    let _ = walk_value(value, &Limits::DEFAULT, &mut Budget::default(), &mut b)?;
     Ok(b.r)
 }
 
@@ -634,7 +744,7 @@ pub fn request_cache_control(value: &[u8]) -> Result<RequestDirectives> {
 ///
 /// # Errors
 ///
-/// As [`parse`], with [`ParseError::line`] set.
+/// As [`parse_response_cache_control`], with [`ParseError::line`] set.
 ///
 /// # Examples
 ///
@@ -642,20 +752,20 @@ pub fn request_cache_control(value: &[u8]) -> Result<RequestDirectives> {
 /// use parse_net::cache;
 ///
 /// let lines: [&[u8]; 2] = [b"public", b"max-age=300"];
-/// let cc = cache::response_lines(lines)?;
+/// let cc = cache::parse_response_lines(lines)?;
 /// assert!(cc.public);
 /// assert_eq!(cc.max_age, Some(300));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn response_lines<'a, I>(lines: I) -> Result<ResponseDirectives>
+pub fn parse_response_lines<'a, I>(lines: I) -> Result<ResponseDirectives>
 where
     I: IntoIterator<Item = &'a [u8]>,
     I::IntoIter: Clone,
 {
     let (mut b, mut budget) = (ResponseBuilder::default(), Budget::default());
     for (n, line) in lines.into_iter().enumerate() {
-        let _ = walk_value(line, &Limits::DEFAULT, &mut budget, |d| b.push(d))
-            .map_err(|e| e.on_line(n))?;
+        let _ =
+            walk_value(line, &Limits::DEFAULT, &mut budget, &mut b).map_err(|e| e.on_line(n))?;
     }
     Ok(b.r)
 }
@@ -664,7 +774,7 @@ where
 ///
 /// # Errors
 ///
-/// As [`parse`], with [`ParseError::line`] set.
+/// As [`parse_response_cache_control`], with [`ParseError::line`] set.
 ///
 /// # Examples
 ///
@@ -672,20 +782,20 @@ where
 /// use parse_net::cache;
 ///
 /// let lines: [&[u8]; 2] = [b"no-cache", b"max-stale=60"];
-/// let req = cache::request_lines(lines)?;
+/// let req = cache::parse_request_lines(lines)?;
 /// assert!(req.no_cache);
 /// assert_eq!(req.max_stale, Some(Some(60)));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn request_lines<'a, I>(lines: I) -> Result<RequestDirectives>
+pub fn parse_request_lines<'a, I>(lines: I) -> Result<RequestDirectives>
 where
     I: IntoIterator<Item = &'a [u8]>,
     I::IntoIter: Clone,
 {
     let (mut b, mut budget) = (RequestBuilder::default(), Budget::default());
     for (n, line) in lines.into_iter().enumerate() {
-        let _ = walk_value(line, &Limits::DEFAULT, &mut budget, |d| b.push(d))
-            .map_err(|e| e.on_line(n))?;
+        let _ =
+            walk_value(line, &Limits::DEFAULT, &mut budget, &mut b).map_err(|e| e.on_line(n))?;
     }
     Ok(b.r)
 }
@@ -852,7 +962,7 @@ mod tests {
 
     #[test]
     fn test_response_directives_cases() {
-        let r = |v: &[u8]| response_cache_control(v).unwrap();
+        let r = |v: &[u8]| parse_response_cache_control(v).unwrap();
         assert_eq!(r(b"max-age=0").max_age, Some(0));
         assert_eq!(r(b"max-age=\"60\"").max_age, Some(60));
         let bad = r(b"max-age=60s");
@@ -880,7 +990,7 @@ mod tests {
 
     #[test]
     fn test_request_directives_cases() {
-        let q = |v: &[u8]| request_cache_control(v).unwrap();
+        let q = |v: &[u8]| parse_request_cache_control(v).unwrap();
         assert_eq!(q(b"max-stale").max_stale, Some(None));
         assert_eq!(q(b"max-stale=10").max_stale, Some(Some(10)));
         assert!(q(b"only-if-cached").only_if_cached);
@@ -890,23 +1000,62 @@ mod tests {
 
     #[test]
     fn test_cache_structure_errors() {
-        let k = |v: &[u8]| response_cache_control(v).unwrap_err().kind();
+        let k = |v: &[u8]| parse(v, &Limits::DEFAULT).unwrap_err().kind();
         assert_eq!(k(b"max-age = 5"), ErrorKind::NotToken);
         assert_eq!(k(b"max-age=\"5"), ErrorKind::UnterminatedQuote);
         assert_eq!(k(b"=5"), ErrorKind::NotToken);
         assert_eq!(k(b"a=b c"), ErrorKind::NotToken);
         assert_eq!(k(b"a=\x01"), ErrorKind::Control);
+        let r = |v: &[u8]| parse_response_cache_control(v).map_err(|e| (e.kind(), e.offset()));
+        assert_eq!(r(b"no-store, a=\x01"), Err((ErrorKind::Control, 12)));
+        assert_eq!(r(b"no-store, a=b \x7f"), Err((ErrorKind::Control, 14)));
+        assert_eq!(r(b"no-store, a=\"x\ny\""), Err((ErrorKind::LineFeed, 14)));
+    }
+
+    /// One directive that does not parse is skipped, and every
+    /// other directive is still read.
+    #[test]
+    fn test_malformed_directive_skipped() {
+        let r = |v: &[u8]| parse_response_cache_control(v).unwrap();
+        for v in [
+            &b"no-store, x="[..],
+            b"no-store, ext=a b",
+            b"no-store, ext=\"unterminated",
+            b"no-store, ext=caf\xc3\xa9",
+            b"no-store, max-age=",
+            b"no-store, max-age=60 s",
+            b"no-store, max-age = 60",
+            b"x=, no-store",
+            b"\"q,\", no-store",
+            b"=, no-store,=",
+        ] {
+            let cc = r(v);
+            assert!(cc.no_store && cc.invalid_values, "{v:?}");
+            assert_eq!(cc.max_age, None, "{v:?}");
+        }
+        let cc = r(b"private, ext=\"a, b\" c, max-age=5, public");
+        assert!(cc.private && cc.public && cc.invalid_values);
+        assert_eq!(cc.max_age, Some(5));
+        assert!(!r(b"private, ext=\"a, b\"").invalid_values);
+        let q = parse_request_cache_control(b"no-cache, a b, max-stale=5").unwrap();
+        assert!(q.no_cache && q.invalid_values);
+        assert_eq!(q.max_stale, Some(Some(5)));
+        let lines: [&[u8]; 2] = [b"public, x=", b"max-age=5"];
+        let cc = parse_response_lines(lines).unwrap();
+        assert!(cc.public && cc.invalid_values && cc.max_age == Some(5));
+        // The validating parser still refuses it.
+        assert!(parse(b"no-store, x=", &Limits::DEFAULT).is_err());
     }
 
     #[test]
     fn test_lines() {
         let lines: [&[u8]; 2] = [b"public", b"max-age=5"];
-        let r = response_lines(lines).unwrap();
+        let r = parse_response_lines(lines).unwrap();
         assert!(r.public && r.max_age == Some(5));
-        let bad: [&[u8]; 2] = [b"public", b"max-age=\"5"];
-        assert_eq!(response_lines(bad).unwrap_err().line(), 1);
+        let bad: [&[u8]; 2] = [b"public", b"max-age=\x00"];
+        assert_eq!(parse_response_lines(bad).unwrap_err().line(), 1);
         let req: [&[u8]; 2] = [b"no-cache", b"max-stale"];
-        assert_eq!(request_lines(req).unwrap().max_stale, Some(None));
+        assert_eq!(parse_request_lines(req).unwrap().max_stale, Some(None));
     }
 
     #[test]
@@ -919,7 +1068,7 @@ mod tests {
             .and_then(|w| w.fields("private", &["X-A"]))
             .map(|_| ())
             .unwrap();
-        let r = response_cache_control(out.written()).unwrap();
+        let r = parse_response_cache_control(out.written()).unwrap();
         assert!(r.public && r.private);
         assert_eq!(r.max_age, Some(2_147_483_648));
         let mut w = Writer::new(&mut out);

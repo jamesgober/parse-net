@@ -6,7 +6,7 @@
 use parse_net::{
     self as pn, HttpDate, Limits, SliceSink,
     class::{self, Class},
-    list, media, param, pct, scan, text, write,
+    list, media, param, percent, scan, text, write,
 };
 use proptest::prelude::*;
 
@@ -33,7 +33,7 @@ proptest! {
             let _ = text::parse_quoted(input);
             let _ = text::parse_word(input);
             let _ = text::parse_comment(input, &Limits::DEFAULT);
-            if let Ok(l) = pn::list(input) {
+            if let Ok(l) = pn::parse_list(input) {
                 prop_assert_eq!(l.iter().count(), l.len());
             }
             if let Ok((p, used)) = param::parse(input, &Limits::DEFAULT) {
@@ -52,14 +52,14 @@ proptest! {
                     prop_assert!(pn::parse_media_type(out.written()).is_ok());
                 }
             }
-            let _ = HttpDate::parse_at(input, 1_792_540_800);
+            let _ = parse_net::parse_http_date_at(input, 1_792_540_800);
             let _ = HttpDate::parse_imf_fixdate(input);
             let _ = pn::parse_host_port(input);
-            let _ = pct::validate(input);
-            let _ = pct::validate_with(input, Class::URI_TARGET);
+            let _ = percent::validate(input);
+            let _ = percent::validate_with(input, Class::URI_TARGET);
             let mut out = [0u8; 128];
-            let _ = pct::decode_utf8_into(input, &mut out);
-            let _ = pct::decode_lower_only_into(input, &mut out);
+            let _ = percent::decode_utf8_into(input, &mut out);
+            let _ = percent::decode_lowercase_into(input, &mut out);
             let _ = pn::num::parse_u64(input);
             let _ = pn::num::parse_u32_saturating(input);
         }
@@ -68,10 +68,10 @@ proptest! {
     #[test]
     fn test_errors_never_contain_input(v in grammar_bytes()) {
         let errors = [
-            pn::list(&v).err(),
+            pn::parse_list(&v).err(),
             pn::parse_media_type(&v).err(),
             pn::parse_host_port(&v).err(),
-            HttpDate::parse_at(&v, 0).err(),
+            parse_net::parse_http_date_at(&v, 0).err(),
         ];
         for e in errors.into_iter().flatten() {
             let text = e.to_string();
@@ -153,7 +153,7 @@ proptest! {
         let d = HttpDate::from_unix(secs).expect("in range");
         let text = d.format();
         prop_assert_eq!(HttpDate::parse_imf_fixdate(&text), Ok(d));
-        prop_assert_eq!(HttpDate::parse_at(&text, 0), Ok(d));
+        prop_assert_eq!(parse_net::parse_http_date_at(&text, 0), Ok(d));
         let c = d.civil();
         prop_assert_eq!(pn::date::days_from_civil(i32::from(c.year), c.month, c.day), secs.div_euclid(86_400));
     }
@@ -162,10 +162,10 @@ proptest! {
     fn test_pct_round_trip(v in bytes()) {
         let mut buf = [0u8; 512];
         let mut out = SliceSink::new(&mut buf);
-        pct::encode(&v, &pct::EncodeSet::ATTR_CHAR_COMPLEMENT, pct::HexCase::Upper, &mut out).expect("room");
+        percent::encode(&v, &percent::EncodeSet::ATTR_CHAR_COMPLEMENT, percent::HexCase::Upper, &mut out).expect("room");
         let mut back = [0u8; 128];
-        prop_assert_eq!(pct::decode_into(out.written(), &mut back).expect("valid"), &v[..]);
-        prop_assert_eq!(pct::decoded_len(out.written()), Ok(v.len()));
+        prop_assert_eq!(percent::decode_into(out.written(), &mut back).expect("valid"), &v[..]);
+        prop_assert_eq!(percent::decoded_len(out.written()), Ok(v.len()));
     }
 
     #[test]
@@ -183,7 +183,7 @@ proptest! {
     #[test]
     fn test_combined_equals_joined(elements in prop::collection::vec("[a-z]{0,4}(;[a-z]=\"[a-z ,]{0,4}\")?", 0..12), cuts in prop::collection::vec(any::<bool>(), 12)) {
         let joined = elements.join(", ");
-        let whole: Vec<Vec<u8>> = pn::list(joined.as_bytes()).expect("valid").iter().map(<[u8]>::to_vec).collect();
+        let whole: Vec<Vec<u8>> = pn::parse_list(joined.as_bytes()).expect("valid").iter().map(<[u8]>::to_vec).collect();
         // Split the same elements into lines at element boundaries.
         let mut lines: Vec<String> = vec![String::new()];
         for (i, e) in elements.iter().enumerate() {
@@ -197,7 +197,7 @@ proptest! {
             lines.last_mut().expect("one line").push_str(e);
         }
         let refs: Vec<&[u8]> = lines.iter().map(|l| l.as_bytes()).collect();
-        let c = list::combined(refs.iter().copied(), &Limits::DEFAULT).expect("valid");
+        let c = list::parse_lines(refs.iter().copied(), &Limits::DEFAULT).expect("valid");
         let got: Vec<Vec<u8>> = c.iter().map(<[u8]>::to_vec).collect();
         prop_assert_eq!(got, whole);
     }

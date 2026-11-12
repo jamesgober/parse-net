@@ -157,6 +157,26 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
     Ok(())
 }
 
+/// [`decode_phrase_with_limits`] under [`Limits::DEFAULT`], the call to use
+/// unless a limit needs changing.
+///
+/// # Errors
+///
+/// As [`decode_phrase_with_limits`].
+///
+/// # Examples
+///
+/// ```
+/// let mut buf = [0u8; 64];
+/// let name = parse_net::mail::decode_phrase(b"\"Doe, Jane\" (Sales)", &mut buf)?;
+/// assert_eq!(name, "Doe, Jane");
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
+#[inline]
+pub fn decode_phrase<'b>(value: &[u8], out: &'b mut [u8]) -> Result<&'b str> {
+    decode_phrase_with_limits(value, &Limits::DEFAULT, out)
+}
+
 /// Decodes a `phrase` (RFC 5322 section 3.2.5), such as the display name
 /// [`parse_mailbox`](super::parse_mailbox) returns raw, into `out` and returns
 /// its text: comments are dropped, quoted strings lose their quotes and
@@ -192,16 +212,20 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
 /// ```
 /// use parse_net::{mail, Limits};
 ///
-/// let m = mail::parse_mailbox(b"\"Doe, Jane\" (Sales) <jane@example.com>", &Limits::DEFAULT)?;
+/// let m = mail::parse_mailbox(b"\"Doe, Jane\" (Sales) <jane@example.com>")?;
 /// let mut buf = [0u8; 64];
-/// let name = mail::decode_phrase(m.display_name.unwrap_or_default(), &Limits::DEFAULT, &mut buf)?;
+/// let name = mail::decode_phrase(m.display_name.unwrap_or_default(), &mut buf)?;
 /// assert_eq!(name, "Doe, Jane");
 ///
-/// let name = mail::decode_phrase(b"=?UTF-8?Q?Ren=C3=A9e?= \"O'Neil\"", &Limits::DEFAULT, &mut buf)?;
+/// let name = mail::decode_phrase(b"=?UTF-8?Q?Ren=C3=A9e?= \"O'Neil\"", &mut buf)?;
 /// assert_eq!(name, "Ren\u{e9}e O'Neil");
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn decode_phrase<'b>(value: &[u8], limits: &Limits, out: &'b mut [u8]) -> Result<&'b str> {
+pub fn decode_phrase_with_limits<'b>(
+    value: &[u8],
+    limits: &Limits,
+    out: &'b mut [u8],
+) -> Result<&'b str> {
     let mut len = 0usize;
     walk(value, limits, &mut |b: &[u8]| len += b.len())?;
     let Some(dst) = out.get_mut(..len) else {
@@ -225,7 +249,7 @@ mod tests {
 
     fn dec(v: &[u8]) -> Result<String> {
         let mut buf = vec![0u8; 1024];
-        decode_phrase(v, &Limits::DEFAULT, &mut buf).map(String::from)
+        decode_phrase(v, &mut buf).map(String::from)
     }
 
     fn fails(v: &[u8]) -> (ErrorKind, usize) {
@@ -326,7 +350,7 @@ mod tests {
         let l = Limits::DEFAULT.max_encoded_words(1);
         let mut buf = [0u8; 16];
         assert_eq!(
-            decode_phrase(b"=?UTF-8?Q?a?= =?UTF-8?Q?b?=", &l, &mut buf)
+            decode_phrase_with_limits(b"=?UTF-8?Q?a?= =?UTF-8?Q?b?=", &l, &mut buf)
                 .unwrap_err()
                 .kind(),
             ErrorKind::TooManyMembers
@@ -334,9 +358,7 @@ mod tests {
         // Nothing is written when the buffer is short.
         let mut small = [b'#'; 4];
         assert_eq!(
-            decode_phrase(b"Jane Doe", &Limits::DEFAULT, &mut small)
-                .unwrap_err()
-                .kind(),
+            decode_phrase(b"Jane Doe", &mut small).unwrap_err().kind(),
             ErrorKind::BufferTooSmall
         );
         assert_eq!(small, [b'#'; 4]);
@@ -400,7 +422,7 @@ mod tests {
         #[test]
         fn decode_phrase_never_panics(v in proptest::collection::vec(proptest::num::u8::ANY, 0..64)) {
             let mut buf = [0u8; 256];
-            if let Ok(s) = decode_phrase(&v, &Limits::DEFAULT, &mut buf) {
+            if let Ok(s) = decode_phrase(&v, &mut buf) {
                 proptest::prop_assert!(!s.chars().any(|c| c.is_control() && c != '\t'));
             }
         }

@@ -76,12 +76,12 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-parse-net = "0.9.0"
+parse-net = "0.10.0"
 
 # Optional features:
-parse-net = { version = "0.9.0", features = [
+parse-net = { version = "0.10.0", features = [
     "alloc",        # owned forms and Sink for Vec<u8>
-    "std",          # SystemTime conversions and http_date() with the system clock
+    "std",          # SystemTime conversions and parse_http_date() with the system clock
 ] }
 ```
 
@@ -107,12 +107,12 @@ assert!(mt.essence_is("text/html"));
 assert!(mt.charset().is_some_and(|c| c.eq_ignore_ascii_case(b"utf-8")));
 
 // Lists: commas inside quoted strings and comments do not split.
-let codings: Vec<&[u8]> = pn::list(b"gzip, deflate;q=0.5, x=\"a,b\"")?.iter().collect();
+let codings: Vec<&[u8]> = pn::parse_list(b"gzip, deflate;q=0.5, x=\"a,b\"")?.iter().collect();
 assert_eq!(codings, [&b"gzip"[..], b"deflate;q=0.5", b"x=\"a,b\""]);
 
 // HTTP-date: all three formats in, IMF-fixdate out.
 let now = 1_792_540_800; // the caller's clock, Unix seconds
-let d = pn::http_date_at(b"Sunday, 06-Nov-94 08:49:37 GMT", now)?;
+let d = pn::parse_http_date_at(b"Sunday, 06-Nov-94 08:49:37 GMT", now)?;
 assert_eq!(&d.format(), b"Sun, 06 Nov 1994 08:49:37 GMT");
 
 // Host: real IPv4 and IPv6 validation, ports up to 65535.
@@ -139,18 +139,53 @@ assert_eq!(err.kind(), pn::ErrorKind::InvalidMediaType);
 assert_eq!(err.to_string(), "invalid media type at offset 5");
 ```
 
-The rest of Tier 1 arrives with `0.4.0` and `0.5.0` (see the [roadmap](./dev/ROADMAP.md)):
+The rest of Tier 1, one call per question a server or a mail client asks:
 
-```text
-pn::best_media(accept, &["text/html", "application/json"])    // Option<usize>
-pn::if_none_match(if_none_match, &current_etag)?              // bool: answer 304
-pn::byte_ranges(range, file_len, &mut buf)?                   // RangeOutcome
-pn::parse_content_disposition(value)?.filename()              // prefers filename*
-pn::response_cache_control(value)?                            // ResponseDirectives
-pn::client_address(peer, pn::ForwardedSource::XForwardedFor(&lines), &trusted, 16)?
-pn::sfv::parse_item(b"same-origin")?                          // Sec-Fetch-Site
-pn::bearer(authorization)?                                    // Option<&[u8]>
+```rust
+use parse_net as pn;
+use core::net::IpAddr;
+
+// Content negotiation: the index of the best offer.
+let accept = Some(&b"text/html;q=0.9, application/json"[..]);
+assert_eq!(pn::best_media(accept, &["text/html", "application/json"]), Some(1));
+
+// Conditional requests: answer 304 when the tag matches.
+let current = pn::EntityTag::strong(b"v2")?;
+assert!(pn::if_none_match(b"\"v1\", W/\"v2\"", &current)?);
+
+// Ranges: resolved against the length, written into the caller's array.
+let mut ranges = [pn::ByteRange { start: 0, end: 0 }; 4];
+assert_eq!(pn::byte_ranges(b"bytes=0-499", 10_000, &mut ranges)?, pn::RangeOutcome::Ranges(1));
+
+// Downloads and caching.
+let cd = pn::parse_content_disposition(b"attachment; filename=\"report.pdf\"")?;
+assert!(cd.filename().is_some());
+let cc = pn::parse_response_cache_control(b"public, max-age=31536000, immutable")?;
+assert_eq!(cc.max_age, Some(31_536_000));
+
+// Proxies: the client address behind the trusted ones.
+let peer: IpAddr = "10.0.0.2".parse()?;
+let lines: [&[u8]; 1] = [b"203.0.113.7, 10.0.0.2"];
+let client = pn::client_address(peer, pn::ForwardedSource::XForwardedFor(&lines), &|a: IpAddr| a == peer);
+assert_eq!(client, pn::ClientAddress::Forwarded { addr: "203.0.113.7".parse()?, hops: 2 });
+
+// Authorization and Structured Fields.
+assert_eq!(pn::bearer(b"Bearer mF_9.B5f-4.1JqM")?, Some(&b"mF_9.B5f-4.1JqM"[..]));
+let _site = pn::structured::parse_item(b"same-origin")?; // Sec-Fetch-Site
+
+// Email: an address, a display name, and a subject as text.
+let m = pn::mail::parse_mailbox(b"=?UTF-8?Q?Ren=C3=A9e?= <renee@example.com>")?;
+let mut name = [0u8; 64];
+assert_eq!(pn::mail::decode_phrase(m.display_name.unwrap_or_default(), &mut name)?, "Ren\u{e9}e");
+let mut subject = [0u8; 64];
+assert_eq!(pn::mail::decode_words(b"=?UTF-8?Q?Caf=C3=A9?= menu", &mut subject)?, "Caf\u{e9} menu");
+# Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+Every Tier 1 call uses `Limits::DEFAULT`. The same parser with other
+limits is the module's `parse(value, &limits)` (`media::parse`,
+`link::parse`), or the call's `_with_limits` form where a module has several
+(`mail::parse_mailbox_with_limits`).
 
 ---
 
@@ -166,7 +201,7 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 
 ## **Status: feature complete**
 
-**Current Version:** `0.9.0` - beta: every planned field, for HTTP and for mail, benchmarked, reviewed, hardened, and in use by published consumers: http-net, cookie-net, and form-net.
+**Current Version:** `0.10.0` - beta: every planned field, for HTTP and for mail, benchmarked, hardened, and in use by published consumers: http-net, cookie-net, form-net, ws-net, web-net, and smtp-net. `0.10.0` simplified the API before 1.0; [`docs/MIGRATION.md`](./docs/MIGRATION.md) maps every renamed call.
 **Target:** `1.0.0` stable, per the roadmap in [`dev/ROADMAP.md`](./dev/ROADMAP.md).
 
 **What's complete**:
@@ -193,10 +228,10 @@ pn::bearer(authorization)?                                    // Option<&[u8]>
 - **Hardening** - an attack test for every threat in the model, every walker checked for linear time at 1 KiB, 64 KiB, and 1 MiB, and every fuzz target run for 24 hours: see [docs/SECURITY.md](docs/SECURITY.md).
 
 **What's planned next**:
-- `0.9.x`: ws-net, smtp-net, and web-net on parse-net, then the release candidates.
+- `0.10.x`: the consumers on the simplified API, then the release candidates.
 - `1.0.0`: the full audit in `docs/STABILITY-1.0.md`, released on James's go; what stands open is in [dev/READINESS-1.0.md](dev/READINESS-1.0.md).
 
-**Note on API stability**: the API was locked at `0.2.0` ([`docs/API.md`](./docs/API.md)); names and signatures change only with a recorded decision until `1.0.0` freezes them, with the contract recorded in `docs/STABILITY-1.0.md`.
+**Note on API stability**: names and signatures change only with a recorded decision and a migration note until `1.0.0` freezes them; the API is in [`docs/API.md`](./docs/API.md), and the 1.0 contract will be in `docs/STABILITY-1.0.md`.
 
 ---
 

@@ -16,7 +16,7 @@ fuzz_target!(|data: &[u8]| {
     let mut enc = [0u8; 32768];
     let mut flat = [0u8; 32768];
     common::no_alloc(|| {
-        match mail::decode_words(data, &Limits::DEFAULT, &mut out) {
+        match mail::decode_words(data, &mut out) {
             Ok(s) => assert!(s.len() <= out.len()),
             Err(e) => common::check_error(&e),
         }
@@ -28,6 +28,8 @@ fuzz_target!(|data: &[u8]| {
             return;
         }
         let written = sink.written();
+        // Never a fold first: it would read back as a leading space.
+        assert!(!written.starts_with(b"\r\n"));
         for word in written.split(|&b| b == b'\n') {
             let word = word.strip_suffix(b"\r").unwrap_or(word);
             let word = word.strip_prefix(b" ").unwrap_or(word);
@@ -42,14 +44,7 @@ fuzz_target!(|data: &[u8]| {
             n += p.len();
         }
         let limits = Limits::DEFAULT.max_encoded_words(u16::MAX);
-        let back = mail::decode_words(&flat[..n], &limits, &mut out).expect("encoded words decode");
-        // When nothing fits in `room`, the words start after a fold, whose
-        // space stays in front (as it would after `Subject:`).
-        let back = if written.starts_with(b"\r\n ") {
-            back.strip_prefix(' ').expect("the fold's space")
-        } else {
-            back
-        };
+        let back = mail::decode_words_with_limits(&flat[..n], &limits, &mut out).expect("encoded words decode");
         assert_eq!(back, text);
     });
 });

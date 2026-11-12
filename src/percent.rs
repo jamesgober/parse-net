@@ -9,15 +9,15 @@
 //! # Examples
 //!
 //! ```
-//! use parse_net::{self as pn, pct::{self, EncodeSet, HexCase}, class::Class};
+//! use parse_net::{self as pn, percent::{self, EncodeSet, HexCase}, class::Class};
 //!
 //! let mut buf = [0u8; 16];
-//! assert_eq!(pct::decode_utf8_into(b"caf%C3%A9", &mut buf)?, "caf\u{e9}");
-//! assert_eq!(pct::validate(b"%4").unwrap_err().kind(), pn::ErrorKind::InvalidPercentEncoding);
-//! assert!(pct::validate_with(b"/a/b?c=%20", Class::URI_TARGET).is_ok());
+//! assert_eq!(percent::decode_utf8_into(b"caf%C3%A9", &mut buf)?, "caf\u{e9}");
+//! assert_eq!(percent::validate(b"%4").unwrap_err().kind(), pn::ErrorKind::InvalidPercentEncoding);
+//! assert!(percent::validate_with(b"/a/b?c=%20", Class::URI_TARGET).is_ok());
 //!
 //! let mut out = pn::SliceSink::new(&mut buf);
-//! pct::encode(b"a b/c", &EncodeSet::ATTR_CHAR_COMPLEMENT, HexCase::Upper, &mut out).expect("room");
+//! percent::encode(b"a b/c", &EncodeSet::ATTR_CHAR_COMPLEMENT, HexCase::Upper, &mut out).expect("room");
 //! assert_eq!(out.written(), b"a%20b%2Fc");
 //! # Ok::<(), pn::ParseError>(())
 //! ```
@@ -37,7 +37,7 @@ use crate::{
 /// # Examples
 ///
 /// ```
-/// use parse_net::pct::EncodeSet;
+/// use parse_net::percent::EncodeSet;
 ///
 /// let path = EncodeSet::CONTROLS_AND_NON_ASCII.add(b' ').add(b'#').add(b'?');
 /// assert!(path.contains(b'#') && !path.contains(b'/'));
@@ -88,7 +88,7 @@ impl EncodeSet {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::pct::EncodeSet;
+    /// use parse_net::percent::EncodeSet;
     ///
     /// let s = EncodeSet::CONTROLS_AND_NON_ASCII;
     /// assert!(s.contains(b'\n') && s.contains(0x7f) && s.contains(0xe9));
@@ -100,7 +100,7 @@ impl EncodeSet {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::pct::EncodeSet;
+    /// use parse_net::percent::EncodeSet;
     ///
     /// let s = EncodeSet::ATTR_CHAR_COMPLEMENT;
     /// assert!(s.contains(b' ') && s.contains(b'%') && s.contains(b'\''));
@@ -112,7 +112,7 @@ impl EncodeSet {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::pct::EncodeSet;
+    /// use parse_net::percent::EncodeSet;
     ///
     /// let s = EncodeSet::SF_DISPLAY;
     /// assert!(s.contains(b'%') && s.contains(b'"') && s.contains(0x7f));
@@ -125,7 +125,7 @@ impl EncodeSet {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::pct::{encoded_len, EncodeSet};
+    /// use parse_net::percent::{encoded_len, EncodeSet};
     ///
     /// let none = EncodeSet::empty();
     /// assert!(!none.contains(b'%'));
@@ -142,7 +142,7 @@ impl EncodeSet {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::pct::EncodeSet;
+    /// use parse_net::percent::EncodeSet;
     ///
     /// let s = EncodeSet::empty().add(b'/');
     /// assert!(s.contains(b'/') && !s.contains(b'?'));
@@ -164,7 +164,7 @@ impl EncodeSet {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::pct::EncodeSet;
+    /// use parse_net::percent::EncodeSet;
     ///
     /// let s = EncodeSet::ATTR_CHAR_COMPLEMENT.remove(b'%');
     /// assert!(!s.contains(b'%') && s.contains(b' '));
@@ -186,7 +186,7 @@ impl EncodeSet {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::pct::EncodeSet;
+    /// use parse_net::percent::EncodeSet;
     ///
     /// assert!(EncodeSet::SF_DISPLAY.contains(b'"'));
     /// assert!(!EncodeSet::SF_DISPLAY.contains(b'a'));
@@ -206,7 +206,7 @@ impl EncodeSet {
 /// # Examples
 ///
 /// ```
-/// use parse_net::{pct::{encode, EncodeSet, HexCase}, SliceSink};
+/// use parse_net::{percent::{encode, EncodeSet, HexCase}, SliceSink};
 ///
 /// let mut buf = [0u8; 8];
 /// let mut out = SliceSink::new(&mut buf);
@@ -267,7 +267,7 @@ const fn hex(b: u8, accept: Accept) -> Option<u8> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::pct::validate;
+/// use parse_net::percent::validate;
 ///
 /// assert!(validate(b"a%20b").is_ok());
 /// assert_eq!(validate(b"a%2").unwrap_err().offset(), 1);
@@ -289,7 +289,7 @@ pub fn validate(input: &[u8]) -> Result<()> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::{pct::validate_with, class::Class, ErrorKind};
+/// use parse_net::{percent::validate_with, class::Class, ErrorKind};
 ///
 /// assert!(validate_with(b"/a/b?c=d&e=%20", Class::URI_TARGET).is_ok());
 /// assert_eq!(validate_with(b"/a#frag", Class::URI_TARGET).unwrap_err().kind(), ErrorKind::InvalidByte);
@@ -322,7 +322,7 @@ pub fn validate_with(input: &[u8], allowed: Class) -> Result<()> {
 /// # Examples
 ///
 /// ```
-/// assert_eq!(parse_net::pct::decoded_len(b"a%20b")?, 3);
+/// assert_eq!(parse_net::percent::decoded_len(b"a%20b")?, 3);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn decoded_len(input: &[u8]) -> Result<usize> {
@@ -378,7 +378,7 @@ fn decode_with<'b>(
 ///
 /// ```
 /// let mut buf = [0u8; 8];
-/// assert_eq!(parse_net::pct::decode_into(b"a%2Fb", &mut buf)?, b"a/b");
+/// assert_eq!(parse_net::percent::decode_into(b"a%2Fb", &mut buf)?, b"a/b");
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn decode_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b [u8]> {
@@ -396,7 +396,7 @@ pub fn decode_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b [u8]> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::{pct::decode_utf8_into, ErrorKind};
+/// use parse_net::{percent::decode_utf8_into, ErrorKind};
 ///
 /// let mut buf = [0u8; 8];
 /// assert_eq!(decode_utf8_into(b"%E2%82%AC", &mut buf)?, "\u{20ac}");
@@ -419,14 +419,14 @@ pub fn decode_utf8_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b str> 
 /// # Examples
 ///
 /// ```
-/// use parse_net::pct::decode_lower_only_into;
+/// use parse_net::percent::decode_lowercase_into;
 ///
 /// let mut buf = [0u8; 4];
-/// assert_eq!(decode_lower_only_into(b"%c3%a9", &mut buf)?, b"\xc3\xa9");
-/// assert!(decode_lower_only_into(b"%C3%A9", &mut buf).is_err());
+/// assert_eq!(decode_lowercase_into(b"%c3%a9", &mut buf)?, b"\xc3\xa9");
+/// assert!(decode_lowercase_into(b"%C3%A9", &mut buf).is_err());
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn decode_lower_only_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b [u8]> {
+pub fn decode_lowercase_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b [u8]> {
     decode_with(input, out, Accept::LowerOnly, false)
 }
 
@@ -442,7 +442,7 @@ fn must_encode(b: u8, set: &EncodeSet) -> bool {
 /// # Examples
 ///
 /// ```
-/// use parse_net::pct::{encoded_len, EncodeSet};
+/// use parse_net::percent::{encoded_len, EncodeSet};
 ///
 /// assert_eq!(encoded_len(b"a b", &EncodeSet::empty().add(b' ')), 5);
 /// ```
@@ -454,8 +454,10 @@ pub fn encoded_len(input: &[u8], set: &EncodeSet) -> usize {
         .fold(0usize, usize::saturating_add)
 }
 
-/// Writes `input` with every byte in `set`, and every byte above 0x7F, as
-/// `%XX`.
+/// Writes `input` with every byte in `set`, every control byte (C0 and DEL),
+/// and every byte above 0x7F as `%XX`. The output decodes back to `input`
+/// only when `set` holds `%`: otherwise a literal `%41` is written as it is
+/// and reads back as `A`.
 ///
 /// # Errors
 ///
@@ -464,7 +466,7 @@ pub fn encoded_len(input: &[u8], set: &EncodeSet) -> usize {
 /// # Examples
 ///
 /// ```
-/// use parse_net::{pct::{encode, EncodeSet, HexCase}, SliceSink};
+/// use parse_net::{percent::{encode, EncodeSet, HexCase}, SliceSink};
 ///
 /// let mut buf = [0u8; 16];
 /// let mut out = SliceSink::new(&mut buf);
@@ -529,7 +531,7 @@ mod tests {
             decode_utf8_into(b"%ed%a0%80", &mut buf).unwrap_err().kind(),
             ErrorKind::InvalidUtf8
         );
-        let e = decode_lower_only_into(b"ab%2F", &mut buf).unwrap_err();
+        let e = decode_lowercase_into(b"ab%2F", &mut buf).unwrap_err();
         assert_eq!(
             (e.kind(), e.offset()),
             (ErrorKind::InvalidPercentEncoding, 2)

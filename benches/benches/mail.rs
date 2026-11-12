@@ -15,7 +15,7 @@ fn bench(c: &mut Criterion) {
     let mut g = c.benchmark_group("mail_date/parse");
     g.bench_function("parse-net", |b| {
         b.iter(|| {
-            parse_net::MailDate::parse(black_box(DATE), false)
+            parse_net::MailDate::parse(black_box(DATE))
                 .expect("valid")
                 .utc()
         })
@@ -38,7 +38,7 @@ fn bench(c: &mut Criterion) {
     g.bench_function("parse-net, B", |b| {
         b.iter(|| {
             let mut out = parse_net::SliceSink::new(&mut buf);
-            parse_net::mail::encode_words_b(black_box(subject), 66, &mut out).expect("room");
+            parse_net::mail::encode_words_base64(black_box(subject), 66, &mut out).expect("room");
             out.len()
         })
     });
@@ -49,7 +49,7 @@ fn bench(c: &mut Criterion) {
     g.bench_function("parse-net, B", |b| {
         b.iter(|| {
             let mut out = parse_net::SliceSink::new(&mut buf);
-            parse_net::mail::encode_words_b(black_box(cjk), 66, &mut out).expect("room");
+            parse_net::mail::encode_words_base64(black_box(cjk), 66, &mut out).expect("room");
             out.len()
         })
     });
@@ -70,10 +70,7 @@ fn bench(c: &mut Criterion) {
     let mut g = c.benchmark_group("decode_words/one B word, 39 bytes of Japanese");
     g.bench_function("parse-net", |b| {
         b.iter(|| {
-            parse_net::mail::decode_words(
-                black_box(SUBJECT_B),
-                &parse_net::Limits::DEFAULT,
-                &mut text,
+            parse_net::mail::decode_words(black_box(SUBJECT_B), &mut text,
             )
             .expect("valid")
             .len()
@@ -99,10 +96,10 @@ fn bench(c: &mut Criterion) {
         g.bench_function("parse-net", |b| {
             b.iter(|| {
                 let m =
-                    parse_net::mail::parse_mailbox(black_box(mailbox), &parse_net::Limits::DEFAULT)
+                    parse_net::mail::parse_mailbox(black_box(mailbox))
                         .expect("valid");
                 let raw = m.display_name.expect("named");
-                parse_net::mail::decode_phrase(raw, &parse_net::Limits::DEFAULT, &mut name)
+                parse_net::mail::decode_phrase(raw, &mut name)
                     .expect("valid")
                     .len()
             })

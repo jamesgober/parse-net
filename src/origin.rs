@@ -53,6 +53,7 @@ pub enum OriginValue<'a> {
 /// assert_eq!((o.host, o.port), (Host::Name(b"example.com"), Some(8080)));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Origin<'a> {
     /// The scheme as sent (compare it ASCII case-insensitively).
@@ -63,7 +64,27 @@ pub struct Origin<'a> {
     pub port: Option<u16>,
 }
 
-impl Origin<'_> {
+impl<'a> Origin<'a> {
+    /// An origin from its parts (the struct is `#[non_exhaustive]`, so this
+    /// is how a caller builds one to write or compare).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{Host, Origin, SliceSink};
+    ///
+    /// let o = Origin::new(b"https", Host::Name(b"a.example"), None);
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// o.write_to(&mut out)?;
+    /// assert_eq!(out.written(), b"https://a.example");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
+    #[must_use]
+    pub const fn new(scheme: &'a [u8], host: Host<'a>, port: Option<u16>) -> Self {
+        Self { scheme, host, port }
+    }
+
     /// The port, or the scheme's default: 80 for `http` and `ws`, 443 for
     /// `https` and `wss`; `None` for another scheme without a port.
     ///

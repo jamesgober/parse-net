@@ -59,7 +59,7 @@ enum Val<'v> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::{sfv::{BareItem, Writer}, SliceSink};
+/// use parse_net::{structured::{BareItem, Writer}, SliceSink};
 ///
 /// let mut buf = [0u8; 64];
 /// let mut out = SliceSink::new(&mut buf);
@@ -88,7 +88,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -112,7 +112,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -136,7 +136,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -208,7 +208,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::{BareItem, Writer}, SliceSink};
+    /// use parse_net::{structured::{BareItem, Writer}, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -232,7 +232,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -258,7 +258,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -283,7 +283,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -307,7 +307,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -331,7 +331,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -355,7 +355,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -379,7 +379,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -406,7 +406,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::{BareItem, Writer}, SliceSink};
+    /// use parse_net::{structured::{BareItem, Writer}, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -440,7 +440,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -473,7 +473,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -508,7 +508,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -544,7 +544,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::{BareItem, Writer}, SliceSink};
+    /// use parse_net::{structured::{BareItem, Writer}, SliceSink};
     ///
     /// let mut buf = [0u8; 32];
     /// let mut out = SliceSink::new(&mut buf);
@@ -574,7 +574,7 @@ impl<'s, S: Sink> Writer<'s, S> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Writer, SliceSink};
+    /// use parse_net::{structured::Writer, SliceSink};
     ///
     /// let mut buf = [0u8; 8];
     /// let mut out = SliceSink::new(&mut buf);
@@ -818,7 +818,7 @@ fn put_value(v: Val<'_>, out: &mut impl Sink) -> WResult<()> {
 #[allow(unused_results)]
 mod tests {
     use super::*;
-    use crate::{SliceSink, sfv};
+    use crate::{SliceSink, structured};
 
     fn item(f: impl FnOnce(&mut Writer<'_, SliceSink<'_>>) -> WResult<()>) -> std::string::String {
         let mut buf = [0u8; 256];
@@ -847,14 +847,14 @@ mod tests {
             item(|w| w.display_string("f\u{fc}%\"").map(|_| ())),
             "%\"f%c3%bc%25%22\""
         );
-        let parsed = sfv::parse_item(b":YQ:").unwrap();
+        let parsed = structured::parse_item(b":YQ:").unwrap();
         assert_eq!(item(|w| w.bare(&parsed.bare).map(|_| ())), ":YQ==:");
         // Non-zero pad bits are accepted on parse and cleared on write.
-        let parsed = sfv::parse_item(b":iZ==:").unwrap();
+        let parsed = structured::parse_item(b":iZ==:").unwrap();
         assert_eq!(item(|w| w.bare(&parsed.bare).map(|_| ())), ":iQ==:");
-        let parsed = sfv::parse_item(b":YWJ=:").unwrap();
+        let parsed = structured::parse_item(b":YWJ=:").unwrap();
         assert_eq!(item(|w| w.bare(&parsed.bare).map(|_| ())), ":YWI=:");
-        let parsed = sfv::parse_item(b"::").unwrap();
+        let parsed = structured::parse_item(b"::").unwrap();
         assert_eq!(item(|w| w.bare(&parsed.bare).map(|_| ())), "::");
     }
 
@@ -929,7 +929,7 @@ mod tests {
         w.open_inner_list().unwrap().close_inner_list().unwrap();
         w.finish().unwrap();
         assert_eq!(out.written(), b"a;x, (1;q=?0 2);lvl=5, ()");
-        assert!(sfv::parse_list(out.written()).is_ok());
+        assert!(structured::parse_list(out.written()).is_ok());
     }
 
     #[test]
@@ -1013,7 +1013,7 @@ mod tests {
         w.key("d").unwrap().boolean(false).unwrap();
         w.finish().unwrap();
         assert_eq!(out.written(), b"a, b, c;p=1, d=?0");
-        assert!(sfv::parse_dictionary(out.written()).is_ok());
+        assert!(structured::parse_dictionary(out.written()).is_ok());
     }
 
     #[test]

@@ -10,7 +10,7 @@
 //!
 //! let owned: OwnedMediaType = {
 //!     let input = b"text/html; charset=utf-8".to_vec();
-//!     parse_media_type(&input)?.to_owned()
+//!     parse_media_type(&input)?.into_owned()
 //! };
 //! assert!(owned.as_view().is("text", "html"));
 //! assert!(owned.as_view().charset().is_some_and(|c| c.eq_bytes(b"utf-8")));
@@ -33,7 +33,7 @@ use crate::{
 /// # Examples
 ///
 /// ```
-/// let owned: parse_net::OwnedMediaType = parse_net::parse_media_type(b"image/png")?.to_owned();
+/// let owned: parse_net::OwnedMediaType = parse_net::parse_media_type(b"image/png")?.into_owned();
 /// assert!(owned.as_view().is("image", "png"));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
@@ -62,13 +62,13 @@ impl MediaType<'_> {
     ///
     /// ```
     /// let input = b"application/json; charset=utf-8".to_vec();
-    /// let owned = parse_net::parse_media_type(&input)?.to_owned();
+    /// let owned = parse_net::parse_media_type(&input)?.into_owned();
     /// drop(input);
     /// assert!(owned.as_view().is("application", "json"));
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
-    pub fn to_owned(&self) -> OwnedMediaType {
+    pub fn into_owned(self) -> OwnedMediaType {
         let mut buf =
             Vec::with_capacity(self.type_.len() + self.subtype.len() + self.params.text.len());
         buf.extend_from_slice(self.type_);
@@ -91,7 +91,7 @@ impl OwnedMediaType {
     ///
     /// ```
     /// let m = parse_net::parse_media_type(b"text/plain; format=flowed")?;
-    /// assert_eq!(m.to_owned().as_view(), m);
+    /// assert_eq!(m.into_owned().as_view(), m);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -117,7 +117,7 @@ impl OwnedMediaType {
 /// ```
 /// use parse_net::EntityTag;
 ///
-/// let owned = EntityTag::parse(b"W/\"v1\"")?.to_owned();
+/// let owned = EntityTag::parse(b"W/\"v1\"")?.into_owned();
 /// assert!(owned.as_view().is_weak() && owned.as_view().opaque() == b"v1");
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
@@ -134,13 +134,13 @@ impl EntityTag<'_> {
     ///
     /// ```
     /// let input = b"\"abc\"".to_vec();
-    /// let owned = parse_net::EntityTag::parse(&input)?.to_owned();
+    /// let owned = parse_net::EntityTag::parse(&input)?.into_owned();
     /// drop(input);
     /// assert!(!owned.as_view().is_weak() && owned.as_view().opaque() == b"abc");
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
-    pub fn to_owned(&self) -> OwnedEntityTag {
+    pub fn into_owned(self) -> OwnedEntityTag {
         OwnedEntityTag {
             weak: self.weak,
             opaque: self.opaque.to_vec(),
@@ -155,7 +155,7 @@ impl OwnedEntityTag {
     ///
     /// ```
     /// let tag = parse_net::EntityTag::parse(b"W/\"x\"")?;
-    /// assert_eq!(tag.to_owned().as_view(), tag);
+    /// assert_eq!(tag.into_owned().as_view(), tag);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -183,7 +183,7 @@ enum Kind {
 /// ```
 /// use parse_net::parse_host_port;
 ///
-/// let owned = parse_host_port(b"Example.COM:8080")?.to_owned();
+/// let owned = parse_host_port(b"Example.COM:8080")?.into_owned();
 /// assert_eq!(owned.as_view().port, Some(8080));
 /// assert!(owned.as_view().host.eq_ignore_ascii_case(&parse_host_port(b"example.com")?.host));
 /// # Ok::<(), parse_net::ParseError>(())
@@ -207,13 +207,13 @@ impl HostPort<'_> {
     /// use parse_net::{parse_host_port, Host};
     /// use std::net::Ipv4Addr;
     ///
-    /// let owned = parse_host_port(b"192.0.2.1:443")?.to_owned();
+    /// let owned = parse_host_port(b"192.0.2.1:443")?.into_owned();
     /// assert_eq!(owned.as_view().port, Some(443));
     /// assert_eq!(owned.as_view().host, Host::V4(Ipv4Addr::new(192, 0, 2, 1)));
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
-    pub fn to_owned(&self) -> OwnedHostPort {
+    pub fn into_owned(self) -> OwnedHostPort {
         let (kind, text) = match self.host {
             Host::Name(n) => (Kind::Name, n.to_vec()),
             Host::V4(a) => (Kind::V4(a), Vec::new()),
@@ -236,7 +236,7 @@ impl OwnedHostPort {
     ///
     /// ```
     /// let hp = parse_net::parse_host_port(b"[::1]:8080")?;
-    /// assert_eq!(hp.to_owned().as_view(), hp);
+    /// assert_eq!(hp.into_owned().as_view(), hp);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -267,11 +267,11 @@ mod tests {
             b"a/b;",
         ] {
             let m = crate::parse_media_type(v).unwrap();
-            assert_eq!(m.to_owned().as_view(), m);
+            assert_eq!(m.into_owned().as_view(), m);
         }
         for v in [&b"\"x\""[..], b"W/\"\"", b"\"\xff\""] {
             let t = EntityTag::parse(v).unwrap();
-            assert_eq!(t.to_owned().as_view(), t);
+            assert_eq!(t.into_owned().as_view(), t);
         }
         for v in [
             &b"a.example:1"[..],
@@ -281,7 +281,7 @@ mod tests {
             b"h:",
         ] {
             let h = crate::parse_host_port(v).unwrap();
-            assert_eq!(h.to_owned().as_view(), h);
+            assert_eq!(h.into_owned().as_view(), h);
         }
     }
 
@@ -289,7 +289,7 @@ mod tests {
     fn test_owned_outlives_the_input() {
         let owned = {
             let input = b"Text/Plain; Charset=\"UTF-8\"".to_vec();
-            crate::parse_media_type(&input).unwrap().to_owned()
+            crate::parse_media_type(&input).unwrap().into_owned()
         };
         let v = owned.as_view();
         assert!(v.is("text", "plain") && v.charset().unwrap().eq_ignore_ascii_case(b"utf-8"));

@@ -33,7 +33,7 @@ fuzz_target!(|data: &[u8]| {
                 .find(|&i| list::parse(&data[..i], &Limits::DEFAULT).is_ok())
             {
                 let lines = [&data[..i], &data[i + 1..]];
-                if let Ok(c) = list::combined(lines, &Limits::DEFAULT) {
+                if let Ok(c) = list::parse_lines(lines, &Limits::DEFAULT) {
                     assert_eq!(c.iter().collect::<Vec<_>>(), whole);
                 }
             }

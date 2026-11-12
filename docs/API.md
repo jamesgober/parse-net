@@ -1,7 +1,27 @@
-# parse-net - API Reference
+<h1 align="center">
+        <img width="99" alt="Rust logo" src="https://raw.githubusercontent.com/jamesgober/rust-collection/72baabd71f00e14aa9184efcb16fa3deddda3a0a/assets/rust-logo.svg">
+    <br><b>parse-net</b><br>
+    <sub><sup>API REFERENCE</sup></sub>
+</h1>
+<div align="center">
+    <sup>
+        <a href="../README.md" title="Project Home"><b>HOME</b></a>
+        <span>&nbsp;│&nbsp;</span>
+        <span>API</span>
+        <span>&nbsp;│&nbsp;</span>
+        <a href="./GRAMMAR.md" title="Grammar"><b>GRAMMAR</b></a>
+        <span>&nbsp;│&nbsp;</span>
+        <a href="./MIGRATION.md" title="Migration"><b>MIGRATION</b></a>
+    </sup>
+</div>
+<br>
 
-> Reference for every public item in `parse-net`, with signatures, behaviour, the errors each item can return, and examples.
-> **Current release: `0.5.0`.** This document, locked at `0.2.0`, is the contract for `0.3.0` to `1.0.0`. Each item carries the version that ships it; items marked with a later version than the current release are specified here and not yet in the crate. Names and signatures do not change after `0.2.0` without a decision-log entry in [`../dev/PLAN.md`](../dev/PLAN.md).
+Every public item of `parse-net` `0.10.0`, with its signature, its behaviour,
+the errors it can return, and examples. The rustdoc on
+[docs.rs](https://docs.rs/parse-net) carries a runnable example for every
+item; the examples here are compiled and run with all features enabled
+before each release. Names changed in `0.10.0`: [MIGRATION.md](./MIGRATION.md)
+maps every 0.9 call to its replacement.
 
 <sub>Copyright &copy; 2026 <strong>James Gober</strong>.</sub>
 
@@ -13,6 +33,8 @@
   - [Validate, then view](#validate-then-view)
   - [Feature flags](#feature-flags)
 - [Tier 1 at a glance](#tier-1-at-a-glance)
+  - [Email](#email)
+  - [Naming](#naming)
 - [Crate root](#crate-root)
   - [`VERSION`](#version)
 - [Errors](#errors)
@@ -45,7 +67,7 @@
   - [`MailDate`](#maildate)
 - [Entity tags: `etag`](#entity-tags-etag)
 - [Ranges: `range`](#ranges-range)
-- [RFC 8187 values: `ext_value`](#rfc-8187-values-ext_value)
+- [RFC 8187 values: `extended_value`](#rfc-8187-values-extended_value)
 - [Content-Disposition: `disposition`](#content-disposition-disposition)
 - [Cache-Control: `cache`](#cache-control-cache)
 - [Link: `link`](#link-link)
@@ -53,8 +75,8 @@
 - [Authorization and challenges: `auth`](#authorization-and-challenges-auth)
 - [Host: `host`](#host-host)
 - [Origin: `origin`](#origin-origin)
-- [Percent-encoding: `pct`](#percent-encoding-pct)
-- [Structured Field Values: `sfv`](#structured-field-values-sfv)
+- [Percent-encoding: `percent`](#percent-encoding-pct)
+- [Structured Field Values: `structured`](#structured-field-values-sfv)
 - [Email lexical layer: `mail`](#email-lexical-layer-mail)
 - [Owned forms](#owned-forms)
 - [Thread safety and sizes](#thread-safety-and-sizes)
@@ -66,7 +88,7 @@
 
 ### Grades, tiers, versions
 
-Every item has an id (`TXT-5`), a **grade**, a **tier**, and the **version** that ships it.
+Every item has an id (`TXT-5`), a **grade**, a **tier**, and the **version** that first shipped it. The ids and grades come from the design plan (`dev/PLAN.md` section 8) and tie each item to its tests and decisions.
 
 | Grade | Meaning |
 |---|---|
@@ -94,9 +116,9 @@ Every `parse_*` checks the whole value in one forward pass and returns a small `
 | Feature | Default | Adds |
 |---|---|---|
 | (none) | yes | everything not marked otherwise; `no_std`, no `alloc` |
-| `alloc` | no | owned forms (`to_owned`), `Sink for Vec<u8>` |
-| `std` | no | `HttpDate` to and from `SystemTime`, `HttpDate::now`, Tier 1 `http_date`; implies `alloc` |
-| `encode-lib` | no | a no-op until the first-party `encode-lib` crate is published; then the base64 helpers `basic_decode_into`, `ByteSeq::decode_into`, and `sfv::Writer::bytes` ([D-002](../dev/PLAN.md#16-decision-log)). `B` encoded words need no feature ([D-080](../dev/PLAN.md#16-decision-log)) |
+| `alloc` | no | owned forms (`into_owned`), `Sink for Vec<u8>` |
+| `std` | no | `HttpDate` to and from `SystemTime`, `HttpDate::now`, Tier 1 `parse_http_date`; implies `alloc` |
+| `encode-lib` | no | a no-op until the first-party `encode-lib` crate is published; then the base64 helpers `basic_decode_into`, `ByteSeq::decode_into`, and `structured::Writer::bytes` ([D-002](../dev/PLAN.md#16-decision-log)). `B` encoded words need no feature ([D-080](../dev/PLAN.md#16-decision-log)) |
 
 ---
 
@@ -113,13 +135,13 @@ assert!(mt.essence_is("text/html"));
 assert!(mt.charset().is_some_and(|c| c.eq_ignore_ascii_case(b"utf-8")));
 
 // Lists (0.3)
-let codings: Vec<&[u8]> = pn::list(b"gzip, deflate;q=0.5")?.iter().collect();
+let codings: Vec<&[u8]> = pn::parse_list(b"gzip, deflate;q=0.5")?.iter().collect();
 assert_eq!(codings, [&b"gzip"[..], b"deflate;q=0.5"]);
 
 // Dates (0.3)
 let d = pn::HttpDate::from_unix(784_111_777)?;
 assert_eq!(&d.format(), b"Sun, 06 Nov 1994 08:49:37 GMT");
-let when = pn::http_date_at(b"Sunday, 06-Nov-94 08:49:37 GMT", 1_792_000_000)?;
+let when = pn::parse_http_date_at(b"Sunday, 06-Nov-94 08:49:37 GMT", 1_792_000_000)?;
 assert_eq!(when, d);
 
 // Host (0.3)
@@ -133,20 +155,60 @@ let lang = pn::best_language(Some(b"fr-CA, en;q=0.5"), &["en", "fr", "de"]);
 assert_eq!(lang, Some(1));
 
 // Conditional requests and ranges (0.4)
-let current = pn::EntityTag::strong(b"v2")?;
-assert!(pn::if_none_match(b"\"v1\", W/\"v2\"", &current)?);   // answer 304
+let current = pn::Representation::Tagged(pn::EntityTag::strong(b"v2")?);
+assert!(pn::if_none_match(b"\"v1\", W/\"v2\"", current)?);   // answer 304
 let mut buf = [pn::ByteRange { start: 0, end: 0 }; 4];
 assert_eq!(pn::byte_ranges(b"bytes=0-499", 10_000, &mut buf)?, pn::RangeOutcome::Ranges(1));
 
 // Downloads, caching, proxies, auth, Structured Fields (0.4)
 let cd = pn::parse_content_disposition(b"attachment; filename=\"a.txt\"")?;
-let cc = pn::response_cache_control(b"public, max-age=31536000, immutable")?;
+let cc = pn::parse_response_cache_control(b"public, max-age=31536000, immutable")?;
 assert_eq!(cc.max_age, Some(31_536_000));
-let site = pn::sfv::parse_item(b"same-origin")?;
+let site = pn::structured::parse_item(b"same-origin")?;
 let token = pn::bearer(b"Bearer mF_9.B5f-4.1JqM")?;
 assert_eq!(token, Some(&b"mF_9.B5f-4.1JqM"[..]));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+### Email
+
+```rust
+use parse_net as pn;
+
+let m = pn::mail::parse_mailbox(b"=?UTF-8?Q?Ren=C3=A9e?= <renee@example.com>")?;
+let mut name = [0u8; 64];
+assert_eq!(pn::mail::decode_phrase(m.display_name.unwrap_or_default(), &mut name)?, "Ren\u{e9}e");
+
+let mut subject = [0u8; 64];
+assert_eq!(pn::mail::decode_words(b"=?UTF-8?Q?Caf=C3=A9?= menu", &mut subject)?, "Caf\u{e9} menu");
+
+let d = pn::MailDate::parse(b"Wed, 21 Oct 2026 17:38:00 +0200")?;
+assert_eq!(d.offset_minutes(), 120);
+
+let mut buf = [0u8; 128];
+let mut out = pn::SliceSink::new(&mut buf);
+pn::mail::encode_words("Caf\u{e9} menu", 69, &mut out)?;
+assert_eq!(out.written(), b"=?UTF-8?Q?Caf=C3=A9_menu?=");
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+### Naming
+
+- A free `parse_*` reads a whole field value and returns a view of it:
+  `parse_media_type`, `parse_list`, `parse_http_date_at`.
+- A function named for its answer returns the answer: `best_media`,
+  `if_none_match`, `byte_ranges`, `client_address`, `bearer`.
+- One element of a field is read by its type's `parse`: `EntityTag::parse`,
+  `QValue::parse`, `ExtendedValue::parse`.
+- Every Tier 1 call uses `Limits::DEFAULT`. The same parser with other limits
+  is the module's `parse(value, &limits)` (`media::parse`, `list::parse`,
+  `link::parse`, `etag::parse`), or the call's `_with_limits` form where a
+  module has several (`mail::parse_mailbox_with_limits`,
+  `HttpDate::parse_with_limits`).
+- Several field lines of one name are read by a `parse_*_lines` call:
+  `list::parse_lines`, `cache::parse_response_lines`,
+  `structured::parse_list_lines`.
+- Writers are `write_*(value, out)` over one [`Sink`](#sink-full).
 
 ---
 
@@ -168,7 +230,7 @@ use parse_net as pn;
 assert_eq!(pn::VERSION.split('.').count(), 3);
 ```
 
-The crate root re-exports the types and Tier 1 functions of every module (`ParseError`, `ErrorKind`, `WriteError`, `Limits`, `DuplicatePolicy`, `Sink`, `SliceSink`, `CountSink`, `Full`, `Quoted`, `Word`, `Comment`, `List`, `Params`, `Param`, `MediaType`, `MediaRange`, `Boundary`, `QValue`, `HttpDate`, `Civil`, `DateFormat`, `MailDate`, `EntityTag`, `Condition`, `ByteRange`, `RangeSpec`, `RangeOutcome`, `ContentRange`, `IfRange`, `ExtValue`, `Charset`, `ContentDisposition`, `DispositionType`, `Filename`, `ResponseDirectives`, `RequestDirectives`, `Directive`, `LinkValue`, `ClientAddress`, `ForwardedSource`, `Trust`, `Credentials`, `AuthPayload`, `Challenge`, `HostPort`, `Host`, `OriginValue`, `Origin`, and every Tier 1 function). Every module is also public for Tier 3 access: `class`, `scan`, `num`, `write`, `text`, `list`, `param`, `media`, `negotiate`, `date`, `etag`, `range`, `ext_value`, `disposition`, `cache`, `link`, `forwarded`, `auth`, `host`, `origin`, `pct`, `sfv`, `mail`.
+The crate root re-exports the types and Tier 1 functions of every module (`ParseError`, `ErrorKind`, `WriteError`, `Limits`, `DuplicatePolicy`, `Sink`, `SliceSink`, `CountSink`, `Full`, `Quoted`, `Word`, `Comment`, `List`, `Params`, `Param`, `MediaType`, `MediaRange`, `Boundary`, `QValue`, `HttpDate`, `Civil`, `DateFormat`, `MailDate`, `EntityTag`, `Condition`, `ByteRange`, `RangeSpec`, `RangeOutcome`, `ContentRange`, `IfRange`, `ExtendedValue`, `Charset`, `ContentDisposition`, `DispositionType`, `Filename`, `ResponseDirectives`, `RequestDirectives`, `Directive`, `LinkValue`, `ClientAddress`, `ForwardedSource`, `Trust`, `Credentials`, `AuthPayload`, `Challenge`, `HostPort`, `Host`, `OriginValue`, `Origin`, and every Tier 1 function). Every module is also public for Tier 3 access: `class`, `scan`, `num`, `write`, `text`, `list`, `param`, `media`, `negotiate`, `date`, `etag`, `range`, `extended_value`, `disposition`, `cache`, `link`, `forwarded`, `auth`, `host`, `origin`, `percent`, `structured`, `mail`.
 
 ---
 
@@ -197,7 +259,7 @@ Why a value was refused, and where. Eight bytes, `Copy`, and it never contains i
 - `kind()`: what was refused (see [`ErrorKind`](#errorkind)).
 - `offset()`: the byte offset of the first byte that could not be accepted, relative to the start of the value passed in. For combined field lines it is relative to the start of the line named by `line()`. Offsets above `u32::MAX` saturate.
 - `line()`: the zero-based index of the field line that failed when several lines were parsed as one field; `0` otherwise. Line indexes above 255 saturate at 255. (The kind, the line index, and the offset fit in 8 bytes: one byte each for the kind and the line, four for the offset.)
-- `new(kind, offset)`: builds an error, for callers that implement [`sfv::Visitor`](#structured-field-values-sfv) or wrap parse-net. Offsets above `u32::MAX` saturate.
+- `new(kind, offset)`: builds an error, for callers that implement [`structured::Visitor`](#structured-field-values-sfv) or wrap parse-net. Offsets above `u32::MAX` saturate.
 - `Display` writes the kind's fixed message and the offset, for example `invalid byte at offset 4` (and `of field line 2` when a line index is present). No input byte is ever formatted, in `Display` or `Debug`.
 
 ```rust
@@ -239,19 +301,20 @@ Every variant names what was refused. Unless the row says otherwise, the caller'
 | `Nul` | a NUL byte | as `BareCr` |
 | `Control` | another control byte (0x01 to 0x1F except HTAB, or DEL) | as `BareCr` |
 | `UnterminatedQuote` | a quoted string with no closing `"` (also: a quoted string that would have to continue on the next field line) | `text`, `list`, `param` |
-| `InvalidQuotedPair` | a quoted pair where the grammar allows none or not that one (`forwarded`, Structured Field strings); after a `\` in `text` a refused byte is a control, which keeps its kind (D-037) | `forwarded`, `sfv` |
+| `InvalidQuotedPair` | a quoted pair where the grammar allows none or not that one (`forwarded`, Structured Field strings); after a `\` in `text` a refused byte is a control, which keeps its kind (D-037) | `forwarded`, `structured` |
 | `UnbalancedComment` | a `(` without its `)`, or a `)` without its `(` | `text::parse_comment`, `list` |
 | `CommentTooDeep` | comment nesting beyond `Limits::max_comment_depth` | `text::parse_comment`, `list` |
-| `TooManyMembers` | more list members, parameters, dictionary members, or encoded words than the limit allows | `list`, `param`, `sfv`, `mail` |
+| `TooManyMembers` | more list members, parameters, dictionary members, or encoded words than the limit allows | `list`, `param`, `structured`, `mail` |
 | `TooManyEmptyElements` | more empty list elements (`a, , , b`) than `Limits::max_empty_elements` | `list` |
-| `TrailingSeparator` | a separator with nothing after it where the grammar forbids that (`a, b,` in a Structured Field list) | `sfv` |
-| `ExpectedSeparator` | two members without the separator between them | `sfv`, `forwarded`, `auth` |
+| `TrailingSeparator` | a separator with nothing after it where the grammar forbids that (`a, b,` in a Structured Field list) | `structured` |
+| `ExpectedSeparator` | two members without the separator between them | `structured`, `forwarded`, `auth` |
 | `TrailingData` | bytes after a complete value | every single-value parser |
 | `DuplicateParameter` | a parameter name repeated under `DuplicatePolicy::Refuse`, or wherever the RFC forbids repetition | `param`, `disposition`, `auth`, `forwarded` |
+| `ForbiddenParameter` | a parameter the context forbids or that conflicts with another: `filename*` in `form-data` (RFC 7578 section 4.2), `filename*0` and other RFC 2231 continuations in `Content-Disposition`, `name*` beside `name*0` in MIME parameters (0.10) | `disposition`, `mail` |
 | `MissingValue` | `name` without `=value` where a value is required | `param`, `forwarded` |
-| `InvalidNumber` | digits expected; a sign, space, or other byte found | `num`, `range`, `cache`, `sfv` |
-| `NumberOverflow` | a number larger than its type or the RFC allows | `num`, `range`, `sfv` |
-| `OutOfRange` | a value outside its valid range (a year outside 1 to 9999, a Structured Field integer outside plus or minus 999,999,999,999,999) | `date`, `sfv` |
+| `InvalidNumber` | digits expected; a sign, space, or other byte found | `num`, `range`, `cache`, `structured` |
+| `NumberOverflow` | a number larger than its type or the RFC allows | `num`, `range`, `structured` |
+| `OutOfRange` | a value outside its valid range (a year outside 1 to 9999, a Structured Field integer outside plus or minus 999,999,999,999,999) | `date`, `structured` |
 | `InvalidDate` | a date that does not exist (`31 Apr`, `29 Feb 2023`, hour 24) or does not match any accepted format | `date` |
 | `WeekdayMismatch` | the weekday does not agree with the date | `date` |
 | `InvalidMediaType` | a media type that does not match `type "/" subtype *( OWS ";" OWS parameter )` | `media` |
@@ -260,18 +323,18 @@ Every variant names what was refused. Unless the row says otherwise, the caller'
 | `InvalidQValue` | a `q` value outside the RFC 9110 section 12.4.2 grammar | `negotiate` |
 | `InvalidEntityTag` | an entity tag outside `[ "W/" ] DQUOTE *etagc DQUOTE` | `etag` |
 | `InvalidRange` | a range set or `Content-Range` that is malformed or inconsistent | `range` |
-| `InvalidCharset` | a malformed charset name in an extended value or encoded word | `ext_value`, `mail` |
-| `UnsupportedCharset` | a well-formed charset parse-net does not decode (only UTF-8, US-ASCII, ISO-8859-1 are decoded) | `ext_value`, `mail` |
-| `InvalidPercentEncoding` | a `%` not followed by two hex digits (or uppercase hex where only lowercase is allowed) | `pct`, `ext_value`, `sfv` |
-| `InvalidUtf8` | bytes that must be UTF-8 are not (overlong forms and surrogates included) | `pct`, `ext_value`, `sfv`, `mail` |
-| `ControlInDecoded` | a decoded value contains a control byte (`%0D%0A`, `%00`); never copy such a value into another header or a log | `ext_value`, `disposition`, `mail`, `auth` |
+| `InvalidCharset` | a malformed charset name in an extended value or encoded word | `extended_value`, `mail` |
+| `UnsupportedCharset` | a well-formed charset parse-net does not decode (only UTF-8, US-ASCII, ISO-8859-1 are decoded) | `extended_value`, `mail` |
+| `InvalidPercentEncoding` | a `%` not followed by two hex digits (or uppercase hex where only lowercase is allowed) | `percent`, `extended_value`, `structured` |
+| `InvalidUtf8` | bytes that must be UTF-8 are not (overlong forms and surrogates included) | `percent`, `extended_value`, `structured`, `mail` |
+| `ControlInDecoded` | a decoded value contains a control byte (`%0D%0A`, `%00`); never copy such a value into another header or a log | `extended_value`, `disposition`, `mail`, `auth` |
 | `InvalidHost` | a host that is not a reg-name, IPv4, or IP literal; or userinfo (`@`) present | `host`, `origin`, `forwarded` |
 | `InvalidPort` | a port that is not digits or is above 65535 | `host`, `origin` |
 | `InvalidAddress` | an IP literal that is not a valid address, or an all-digits-and-dots name that is not a valid IPv4 address (`1.2.3`, `256.0.0.1`, `01.2.3.4`) | `host`, `forwarded` |
 | `InvalidOrigin` | an `Origin` that is not `null` or `scheme "://" host [ ":" port ]` | `origin` |
-| `InvalidKey` | a Structured Field key that does not match `( lcalpha / "*" ) *( lcalpha / DIGIT / "_" / "-" / "." / "*" )` | `sfv` |
-| `TooLong` | a string, token, key, byte sequence, address, or local part longer than its limit | `sfv`, `mail` |
-| `InvalidBase64` | bytes outside the base64 alphabet or misplaced `=` | `sfv`, `auth`, `mail` |
+| `InvalidKey` | a Structured Field key that does not match `( lcalpha / "*" ) *( lcalpha / DIGIT / "_" / "-" / "." / "*" )` | `structured` |
+| `TooLong` | a string, token, key, byte sequence, address, or local part longer than its limit | `structured`, `mail` |
+| `InvalidBase64` | bytes outside the base64 alphabet or misplaced `=` | `structured`, `auth`, `mail` |
 | `InvalidEncodedWord` | an RFC 2047 encoded word that is malformed | `mail` |
 | `SectionGap` | RFC 2231 sections that are missing, repeated, or out of order, or a charset on a section other than 0 | `mail` |
 | `TooManySections` | more RFC 2231 sections than `Limits::max_rfc2231_sections` | `mail` |
@@ -320,7 +383,7 @@ Why a writer refused.
 | `Forbidden { at }` | the input byte at offset `at` is not allowed in the output grammar (CR, LF, NUL, another control, or a byte the format forbids) | refuse the input; never strip and retry silently |
 | `OutOfRange` | a number outside the format's range (a `Content-Range` end below its start, a Structured Field integer above 15 digits) | fix the value |
 | `NotToken` | a position that requires a token got something else (a parameter name, a media type) | fix the name |
-| `InvalidSequence` | a structured writer (`sfv::Writer`, `cache::Writer`) was called out of order: a parameter before any item, `finish` with an inner list still open | a bug in the calling code |
+| `InvalidSequence` | a structured writer (`structured::Writer`, `cache::Writer`) was called out of order: a parameter before any item, `finish` with an inner list still open | a bug in the calling code |
 | `DuplicateName` | two parameters with the same name (ASCII case-insensitive) where the grammar allows each once (`media::write`, `auth::write_challenge`), so every parser would refuse the output | drop or merge the repeat |
 
 `ERR-4` (P0, Tier 1, 0.3): `Display` and `core::error::Error` for both error types, implemented without `std` (stable since Rust 1.81). The text is fixed plus the offset; no input bytes.
@@ -460,7 +523,7 @@ One `static` table of 256 `u32` entries (1 KiB), built at compile time from the 
 - `hex_value(b)`: the value of one hex digit (either case), `None` otherwise.
 - `all(s, class)`: whether every byte of `s` is in `class` (true for an empty `s`); stops at the first byte outside.
 - `Class::union`: a class holding both; used by url-lib to build component classes.
-- `is_uri_target` is `pchar / "/" / "?"` plus `%` (the `%XX` digits are checked by [`pct::validate_with`](#percent-encoding-pct)).
+- `is_uri_target` is `pchar / "/" / "?"` plus `%` (the `%XX` digits are checked by [`percent::validate_with`](#percent-encoding-pct)).
 
 ```rust
 use parse_net::class::{self, Class};
@@ -820,19 +883,19 @@ The RFC 9110 section 5.6.1 `#rule`: comma-separated elements. An element is yiel
 |---|---|---|---|---|
 | LST-1 | `list`, `list::parse`, `List`, `Elements` | P0, 1, 0.3 | validates the whole value: every byte per SCN-3; quoted strings terminated with valid quoted pairs; comments balanced within `max_comment_depth`. A comma ends an element only outside quoted strings and comments ([T3](../dev/PLAN.md#9-threats)). Empty elements (`a, , b`, a leading or trailing comma) are skipped up to `max_empty_elements` (RFC 9110 section 5.6.1.2) | SCN-3 kinds; `UnterminatedQuote`, `InvalidQuotedPair`, `UnbalancedComment`, `CommentTooDeep`; `TooManyEmptyElements` at the comma that exceeded the budget; `TooManyMembers` at the element beyond `max_list_members` |
 | LST-2 | `list::for_each` | P1, 3, 0.3 | validates and calls `f` for each element in one pass (no second scan); returns the element count. On error, `f` has seen the elements before the failure. The fastest way to read a list whose elements are visited once | as LST-1 |
-| LST-3 | `list::combined`, `CombinedList` | P0, 2, 0.3 | several field lines of one name as one list, as if joined by `", "` (RFC 9110 section 5.3), without joining; an empty line adds nothing; an element never spans two lines, so a quote open at the end of a line is `UnterminatedQuote`. The empty-element and member budgets count across all lines | as LST-1, with `line()` set |
+| LST-3 | `list::parse_lines`, `CombinedList` | P0, 2, 0.3 | several field lines of one name as one list, as if joined by `", "` (RFC 9110 section 5.3), without joining; an empty line adds nothing; an element never spans two lines, so a quote open at the end of a line is `UnterminatedQuote`. The empty-element and member budgets count across all lines | as LST-1, with `line()` set |
 | LST-4 | `list::contains_token` | P0, 1, 0.3 | whether any element of any line equals `token` ASCII case-insensitively (`Connection: keep-alive, Upgrade`); a line that fails to parse counts as not containing it (fail closed) | none |
 
 ```rust
 use parse_net::{self as pn, Limits};
 
-let l = pn::list(b"a, \"b,c\" , , (d, e) f,")?;
+let l = pn::parse_list(b"a, \"b,c\" , , (d, e) f,")?;
 let all: Vec<&[u8]> = l.iter().collect();
 assert_eq!(all, [&b"a"[..], b"\"b,c\"", b"(d, e) f"]);
 assert_eq!(l.len(), 3);
 
 let lines: [&[u8]; 3] = [b"gzip", b"", b"br, zstd"];
-let c = pn::list::combined(lines, &Limits::DEFAULT)?;
+let c = pn::list::parse_lines(lines, &Limits::DEFAULT)?;
 assert_eq!(c.iter().collect::<Vec<_>>(), [&b"gzip"[..], b"br", b"zstd"]);
 
 assert!(pn::list::contains_token([&b"keep-alive, Upgrade"[..]], b"upgrade"));
@@ -940,7 +1003,7 @@ pub mod media {
         pub fn is_form_urlencoded(&self) -> bool;
         pub fn is_multipart_form_data(&self) -> bool;
         pub fn write_canonical(&self, out: &mut impl Sink) -> Result<(), WriteError>;
-        #[cfg(feature = "alloc")] pub fn to_owned(&self) -> OwnedMediaType;   // 0.5
+        #[cfg(feature = "alloc")] pub fn into_owned(self) -> OwnedMediaType; // 0.5; 0.10 renamed it from to_owned
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -951,7 +1014,7 @@ pub mod media {
         pub fn matches(&self, offer: &MediaType<'_>) -> bool;
         pub const fn specificity(&self) -> u8;
         pub const fn weight(&self) -> QValue;
-        pub const fn params(&self) -> Params<'a>;
+        pub const fn params(&self) -> RangeParams<'a>;   // 0.10: every parameter but q
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -970,8 +1033,8 @@ RFC 9110 section 8.3.1: `media-type = type "/" subtype parameters`; type, subtyp
 | MED-4 | `charset` | P0, 1, 0.3 | the `charset` parameter; compare it case-insensitively | none |
 | MED-5 | `boundary` | P0, 1, 0.3 | RFC 2046 section 5.1.1: 1 to 70 `bchars`, last not SP; token or quoted form (a quoted boundary cannot contain escapes: `\` is not a `bchar`); absent gives `Ok(None)` | `InvalidBoundary` |
 | MED-6 | `suffix`, `is_json`, `is_form_urlencoded`, `is_multipart_form_data` | P1, 1, 0.3 | `suffix` is the part after the last `+` of the subtype (`json` of `ld+json`); `is_json` is `application/json` or any `+json` suffix | none |
-| MED-7 | `media::parse_range`, `MediaRange` | P1, 2, 0.4 | `*/*`, `type/*`, or a media type; the first `q` parameter ends the media-type parameters (`params()`), and it and every parameter after it are `accept-ext`, ignored for matching | `Wildcard` for `*/subtype`; `InvalidQValue`; MED-1 errors |
-| MED-8 | `MediaRange::matches`, `specificity` | P1, 2, 0.4 | a range matches an offer when type and subtype match (or are `*`) and every range parameter is present in the offer with an equal value (case-sensitive except `charset`); specificity 4 (with parameters), 3 (exact), 2 (`type/*`), 1 (`*/*`) | none |
+| MED-7 | `media::parse_range`, `MediaRange`, `RangeParams` | P1, 2, 0.4 | `*/*`, `type/*`, or a media type; the first `q` parameter is the weight wherever it stands, and every other parameter, before or after it, is a media-range parameter (`params()`), as RFC 9110 section 12.5.1 asks of recipients (0.10; before, parameters after `q` were read as the removed `accept-ext` and ignored) | `Wildcard` for `*/subtype`; `InvalidQValue`; MED-1 errors |
+| MED-8 | `MediaRange::matches`, `specificity` | P1, 2, 0.4 | a range matches an offer when type and subtype match (or are `*`) and every range parameter is present in the offer with an equal value (case-sensitive except `charset`); `specificity` orders ranges: an exact type over `type/*` over `*/*`, then more parameters over fewer (0.10; before, every range with parameters ranked alike) | none |
 | MED-9 | `media::write` | P0, 2, 0.3 | `type/subtype` then `; name=value` for each pair, values through `write_word`; a name given twice is refused (0.4, D-052), so the output always parses | `NotToken`, `DuplicateName`, `Forbidden`, `Full` |
 | MED-10 | `write_canonical` | P1, 2, 0.3 | lowercase type, subtype, and parameter names; values as given; `; ` between parameters | `Full` |
 | MED-11 | `OwnedMediaType` | P2, 2, 0.5 | `alloc`; see [Owned forms](#owned-forms) | none |
@@ -1064,7 +1127,7 @@ pub mod negotiate {
 |---|---|---|---|---|
 | NEG-1 | `QValue`, `QValue::parse` | P1, 3, 0.4 | `( "0" [ "." 0*3DIGIT ] ) / ( "1" [ "." 0*3("0") ] )` (RFC 9110 section 12.4.2), stored as thousandths: no floating point. In a list, the parameter name `q` is case-insensitive | `InvalidQValue` for `1.5`, `0.1234`, `.5`, `-1`, `1.001`, an empty value |
 | NEG-2 | `best_media` | P1, 1, 0.4 | the index of the best offer for `Accept` (offers are media types like `"text/html"`). An offer's weight is the q-value of the most specific matching range (specificity per MED-8); `q=0` means not acceptable; the highest weight wins and ties go to the earlier offer (server preference). An absent header gives every offer weight 1, so the first offer wins. A malformed header is treated as absent (RFC 9110 lets a server ignore it). `None`: no offer is acceptable (answer 406 or send a default) | none |
-| NEG-3 | `best_language` | P1, 1, 0.4 | RFC 4647 section 3.4 lookup: each range in descending q order is matched against the offers case-insensitively, truncating the range one subtag at a time (`en-US` matches an `en` offer); `*` matches any offer at its weight; `q=0` excludes | none |
+| NEG-3 | `best_language` | P1, 1, 0.4 | RFC 4647 section 3.4 lookup: the ranges are taken in priority order (descending q, header order between equals), and each is truncated one subtag at a time until it equals an offer, case-insensitively, before the next range is tried (`en-US` finds an `en` offer ahead of a lower `fr`); `*` counts only when no range follows it in priority, and then chooses the first offer; an offer named by a `q=0` range is never chosen (0.10; before, an exact match by a lower range won over a truncation, and `*` competed at its weight) | none |
 | NEG-4 | `best_encoding` | P1, 1, 0.4 | RFC 9110 section 12.5.3: `identity` is acceptable unless `identity;q=0`, or `*;q=0` without an explicit `identity`; an empty field value means only `identity`; `x-gzip` equals `gzip` and `x-compress` equals `compress` (section 8.4.1) | none |
 | NEG-5 | `best_charset` | P2, 1, 0.4 | as `best_encoding` without the `identity` rule | none |
 | NEG-6 | `Negotiator`, `Outcome` | P1, 2, 0.4 | the configurable form. `HeaderIgnored { index }` reports that the header was malformed and treated as absent; with `MalformedPolicy::Refuse` the outcome is `Refused(error)` instead, so the caller can answer 400. A member is its value and at most a weight, and a language value is a `language-range` (D-076); `parse_weighted` stays raw. An offer that is not a valid media type is never chosen, in any path | none (reported in `Outcome`) |
@@ -1109,8 +1172,7 @@ impl HttpDate {
     pub const MAX: HttpDate;                                   // 9999-12-31T23:59:59Z
     pub const fn from_unix(secs: i64) -> Result<HttpDate, ParseError>;
     pub const fn unix(self) -> i64;
-    pub fn parse_at(value: &[u8], now: i64) -> Result<HttpDate, ParseError>;
-    pub fn parse_at_with(value: &[u8], now: i64, limits: &Limits) -> Result<HttpDate, ParseError>;
+    pub fn parse_with_limits(value: &[u8], now: i64, limits: &Limits) -> Result<HttpDate, ParseError>;
     pub fn parse_imf_fixdate(value: &[u8]) -> Result<HttpDate, ParseError>;
     pub fn parse_detailed(value: &[u8], now: i64) -> Result<(HttpDate, DateFormat), ParseError>;
     pub fn format(self) -> [u8; 29];
@@ -1121,9 +1183,9 @@ impl HttpDate {
     #[cfg(feature = "std")] pub fn to_system_time(self) -> Option<std::time::SystemTime>;
 }
 
-pub fn http_date_at(value: &[u8], now: i64) -> Result<HttpDate, ParseError>;             // Tier 1, no_std
+pub fn parse_http_date_at(value: &[u8], now: i64) -> Result<HttpDate, ParseError>;             // Tier 1, no_std
 #[cfg(feature = "std")]
-pub fn http_date(value: &[u8]) -> Result<HttpDate, ParseError>;                          // Tier 1, std clock
+pub fn parse_http_date(value: &[u8]) -> Result<HttpDate, ParseError>;                          // Tier 1, std clock
 
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1142,8 +1204,8 @@ RFC 9110 section 5.6.7. A point in time with one-second resolution, from year 1 
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
 | DAT-1 | `from_unix`, `unix`, `MIN`, `MAX` | P0, 1, 0.3 | seconds since the Unix epoch, negative for dates before 1970 | `OutOfRange` outside years 1 to 9999 |
-| DAT-2 | `http_date_at`, `parse_at`, `parse_at_with` | P0, 1, 0.3 | all three formats: IMF-fixdate (`Sun, 06 Nov 1994 08:49:37 GMT`), RFC 850 (`Sunday, 06-Nov-94 08:49:37 GMT`), asctime (`Sun Nov  6 08:49:37 1994`). Names are case-sensitive (HTTP-date is case-sensitive). The weekday must agree with the date. Only `GMT` is accepted as the zone. The RFC 850 two-digit year is resolved against `now` (Unix seconds) by the RFC 9110 rule: a date more than 50 years in the future is taken as the most recent past year with the same last two digits ([D-005](../dev/PLAN.md#16-decision-log)); a date 50 years or more in the past moves forward a century, so the year always lands in the hundred years around `now` ([D-039](../dev/PLAN.md#16-decision-log)). Second `60` is refused unless `Limits::allow_leap_second` (then read as 59) | `InvalidDate` (no format matches, a day beyond the month, `29 Feb` in a non-leap year, hour 24, minute or second 60); `WeekdayMismatch`; `TrailingData` |
-| DAT-3 | `http_date` | P1, 1, 0.3 | `std`: `parse_at` with `now` from `SystemTime::now()` | as DAT-2 |
+| DAT-2 | `parse_http_date_at`, `HttpDate::parse_with_limits` | P0, 1, 0.3 | all three formats: IMF-fixdate (`Sun, 06 Nov 1994 08:49:37 GMT`), RFC 850 (`Sunday, 06-Nov-94 08:49:37 GMT`), asctime (`Sun Nov  6 08:49:37 1994`). Names are case-sensitive (HTTP-date is case-sensitive). The weekday must agree with the date. Only `GMT` is accepted as the zone. The RFC 850 two-digit year is resolved against `now` (Unix seconds) by the RFC 9110 rule: a date more than 50 years in the future is taken as the most recent past year with the same last two digits ([D-005](../dev/PLAN.md#16-decision-log)); a date 50 years or more in the past moves forward a century, so the year always lands in the hundred years around `now` ([D-039](../dev/PLAN.md#16-decision-log)). Second `60` is refused unless `Limits::allow_leap_second` (then read as 59) | `InvalidDate` (no format matches, a day beyond the month, `29 Feb` in a non-leap year, hour 24, minute or second 60); `WeekdayMismatch`; `TrailingData` |
+| DAT-3 | `parse_http_date` | P1, 1, 0.3 | `std`: `parse_http_date_at` with `now` from `SystemTime::now()` | as DAT-2 |
 | DAT-4 | `parse_imf_fixdate` | P0, 3, 0.3 | exactly the 29-byte IMF-fixdate, the only format senders may generate; parsed by position with no searching; needs no clock | as DAT-2 |
 | DAT-5 | `parse_detailed` | P2, 3, 0.3 | also reports the format seen (a sender still using RFC 850 is a signal) | as DAT-2 |
 | DAT-6 | `format`, `write_to` | P0, 1, 0.3 | IMF-fixdate (moved from http-net `blocking.rs`, now over the full year range) | `write_to`: `Full` |
@@ -1159,14 +1221,14 @@ assert_eq!(d.unix(), 784_111_777);
 assert_eq!(&d.format(), b"Sun, 06 Nov 1994 08:49:37 GMT");
 
 let now = 1_792_540_800; // 2026-10-21
-assert_eq!(pn::http_date_at(b"Sun Nov  6 08:49:37 1994", now)?, d);
+assert_eq!(pn::parse_http_date_at(b"Sun Nov  6 08:49:37 1994", now)?, d);
 let (_, fmt) = pn::HttpDate::parse_detailed(b"Sunday, 06-Nov-94 08:49:37 GMT", now)?;
 assert_eq!(fmt, pn::DateFormat::Rfc850);
 // Two-digit years by the 50-year rule: "76" is 2076 in 2026, "77" is 1977.
-assert_eq!(pn::http_date_at(b"Wednesday, 01-Jan-76 00:00:00 GMT", now)?.civil().year, 2076);
-assert_eq!(pn::http_date_at(b"Saturday, 01-Jan-77 00:00:00 GMT", now)?.civil().year, 1977);
+assert_eq!(pn::parse_http_date_at(b"Wednesday, 01-Jan-76 00:00:00 GMT", now)?.civil().year, 2076);
+assert_eq!(pn::parse_http_date_at(b"Saturday, 01-Jan-77 00:00:00 GMT", now)?.civil().year, 1977);
 
-let bad = pn::http_date_at(b"Mon, 06 Nov 1994 08:49:37 GMT", now).unwrap_err();
+let bad = pn::parse_http_date_at(b"Mon, 06 Nov 1994 08:49:37 GMT", now).unwrap_err();
 assert_eq!(bad.kind(), pn::ErrorKind::WeekdayMismatch);
 assert_eq!(pn::HttpDate::from_unix(-62_135_596_801).unwrap_err().kind(), pn::ErrorKind::OutOfRange);
 # Ok::<(), pn::ParseError>(())
@@ -1210,7 +1272,8 @@ pub struct MailDate { /* utc seconds i64, offset minutes i16, offset_unknown, le
 
 impl MailDate {
     pub fn new(utc_secs: i64, offset_minutes: i16) -> Result<MailDate, ParseError>;
-    pub fn parse(value: &[u8], obsolete: bool) -> Result<MailDate, ParseError>;
+    pub fn parse(value: &[u8]) -> Result<MailDate, ParseError>;               // RFC 5322 section 3.3
+    pub fn parse_obsolete(value: &[u8]) -> Result<MailDate, ParseError>;      // also the section 4.3 forms (0.10)
     pub fn write_to(self, out: &mut impl Sink) -> Result<(), WriteError>;
     pub fn format(self) -> ([u8; 31], usize);                   // bytes and length
     pub const fn utc(self) -> i64;
@@ -1231,14 +1294,14 @@ RFC 5322 section 3.3 `date-time`.
 ```rust
 use parse_net::MailDate;
 
-let d = MailDate::parse(b"Wed, 21 Oct 2026 17:38:00 +0200", false)?;
+let d = MailDate::parse(b"Wed, 21 Oct 2026 17:38:00 +0200")?;
 assert_eq!(d.offset_minutes(), 120);
 let mut buf = [0u8; 64];
 let mut out = parse_net::SliceSink::new(&mut buf);
 d.write_to(&mut out).expect("room");
 assert_eq!(out.written(), b"Wed, 21 Oct 2026 17:38:00 +0200");
-assert!(MailDate::parse(b"21 Oct 26 17:38 EDT", false).is_err());
-assert_eq!(MailDate::parse(b"21 Oct 26 17:38 EDT", true)?.offset_minutes(), -240);
+assert!(MailDate::parse(b"21 Oct 26 17:38 EDT").is_err());
+assert_eq!(MailDate::parse_obsolete(b"21 Oct 26 17:38 EDT")?.offset_minutes(), -240);
 # Ok::<(), parse_net::ParseError>(())
 ```
 
@@ -1266,9 +1329,11 @@ impl<'a> EntityTag<'a> {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Condition<'a> { Any, Tags(TagList<'a>) }           // TagList: iter() -> EntityTag, len()
-pub fn parse_condition(value: &[u8], limits: &Limits) -> Result<Condition<'_>, ParseError>;
-pub fn if_none_match(value: &[u8], current: &EntityTag<'_>) -> Result<bool, ParseError>;        // Tier 1
-pub fn if_match(value: &[u8], current: Option<&EntityTag<'_>>) -> Result<bool, ParseError>;     // Tier 1
+pub mod etag { pub fn parse(value: &[u8], limits: &Limits) -> Result<Condition<'_>, ParseError>; }   // 0.10: was parse_condition
+pub fn if_none_match(value: &[u8], current: Representation<'_>) -> Result<bool, ParseError>;    // Tier 1
+pub fn if_match(value: &[u8], current: Representation<'_>) -> Result<bool, ParseError>;         // Tier 1
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Representation<'a> { Absent, Untagged, Tagged(EntityTag<'a>) }                    // 0.10
 ```
 
 | Id | Item | Grade, tier, version | Behaviour | Errors |
@@ -1277,17 +1342,17 @@ pub fn if_match(value: &[u8], current: Option<&EntityTag<'_>>) -> Result<bool, P
 | ETG-2 | `strong`, `weak` | P1, 2, 0.4 | build a tag from opaque bytes, checking `etagc` | `InvalidEntityTag` |
 | ETG-3 | `strong_eq`, `weak_eq` | P1, 2, 0.4 | RFC 9110 section 8.8.3.2: strong comparison needs both strong and equal opaque bytes; weak comparison needs equal opaque bytes | none |
 | ETG-4 | `write_to` | P1, 2, 0.4 | `W/"..."` or `"..."` | `Full` |
-| ETG-5 | `parse_condition`, `Condition`, `TagList` | P1, 3, 0.4 | `"*"` or `1#entity-tag` (empty elements skipped per LST-1) | `Malformed` for `*` mixed with tags; `InvalidEntityTag`; LST errors |
-| ETG-6 | `if_none_match` | P1, 1, 0.4 | true when the condition matches `current` by weak comparison, or is `*` (a current representation exists, since the caller passes one): send 304 (GET, HEAD) or 412 (other methods) | as ETG-5 |
-| ETG-7 | `if_match` | P1, 1, 0.4 | true when the condition matches `current` by strong comparison, or is `*` and `current` is `Some`: the precondition holds | as ETG-5 |
+| ETG-5 | `etag::parse`, `Condition`, `TagList` | P1, 3, 0.4 | `"*"` or `1#entity-tag` (empty elements skipped per LST-1) | `Malformed` for `*` mixed with tags; `InvalidEntityTag`; LST errors |
+| ETG-6 | `if_none_match`, `Representation` | P1, 1, 0.4 (`Representation` since 0.10) | true when a listed tag matches the current one by weak comparison, or the condition is `*` and a representation exists (`Untagged` or `Tagged`): send 304 (GET, HEAD) or 412 (other methods). `Absent` makes `*` false, so `PUT` with `If-None-Match: *` creates only when nothing is there (RFC 9110 section 13.1.2) | as ETG-5 |
+| ETG-7 | `if_match` | P1, 1, 0.4 | true when a listed tag matches the current one by strong comparison, or the condition is `*` and a representation exists: the precondition holds. `Untagged` matches `*` and no tag | as ETG-5 |
 
 ```rust
-use parse_net::{self as pn, EntityTag};
+use parse_net::{self as pn, EntityTag, Representation};
 
-let v2 = EntityTag::strong(b"v2")?;
-assert!(pn::if_none_match(b"\"v1\", W/\"v2\"", &v2)?);         // weak comparison: 304
-assert!(!pn::if_match(b"W/\"v2\"", Some(&v2))?);               // strong comparison: 412
-assert!(pn::if_match(b"*", Some(&v2))? && !pn::if_match(b"*", None)?);
+let v2 = Representation::Tagged(EntityTag::strong(b"v2")?);
+assert!(pn::if_none_match(b"\"v1\", W/\"v2\"", v2)?);          // weak comparison: 304
+assert!(!pn::if_match(b"W/\"v2\"", v2)?);                      // strong comparison: 412
+assert!(pn::if_match(b"*", v2)? && !pn::if_match(b"*", pn::Representation::Absent)?);
 assert_eq!(EntityTag::parse(b"w/\"x\"").unwrap_err().kind(), pn::ErrorKind::InvalidEntityTag);
 # Ok::<(), pn::ParseError>(())
 ```
@@ -1374,7 +1439,7 @@ Edge cases tested: `bytes=0-0`; `bytes=0-`; `bytes=-0` (unsatisfiable); `bytes=-
 
 ---
 
-## RFC 8187 values: `ext_value`
+## RFC 8187 values: `extended_value`
 
 `EXT-1` to `EXT-4` | 0.4
 
@@ -1384,37 +1449,37 @@ Edge cases tested: `bytes=0-0`; `bytes=0-`; `bytes=-0` (unsatisfiable); `bytes=-
 pub enum Charset { Utf8, Iso8859_1, UsAscii }       // UsAscii: 0.5 (D-058)
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ExtValue<'a> { /* charset, language, encoded */ }
-impl<'a> ExtValue<'a> {
-    pub fn parse(value: &'a [u8]) -> Result<ExtValue<'a>, ParseError>;
+pub struct ExtendedValue<'a> { /* charset, language, encoded */ }
+impl<'a> ExtendedValue<'a> {
+    pub fn parse(value: &'a [u8]) -> Result<ExtendedValue<'a>, ParseError>;
     pub const fn charset(&self) -> Charset;
     pub const fn language(&self) -> &'a [u8];
     pub const fn encoded(&self) -> &'a [u8];
     pub fn max_decoded_len(&self) -> usize;
     pub fn decode_into<'b>(&self, out: &'b mut [u8]) -> Result<&'b str, ParseError>;
 }
-pub fn write_ext_value(text: &str, out: &mut impl Sink) -> Result<(), WriteError>;
+pub fn write_extended_value(text: &str, out: &mut impl Sink) -> Result<(), WriteError>;
 ```
 
 RFC 8187 section 3.2.1: `ext-value = charset "'" [ language ] "'" value-chars`.
 
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
-| EXT-1 | `ExtValue::parse` | P0, 3, 0.4 | the charset is `UTF-8` or `ISO-8859-1`, case-insensitive; the language is empty or letters, digits, and `-` (the `Language-Tag` shape, not validated against a registry); `value-chars` are `attr-char` or `%XX` | `InvalidCharset` (no `'`, an empty or malformed charset); `UnsupportedCharset` (any other charset, [T18](../dev/PLAN.md#9-threats)); `InvalidPercentEncoding`; `InvalidByte` |
+| EXT-1 | `ExtendedValue::parse` | P0, 3, 0.4 | the charset is `UTF-8` or `ISO-8859-1`, case-insensitive; the language is empty or letters, digits, and `-` (the `Language-Tag` shape, not validated against a registry); `value-chars` are `attr-char` or `%XX` | `InvalidCharset` (no `'`, an empty or malformed charset); `UnsupportedCharset` (any other charset, [T18](../dev/PLAN.md#9-threats)); `InvalidPercentEncoding`; `InvalidByte` |
 | EXT-2 | `decode_into` | P0, 3, 0.4 | percent-decodes into `out` and returns it as `&str`: UTF-8 is validated (overlong forms and surrogates refused); ISO-8859-1 is transcoded (each byte to one code point). A decoded control byte (`%00`, `%0D`, `%0A`, any C0 or DEL) is refused ([T2](../dev/PLAN.md#9-threats)) | `InvalidUtf8`, `ControlInDecoded`, `BufferTooSmall` (nothing written) |
-| EXT-3 | `write_ext_value` | P1, 2, 0.4 | always `UTF-8''`, `attr-char` bytes literal, every other byte `%XX` with uppercase hex; ISO-8859-1 is never written ([D-010](../dev/PLAN.md#16-decision-log)) | `Forbidden { at }` for a control character in `text`; `Full` |
+| EXT-3 | `write_extended_value` | P1, 2, 0.4 | always `UTF-8''`, `attr-char` bytes literal, every other byte `%XX` with uppercase hex; ISO-8859-1 is never written ([D-010](../dev/PLAN.md#16-decision-log)) | `Forbidden { at }` for a control character in `text`; `Full` |
 | EXT-4 | `max_decoded_len` | P1, 3, 0.4 | an upper bound for `decode_into`: exact for UTF-8, doubled for ISO-8859-1 | none |
 
 ```rust
-use parse_net::{ExtValue, Charset};
+use parse_net::{ExtendedValue, Charset};
 
-let v = ExtValue::parse(b"UTF-8'en'%E2%82%AC%20rates.txt")?;
+let v = ExtendedValue::parse(b"UTF-8'en'%E2%82%AC%20rates.txt")?;
 assert_eq!((v.charset(), v.language()), (Charset::Utf8, &b"en"[..]));
 let mut buf = [0u8; 32];
 assert_eq!(v.decode_into(&mut buf)?, "\u{20ac} rates.txt");
-let latin = ExtValue::parse(b"iso-8859-1''caf%E9")?;
+let latin = ExtendedValue::parse(b"iso-8859-1''caf%E9")?;
 assert_eq!(latin.decode_into(&mut buf)?, "caf\u{e9}");
-assert_eq!(ExtValue::parse(b"UTF-8''a%0Db")?.decode_into(&mut buf).unwrap_err().kind(),
+assert_eq!(ExtendedValue::parse(b"UTF-8''a%0Db")?.decode_into(&mut buf).unwrap_err().kind(),
            parse_net::ErrorKind::ControlInDecoded);
 # Ok::<(), parse_net::ParseError>(())
 ```
@@ -1447,11 +1512,11 @@ impl<'a> ContentDisposition<'a> {
     pub fn name(&self) -> Option<Word<'a>>;
     pub fn filename(&self) -> Option<Filename<'a>>;
     pub fn filename_plain(&self) -> Option<Word<'a>>;
-    pub fn filename_ext(&self) -> Option<ExtValue<'a>>;
+    pub fn filename_ext(&self) -> Option<ExtendedValue<'a>>;
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum Filename<'a> { Plain(Word<'a>), Ext(ExtValue<'a>) }
+pub enum Filename<'a> { Plain(Word<'a>), Ext(ExtendedValue<'a>) }
 impl<'a> Filename<'a> {
     pub fn max_decoded_len(&self) -> usize;
     pub fn decode_into<'b>(&self, out: &'b mut [u8]) -> Result<&'b str, ParseError>;
@@ -1465,10 +1530,10 @@ RFC 6266 section 4.1 (and its use in `multipart/form-data` part headers, RFC 757
 
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
-| DSP-1 | `parse_content_disposition`, `disposition::parse` | P0, 1, 0.4 | `disposition-type *( OWS ";" OWS disposition-parm )`; the type token is case-insensitive; parameters per PRM with `DuplicatePolicy::Refuse` (a repeated `filename` is a known differential, [T4](../dev/PLAN.md#9-threats)); a `filename*` value must parse as EXT-1, and an invalid one refuses the whole field rather than falling back silently ([T7](../dev/PLAN.md#9-threats)) | `NotToken` (type); PRM errors; EXT-1 errors; `TrailingData` |
+| DSP-1 | `parse_content_disposition`, `disposition::parse` | P0, 1, 0.4 | `disposition-type *( OWS ";" OWS disposition-parm )`; the type token is case-insensitive; parameters per PRM with `DuplicatePolicy::Refuse` (a repeated `filename` is a known differential, [T4](../dev/PLAN.md#9-threats)); a `filename*` value must parse as EXT-1, and an invalid one refuses the whole field rather than falling back silently ([T7](../dev/PLAN.md#9-threats)); `filename*` in `form-data` (RFC 7578 section 4.2) and RFC 2231 continuations (`filename*0`, `filename*1*`) in any type are refused, as readers resolve them to different names (0.10, D-089) | `NotToken` (type); PRM errors; `ForbiddenParameter`; EXT-1 errors; `TrailingData` |
 | DSP-2 | `kind`, `name`, `params` | P0, 1, 0.4 | `name` is the `form-data` field name | none |
 | DSP-3 | `filename` | P0, 1, 0.4 | `filename*` when present, else `filename` (RFC 6266 section 4.3) | none |
-| DSP-4 | `Filename::decode_into`, `decode_percent_into`, `has_path_separator` | P0, 2, 0.4 | `decode_into`: the unescaped `filename` as UTF-8 (`InvalidUtf8` otherwise), or the decoded `filename*`. `decode_percent_into`: RFC 7578 section 2 file names, `%XX` in a plain `filename` decoded. Decoded control bytes are refused in both. Separators (`/`, `\`) pass through and `has_path_separator` reports them: the file-name policy belongs to path-lib and customs-sec | `InvalidUtf8`, `ControlInDecoded`, `InvalidPercentEncoding`, `BufferTooSmall` |
+| DSP-4 | `Filename::decode_into`, `decode_percent_into`, `has_path_separator` | P0, 2, 0.4 | `decode_into`: the unescaped `filename` as UTF-8 (`InvalidUtf8` otherwise), or the decoded `filename*`. `decode_percent_into`: RFC 7578 section 2 file names, `%XX` in a plain `filename` decoded. Decoded control bytes are refused in both. Separators (`/`, `\`) pass through and `has_path_separator` reports them, in a quoted name also before unescaping, since browsers do not escape with `\` in multipart names (`"..\..\web.config"` decodes to `....web.config`; 0.10): the file-name policy belongs to path-lib and customs-sec | `InvalidUtf8`, `ControlInDecoded`, `InvalidPercentEncoding`, `BufferTooSmall` |
 | DSP-5 | `write_attachment` | P1, 1, 0.4 | `attachment; filename="<ascii fallback>"; filename*=UTF-8''<encoded>`; the fallback replaces every non-ASCII byte, `"`, `\`, and control with `_`; when the name is plain printable ASCII without `"` or `\`, only `filename` is written | `Forbidden { at }` for a control character in `filename`; `Full` |
 | DSP-6 | `filename_plain`, `filename_ext` | P1, 2, 0.4 | raw access to both parameters | none |
 | DSP-7 | `Filename::has_bidi_control` | P2, 2, 0.5 | true when the decoded name contains U+202A to U+202E or U+2066 to U+2069 (bidirectional controls that disguise extensions, [T17](../dev/PLAN.md#9-threats)); reported, not refused | none |
@@ -1503,14 +1568,14 @@ Edge cases tested: both `filename` and `filename*`; an invalid `filename*` with 
 `CCH-1` to `CCH-5` | 0.4
 
 ```rust
-pub fn response_cache_control(value: &[u8]) -> Result<ResponseDirectives, ParseError>;  // Tier 1
-pub fn request_cache_control(value: &[u8]) -> Result<RequestDirectives, ParseError>;    // Tier 1
+pub fn parse_response_cache_control(value: &[u8]) -> Result<ResponseDirectives, ParseError>;  // Tier 1
+pub fn parse_request_cache_control(value: &[u8]) -> Result<RequestDirectives, ParseError>;    // Tier 1
 
 pub mod cache {
     pub fn parse(value: &[u8], limits: &Limits) -> Result<Directives<'_>, ParseError>;     // iter: Directive
-    pub fn response_lines<'a, I>(lines: I) -> Result<ResponseDirectives, ParseError>
+    pub fn parse_response_lines<'a, I>(lines: I) -> Result<ResponseDirectives, ParseError>
     where I: IntoIterator<Item = &'a [u8]>, I::IntoIter: Clone;
-    pub fn request_lines<'a, I>(lines: I) -> Result<RequestDirectives, ParseError>
+    pub fn parse_request_lines<'a, I>(lines: I) -> Result<RequestDirectives, ParseError>
     where I: IntoIterator<Item = &'a [u8]>, I::IntoIter: Clone;
 
     pub struct Writer<'s, S: Sink> { /* sink, first */ }
@@ -1551,19 +1616,19 @@ RFC 9111 section 5.2: `Cache-Control = #cache-directive`, `cache-directive = tok
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
 | CCH-1 | `cache::parse`, `Directive` | P1, 3, 0.4 | every directive in order, raw; names compare case-insensitively | LST, TXT errors; `NotToken` |
-| CCH-2 | `response_cache_control`, `response_lines` | P1, 1, 0.4 | the known response directives, including `immutable` (RFC 8246), `stale-while-revalidate` and `stale-if-error` (RFC 5861). The first occurrence of a duplicated directive wins and `duplicates` is set (RFC 9111 section 4.2.1); quoted and token arguments are both accepted (section 5.2); delta-seconds saturate at 2147483648 (section 1.2.2); a non-numeric argument sets `invalid_values` and leaves the field `None` (the caller treats the response as stale); `no-cache="Set-Cookie"` and `private="..."` set the flag (the field list is available through CCH-1); conflicting directives (`private, public`) are both reported | LST errors only: unknown or malformed arguments are reported in the struct, not refused |
-| CCH-3 | `request_cache_control`, `request_lines` | P1, 1, 0.4 | the same rules for request directives; `max-stale` without a value is `Some(None)` | as CCH-2 |
+| CCH-2 | `parse_response_cache_control`, `parse_response_lines` | P1, 1, 0.4 | the known response directives, including `immutable` (RFC 8246), `stale-while-revalidate` and `stale-if-error` (RFC 5861). The first occurrence of a duplicated directive wins and `duplicates` is set (RFC 9111 section 4.2.1); quoted and token arguments are both accepted (section 5.2); delta-seconds saturate at 2147483648 (section 1.2.2); a non-numeric argument sets `invalid_values` and leaves the field `None` (the caller treats the response as stale); `no-cache="Set-Cookie"` and `private="..."` set the flag (the field list is available through CCH-1); conflicting directives (`private, public`) are both reported; a directive that does not parse (`ext=a b`, `x=`) is skipped up to the next comma outside a quoted string and sets `invalid_values`, so a `no-store` beside it is still read (0.10; before, it refused the field) | control bytes and the list limits only: unknown, malformed, and unparsable directives are reported in the struct |
+| CCH-3 | `parse_request_cache_control`, `parse_request_lines` | P1, 1, 0.4 | the same rules for request directives; `max-stale` without a value is `Some(None)` | as CCH-2 |
 | CCH-4 | `cache::Writer` | P1, 2, 0.4 | `public, max-age=60, no-cache="Set-Cookie, Authorization"`; delta-seconds always in token form (senders must not quote them); field lists always quoted; names checked as tokens | `NotToken`, `Full` |
 | CCH-5 | `unknown` | P2, 2, 0.4 | the count of extension directives, available raw through CCH-1 | none |
 
 ```rust
 use parse_net::{self as pn, cache::Writer};
 
-let cc = pn::response_cache_control(b"public, max-age=\"60\", MAX-AGE=5, x-ext=1")?;
+let cc = pn::parse_response_cache_control(b"public, max-age=\"60\", MAX-AGE=5, x-ext=1")?;
 assert_eq!((cc.public, cc.max_age, cc.duplicates, cc.unknown), (true, Some(60), true, 1));
-let big = pn::response_cache_control(b"max-age=99999999999999999999")?;
+let big = pn::parse_response_cache_control(b"max-age=99999999999999999999")?;
 assert_eq!(big.max_age, Some(2_147_483_648));
-let req = pn::request_cache_control(b"max-stale, no-cache")?;
+let req = pn::parse_request_cache_control(b"max-stale, no-cache")?;
 assert_eq!(req.max_stale, Some(None));
 
 let mut buf = [0u8; 64];
@@ -1582,7 +1647,8 @@ Edge cases tested: `max-age=0`, `max-age="60"`, `max-age=60s` (invalid value), `
 `LNK-1` to `LNK-4` | P2 | 0.5
 
 ```rust
-pub fn parse_link(value: &[u8], limits: &Limits) -> Result<Links<'_>, ParseError>;     // iter: LinkValue
+pub fn parse_link(value: &[u8]) -> Result<Links<'_>, ParseError>;                      // Tier 1; iter: LinkValue
+pub mod link { pub fn parse(value: &[u8], limits: &Limits) -> Result<Links<'_>, ParseError>; }
 
 #[derive(Clone, Copy, Debug)]
 pub struct LinkValue<'a> { /* target, params */ }
@@ -1607,14 +1673,14 @@ RFC 8288 section 3: `link-value = "<" URI-Reference ">" *( OWS ";" OWS link-para
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
 | LNK-1 | `parse_link`, `Links`, `LinkValue` | P2, 2, 0.5 | commas inside `<...>` do not split; target bytes are RFC 3986 characters (validated with `%XX`), not resolved (url-lib resolves); a parameter value is optional (`; crossorigin`); BWS around `=` accepted | `InvalidByte` (a target byte outside RFC 3986, a space in the target); `UnterminatedQuote`; `InvalidPercentEncoding`; LST and PRM errors; `TrailingData` |
-| LNK-2 | `rel`, `rels`, `has_rel` | P2, 2, 0.5 | the first `rel` only; later `rel` parameters are ignored (RFC 8288 section 3.3); `rels` splits it on spaces; `has_rel` compares case-insensitively | none |
+| LNK-2 | `rel`, `rels`, `has_rel` | P2, 2, 0.5 | the first `rel` only; later `rel` parameters are ignored (RFC 8288 section 3.3); `rels` splits it on spaces; `has_rel` compares case-insensitively. A quoted pair in any `rel` refuses the field (`InvalidQuotedPair`, 0.10): relation types never need one, and `rel="pre\load"` read raw and unescaped are two names | none |
 | LNK-3 | `title` | P2, 2, 0.5 | `title*` (RFC 8187) when present, token or quoted, else `title`; only the first `title*` counts (RFC 8288 section 3.4.1) | none |
 | LNK-4 | `write_link` | P2, 2, 0.5 | `<target>; name=value`, values through `write_word`; an empty value writes the name alone (D-061) | `Forbidden { at }` for a target byte that is not an RFC 3986 character (`<`, `>`, SP, a control, non-ASCII) or a broken `%XX`, for a control in a value, and for a `title*` its parser would refuse; `NotToken`; `Full` |
 
 ```rust
-use parse_net::{parse_link, Limits};
+use parse_net::parse_link;
 
-let links = parse_link(b"<https://x.test/p?page=2,3>; rel=\"next last\", </a>; rel=prev; crossorigin", &Limits::DEFAULT)?;
+let links = parse_link(b"<https://x.test/p?page=2,3>; rel=\"next last\", </a>; rel=prev; crossorigin")?;
 let all: Vec<_> = links.iter().collect();
 assert_eq!(all[0].target(), b"https://x.test/p?page=2,3");
 assert!(all[0].has_rel("last") && all[1].has_rel("prev"));
@@ -1647,20 +1713,23 @@ pub enum ClientAddress {
     Unknown { hops: u8 },
 }
 
-pub fn client_address(peer: core::net::IpAddr, source: ForwardedSource<'_>, trust: &impl Trust, max_hops: u8)
-    -> Result<ClientAddress, ParseError>;                                                 // Tier 1
+pub fn client_address(peer: core::net::IpAddr, source: ForwardedSource<'_>, trust: &impl Trust)
+    -> ClientAddress;                                                                     // Tier 1
 
 pub mod forwarded {
+    pub fn client_address_with_limits(peer: IpAddr, source: ForwardedSource<'_>, trust: &impl Trust,
+        limits: &Limits) -> ClientAddress;                                                // Limits::max_hops
     pub fn client_address_detailed(peer: IpAddr, source: ForwardedSource<'_>, other_lines: &[&[u8]],
-        trust: &impl Trust, max_hops: u8) -> Result<Resolved, ParseError>;
+        trust: &impl Trust, limits: &Limits) -> Resolved;
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub struct Resolved { pub address: ClientAddress, pub other_present: bool }
 
     pub fn parse<'a>(lines: &'a [&'a [u8]], limits: &Limits) -> Result<ForwardedElements<'a>, ParseError>; // iter: Element
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    #[non_exhaustive] #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct Element<'a> { pub for_: Option<Node<'a>>, pub by: Option<Node<'a>>,
                              pub host: Option<HostPort<'a>>, pub proto: Option<Proto> }
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    impl Element<'_> { pub const fn new() -> Self; }                                       // 0.10: fill in, then write
+    #[non_exhaustive] #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Node<'a> { Addr(IpAddr, Option<NodePort<'a>>), Unknown(Option<NodePort<'a>>),
                         Obfuscated(&'a [u8], Option<NodePort<'a>>) }                       // D-047
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1668,7 +1737,7 @@ pub mod forwarded {
     #[non_exhaustive] #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub enum Proto { Http, Https, Ws, Wss, Other }
 
-    pub fn parse_x_forwarded_for<'a>(lines: &'a [&'a [u8]], limits: &Limits) -> Result<XffChain<'a>, ParseError>; // iter: (IpAddr, Option<u16>)
+    pub fn parse_x_forwarded_for<'a>(lines: &'a [&'a [u8]], limits: &Limits) -> Result<XForwardedFor<'a>, ParseError>; // iter: (IpAddr, Option<u16>)
     pub fn parse_x_forwarded_proto(value: &[u8]) -> Result<Proto, ParseError>;
     pub fn parse_x_forwarded_host(value: &[u8]) -> Result<HostPort<'_>, ParseError>;
     pub fn write_element(e: &Element<'_>, out: &mut impl Sink) -> Result<(), WriteError>;   // 0.5 (for, proto, by, host)
@@ -1677,14 +1746,14 @@ pub mod forwarded {
 
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
-| FWD-1 | `client_address`, `ClientAddress`, `Trust` | P1, 1, 0.4 | the algorithm in [PLAN 7.6](../dev/PLAN.md#76-trusted-proxy-resolution): an untrusted peer gives `Peer(peer)` and the header is never read; otherwise the whole chain is parsed and walked from the right; the first untrusted address is the client; `unknown` or an obfuscated node gives `Unknown` (nothing left of it can be trusted); all trusted gives the leftmost. Never merges the two header kinds ([T13](../dev/PLAN.md#9-threats)) | `Malformed` anywhere in the chain (fail closed: use the peer); `TooManyHops` beyond `max_hops` |
+| FWD-1 | `client_address`, `client_address_with_limits`, `ClientAddress`, `Trust` | P1, 1, 0.4 (no `Result` and no hop argument since 0.10) | the algorithm in [PLAN 7.6](../dev/PLAN.md#76-trusted-proxy-resolution): an untrusted peer gives `Peer(peer)` and the header is never read; otherwise the chain is walked from the right, one entry at a time, and nothing left of the decision point is read (that text is the client's own); trusted addresses are skipped; the first untrusted address is the client; an entry there that gives no address (`unknown`, an obfuscated node, an element without `for`, text that is not an address, a `Forwarded` line with an unclosed quoted string) or more trusted entries than `Limits::max_hops` (16 by default) gives `Unknown`; all trusted gives the leftmost. `Unknown` means no reliable client address: never use the peer instead, as it is a trusted proxy. Never merges the two header kinds ([T13](../dev/PLAN.md#9-threats)) | none: every failure is `Unknown` |
 | FWD-2 | `forwarded::parse`, `Element`, `Node` | P1, 2, 0.4 | RFC 7239 section 4: `1#forwarded-element`, `forwarded-element = [ forwarded-pair ] *( ";" [ forwarded-pair ] )`; parameter names case-insensitive; values token or quoted; IPv6 must be quoted and bracketed (`for="[2001:db8::1]:4711"`), unquoted IPv6 refused; obfuscated identifiers are `_` then `ALPHA / DIGIT / "." / "_" / "-"`; ports are digits or obfuscated | `DuplicateParameter` (any name twice in one element); `TooManyMembers` past 64 pairs in one element; `InvalidAddress`; `InvalidPort`; `InvalidHost`; LST and PRM errors |
-| FWD-3 | `parse_x_forwarded_for`, `XffChain` | P1, 2, 0.4 | the de facto grammar, documented as such ([D-016](../dev/PLAN.md#16-decision-log)): comma-separated IPv4 or IPv6 literals with OWS; brackets optional around IPv6; an optional `:port` after IPv4 or bracketed IPv6; nothing else | `Malformed` (an empty element, a name, garbage) |
+| FWD-3 | `parse_x_forwarded_for`, `XForwardedFor` | P1, 2, 0.4 | the de facto grammar, documented as such ([D-016](../dev/PLAN.md#16-decision-log)): comma-separated IPv4 or IPv6 literals with OWS; brackets optional around IPv6; an optional `:port` after IPv4 or bracketed IPv6; nothing else | `Malformed` (an empty element, a name, garbage) |
 | FWD-4 | `parse_x_forwarded_proto` | P1, 2, 0.4 | a URI scheme, case-insensitive (`Proto` names `http`, `https`, `ws`, `wss`, and `Other`; D-077); a comma list only when every value is equal | `Malformed` |
 | FWD-5 | `parse_x_forwarded_host` | P1, 2, 0.4 | one `HostPort` (HST-1) | `Malformed` for a list; HST errors |
 | FWD-6 | `Element::host`, `Element::proto` | P1, 2, 0.4 | values validated as `Host` (HST-1) and as a URI scheme (D-077) | as FWD-2 |
 | FWD-7 | `write_element` | P3, 2, 0.5 | for proxy-net: `for`, `proto`, `by`, `host` in that order, quoting IPv6, any node with a port, and any host that is not a token, so no reg-name can end the pair or forge another; `for=192.0.2.60;proto=https;by=203.0.113.43` | `NotToken` (an obfuscated name or port outside its grammar, or `Proto::Other`), `Forbidden { at }` (a host byte no parsed host holds), `Full` |
-| FWD-8 | `client_address_detailed`, `Resolved` | P2, 2, 0.4 | as FWD-1, and `other_present` reports whether the other header kind's lines (`other_lines`) are non-empty, so the caller can log a likely spoofing attempt ([T14](../dev/PLAN.md#9-threats)) | as FWD-1 |
+| FWD-8 | `client_address_detailed`, `Resolved` | P2, 2, 0.4 | as FWD-1 with `limits`, and `other_present` reports whether the other header kind's lines (`other_lines`) are non-empty, so the caller can log a likely spoofing attempt ([T14](../dev/PLAN.md#9-threats)) | none |
 
 ```rust
 use core::net::IpAddr;
@@ -1693,12 +1762,12 @@ use parse_net::{self as pn, ClientAddress, ForwardedSource};
 let proxy: IpAddr = "10.0.0.2".parse()?;
 let trusted = |a: IpAddr| a == proxy || a == "10.0.0.1".parse::<IpAddr>().unwrap_or(proxy);
 let xff: [&[u8]; 1] = [b"203.0.113.9, 198.51.100.7, 10.0.0.1"];
-let ip = pn::client_address(proxy, ForwardedSource::XForwardedFor(&xff), &trusted, 16)?;
+let ip = pn::client_address(proxy, ForwardedSource::XForwardedFor(&xff), &trusted);
 assert_eq!(ip, ClientAddress::Forwarded { addr: "198.51.100.7".parse()?, hops: 2 });
 
 // The same header from an untrusted peer is ignored entirely.
 let stranger: IpAddr = "192.0.2.1".parse()?;
-assert_eq!(pn::client_address(stranger, ForwardedSource::XForwardedFor(&xff), &trusted, 16)?,
+assert_eq!(pn::client_address(stranger, ForwardedSource::XForwardedFor(&xff), &trusted),
            ClientAddress::Peer(stranger));
 
 let fwd: [&[u8]; 1] = [b"for=192.0.2.60;proto=http;by=203.0.113.43, for=\"[2001:db8:cafe::17]:4711\""];
@@ -1723,7 +1792,9 @@ pub fn basic_decode_into<'b>(value: &[u8], out: &'b mut [u8]) -> Result<Option<(
 
 pub mod auth {
     pub fn parse_credentials(value: &[u8], limits: &Limits) -> Result<Credentials<'_>, ParseError>;
-    pub fn parse_challenges(value: &[u8], limits: &Limits) -> Result<Challenges<'_>, ParseError>; // iter: Challenge
+    pub fn parse_challenges(value: &[u8], limits: &Limits) -> Result<Challenges<'_>, ParseError>;
+    pub struct Challenges<'a>;      // iter() -> ChallengeIter, len(), is_empty()
+    pub struct ChallengeIter<'a>;   // Iterator<Item = Challenge<'a>>
     pub fn write_challenge(scheme: &str, params: &[(&str, &str)], out: &mut impl Sink) -> Result<(), WriteError>;
     pub fn write_challenge_token68(scheme: &str, token68: &[u8], out: &mut impl Sink) -> Result<(), WriteError>;
 }
@@ -1798,11 +1869,14 @@ Edge cases tested: `Bearer abc`, `bearer abc`, `Bearer  abc` (`1*SP` allows two 
 ```rust
 pub fn parse_host_port(value: &[u8]) -> Result<HostPort<'_>, ParseError>;    // Tier 1
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive] #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct HostPort<'a> { pub host: Host<'a>, pub port: Option<u16>, pub empty_port: bool }
-impl HostPort<'_> { pub fn write_to(&self, out: &mut impl Sink) -> Result<(), WriteError>; }
+impl<'a> HostPort<'a> {
+    pub const fn new(host: Host<'a>, port: Option<u16>) -> Self;                   // 0.10
+    pub fn write_to(&self, out: &mut impl Sink) -> Result<(), WriteError>;
+}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive] #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Host<'a> {
     Name(&'a [u8]),
     V4(core::net::Ipv4Addr),
@@ -1825,11 +1899,11 @@ RFC 9110 section 7.2 citing RFC 3986 section 3.2.2: `Host = uri-host [ ":" port 
 
 | Id | Item | Grade, tier, version | Behaviour | Errors |
 |---|---|---|---|---|
-| HST-1 | `parse_host_port`, `HostPort`, `Host`, `host::parse_host` | P0, 1, 0.3 | reg-name (`unreserved / pct-encoded / sub-delims`, each `%` followed by two hex digits); IPv4 dotted decimal with no leading zeros; `[IPv6]` in every RFC 4291 text form, validated by the RFC 3986 `IPv6address` grammar; `[vX.…]` IPvFuture; port `*DIGIT` up to 65535; an empty port (`a:`) is accepted with `empty_port = true` and `port = None`; an empty value is `Ok` with an empty `Name` (RFC 9112 section 3.2: the target has no authority) and the caller decides. A name is returned as sent: case and a trailing dot are kept (callers normalize) | `InvalidHost` (userinfo: any `@`, checked first, so `a.com:80@b.com` is refused as a host and not as a port; a byte outside the reg-name class; `:80` with no host, an unbracketed IPv6); `InvalidAddress` (a malformed IP literal, `[zz]`, `[::1`); `InvalidPort` (non-digits, above 65535); `InvalidPercentEncoding` |
+| HST-1 | `parse_host_port`, `HostPort`, `Host`, `host::parse_host` | P0, 1, 0.3 | reg-name (`unreserved / sub-delims`; RFC 3986 also allows `pct-encoded`, but no browser sends an escape, and `%61dmin.example` compared raw would pass a check `admin.example` fails, so any `%` is refused since 0.10, D-088); IPv4 dotted decimal with no leading zeros; `[IPv6]` in every RFC 4291 text form, validated by the RFC 3986 `IPv6address` grammar; `[vX.…]` IPvFuture; port `*DIGIT` up to 65535; an empty port (`a:`) is accepted with `empty_port = true` and `port = None`; an empty value is `Ok` with an empty `Name` (RFC 9112 section 3.2: the target has no authority) and the caller decides. A name is returned as sent: case and a trailing dot are kept (callers normalize) | `InvalidHost` (userinfo: any `@`, checked first, so `a.com:80@b.com` is refused as a host and not as a port; a byte outside the reg-name class; `:80` with no host, an unbracketed IPv6, any `%`); `InvalidAddress` (a malformed IP literal, `[zz]`, `[::1`); `InvalidPort` (non-digits, above 65535) |
 | HST-1b | `host::parse_uri_host_port` | P0, 3, 0.3 | the same grammar with nothing stripped, for an authority-form or absolute-form request target, a URL authority, or any context that is not a field value: whitespace is refused like any other byte outside the grammar. Stripping there would accept `CONNECT  example.com:443` (two spaces), which the request-line grammar refuses ([D-044](../dev/PLAN.md#16-decision-log)) | as HST-1 |
 | HST-2 | `Host::eq_ignore_ascii_case` | P0, 2, 0.3 | names compare ASCII case-insensitively; IP literals compare by value (`[::1]` equals `[0:0::1]`) | none |
 | HST-3 | `Host::write_to`, `HostPort::write_to` | P1, 2, 0.3 | names as given, IPv6 bracketed in its RFC 5952 form, a port after `:` | `Full` |
-| HST-4 | numeric names | P0, 1, 0.3 | a name made only of digits and dots, or whose last label is a number in the WHATWG sense (decimal digits, or `0x` and hex digits), must be a canonical IPv4 address; anything else (`1.2.3`, `256.1.1.1`, `01.2.3.4`, `127.1`, `0x7f.0.0.1`, `example.123`, `1.2.3.4.`, and the same after percent-decoding, such as `127.0.0.%31` or `127%2e1`) is refused, not read as a name: WHATWG reads such hosts as IPv4 and RFC 3986 as names, and refusing removes the differential ([T15](../dev/PLAN.md#9-threats), [D-040](../dev/PLAN.md#16-decision-log)) | `InvalidAddress` |
+| HST-4 | numeric names | P0, 1, 0.3 | a name made only of digits and dots, or whose last label is a number in the WHATWG sense (decimal digits, or `0x` and hex digits), must be a canonical IPv4 address; anything else (`1.2.3`, `256.1.1.1`, `01.2.3.4`, `127.1`, `0x7f.0.0.1`, `example.123`, `1.2.3.4.`; an escaped form such as `127.0.0.%31` is refused by HST-1 before this rule) is refused, not read as a name: WHATWG reads such hosts as IPv4 and RFC 3986 as names, and refusing removes the differential ([T15](../dev/PLAN.md#9-threats), [D-040](../dev/PLAN.md#16-decision-log)) | `InvalidAddress` |
 
 `[::ffff:127.0.0.1]` is returned as `V6` (callers see exactly what was sent).
 
@@ -1838,7 +1912,7 @@ use core::net::Ipv6Addr;
 use parse_net::{self as pn, Host, HostPort};
 
 assert_eq!(pn::parse_host_port(b"[::1]:8080")?,
-           HostPort { host: Host::V6(Ipv6Addr::LOCALHOST), port: Some(8080), empty_port: false });
+           HostPort::new(Host::V6(Ipv6Addr::LOCALHOST), Some(8080)));
 assert_eq!(pn::parse_host_port(b"Example.COM.")?.host, Host::Name(b"Example.COM."));
 assert_eq!(pn::parse_host_port(b"127.1").unwrap_err().kind(), pn::ErrorKind::InvalidAddress);
 assert_eq!(pn::parse_host_port(b"a.com:80@b.com").unwrap_err().kind(), pn::ErrorKind::InvalidHost);
@@ -1861,9 +1935,10 @@ pub fn parse_origin(value: &[u8]) -> Result<OriginValue<'_>, ParseError>;     //
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum OriginValue<'a> { Null, Origin(Origin<'a>) }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive] #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Origin<'a> { pub scheme: &'a [u8], pub host: Host<'a>, pub port: Option<u16> }
 impl<'a> Origin<'a> {
+    pub const fn new(scheme: &'a [u8], host: Host<'a>, port: Option<u16>) -> Self;  // 0.10
     pub fn effective_port(&self) -> Option<u16>;
     pub fn same_origin(&self, other: &Origin<'_>) -> bool;
     pub fn write_to(&self, out: &mut impl Sink) -> Result<(), WriteError>;
@@ -1896,7 +1971,7 @@ Edge cases tested: `null`, `Null` (refused), `https://a.com`, `https://a.com:443
 
 ---
 
-## Percent-encoding: `pct`
+## Percent-encoding: `percent`
 
 `PCT-1` to `PCT-6` | P0 (PCT-4, PCT-6 P1) | 0.3
 
@@ -1921,7 +1996,7 @@ pub mod pct {
     pub fn decoded_len(input: &[u8]) -> Result<usize, ParseError>;
     pub fn decode_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b [u8], ParseError>;
     pub fn decode_utf8_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b str, ParseError>;
-    pub fn decode_lower_only_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b [u8], ParseError>;
+    pub fn decode_lowercase_into<'b>(input: &[u8], out: &'b mut [u8]) -> Result<&'b [u8], ParseError>;
     pub fn encoded_len(input: &[u8], set: &EncodeSet) -> usize;
     pub fn encode(input: &[u8], set: &EncodeSet, case: HexCase, out: &mut impl Sink) -> Result<(), WriteError>;
 }
@@ -1934,29 +2009,29 @@ The primitive parse-net's own grammars need (RFC 8187 values, RFC 9651 Display S
 | PCT-1 | `validate`, `validate_with` | P0, 3, 0.3 | every `%` is followed by two hex digits (either case); `validate_with` also requires every other byte to be in `allowed` (`validate_with(input, Class::URI_TARGET)` replaces http-net's `is_target_chars`) | `InvalidPercentEncoding` at the `%`; `InvalidByte` |
 | PCT-2 | `decode_into`, `decoded_len` | P0, 3, 0.3 | `%XX` decoded (either case), every other byte copied; `decoded_len` validates and counts | `InvalidPercentEncoding`; `BufferTooSmall` (nothing written) |
 | PCT-3 | `decode_utf8_into` | P0, 3, 0.3 | as `decode_into`, then the decoded bytes must be UTF-8 | `InvalidUtf8`, as PCT-2 |
-| PCT-4 | `decode_lower_only_into` | P1, 3, 0.3 (planned 0.4) | uppercase hex is refused (RFC 9651 section 4.2.10) | `InvalidPercentEncoding`, `BufferTooSmall` |
+| PCT-4 | `decode_lowercase_into` | P1, 3, 0.3 (planned 0.4) | uppercase hex is refused (RFC 9651 section 4.2.10) | `InvalidPercentEncoding`, `BufferTooSmall` |
 | PCT-5 | `encode`, `encoded_len`, `EncodeSet`, `HexCase` | P0, 3, 0.3 | every byte in the set, and every byte above 0x7F whatever the set says, , and every C0 control and DEL whatever the set says, is written as `%XX`; others as they are | `Full` |
 | PCT-6 | named sets | P1, 3, 0.3 | only the sets parse-net's grammars use | none |
 
 ```rust
-use parse_net::{self as pn, pct::{self, EncodeSet, HexCase}, class::Class};
+use parse_net::{self as pn, percent::{self, EncodeSet, HexCase}, class::Class};
 
 let mut buf = [0u8; 16];
-assert_eq!(pct::decode_utf8_into(b"caf%C3%A9", &mut buf)?, "caf\u{e9}");
-assert_eq!(pct::validate(b"%4").unwrap_err().kind(), pn::ErrorKind::InvalidPercentEncoding);
-assert!(pct::validate_with(b"/a/b?c=%20", Class::URI_TARGET).is_ok());
+assert_eq!(percent::decode_utf8_into(b"caf%C3%A9", &mut buf)?, "caf\u{e9}");
+assert_eq!(percent::validate(b"%4").unwrap_err().kind(), pn::ErrorKind::InvalidPercentEncoding);
+assert!(percent::validate_with(b"/a/b?c=%20", Class::URI_TARGET).is_ok());
 
 let mut out = pn::SliceSink::new(&mut buf);
-pct::encode(b"a b/c", &EncodeSet::ATTR_CHAR_COMPLEMENT, HexCase::Upper, &mut out).expect("room");
+percent::encode(b"a b/c", &EncodeSet::ATTR_CHAR_COMPLEMENT, HexCase::Upper, &mut out).expect("room");
 assert_eq!(out.written(), b"a%20b%2Fc");
 # Ok::<(), pn::ParseError>(())
 ```
 
-Edge cases tested: `%`, `%4`, `%4g`, `%41`, `%c3%a9` against `%C3%A9` (both valid in `decode_into`, only lowercase in `decode_lower_only_into`), `%00`, decoded invalid UTF-8, a buffer one byte short.
+Edge cases tested: `%`, `%4`, `%4g`, `%41`, `%c3%a9` against `%C3%A9` (both valid in `decode_into`, only lowercase in `decode_lowercase_into`), `%00`, decoded invalid UTF-8, a buffer one byte short.
 
 ---
 
-## Structured Field Values: `sfv`
+## Structured Field Values: `structured`
 
 `SFV-1` to `SFV-16` | P1 (SFV-14, SFV-16 P2) | 0.4 (SFV-13, SFV-16 0.5)
 
@@ -2095,23 +2170,23 @@ RFC 9651. The parser follows section 4.2 exactly, as a loop with explicit state,
 | SFV-16 | `owned` types | P2, 2, 0.5 | `alloc`; see [Owned forms](#owned-forms) | none |
 
 ```rust
-use parse_net::sfv::{self, BareItem, Member};
+use parse_net::structured::{self, BareItem, Member};
 
-let site = sfv::parse_item(b"same-origin")?;
+let site = structured::parse_item(b"same-origin")?;
 assert_eq!(site.bare, BareItem::Token("same-origin"));
 
-let prio = sfv::parse_dictionary(b"u=1, i")?;
+let prio = structured::parse_dictionary(b"u=1, i")?;
 assert_eq!(prio.get("u").map(|m| matches!(m, Member::Item(i) if i.bare == BareItem::Integer(1))), Some(true));
 assert_eq!(prio.get("i").map(|m| matches!(m, Member::Item(i) if i.bare == BareItem::Boolean(true))), Some(true));
 
-let list = sfv::parse_list(b"(\"foo\" \"bar\");lvl=5, abc;a=?0")?;
+let list = structured::parse_list(b"(\"foo\" \"bar\");lvl=5, abc;a=?0")?;
 assert_eq!(list.len(), 2);
 let Some(Member::InnerList(inner)) = list.iter().next() else { unreachable!() };
 assert_eq!(inner.len(), 2);
 
-assert!(sfv::parse_list(b"a, b,").is_err());                  // trailing comma
-assert!(sfv::parse_item(b"%\"%C3%A9\"").is_err());            // uppercase hex in a Display String
-let text = sfv::parse_item(b"%\"caf%c3%a9\"")?;
+assert!(structured::parse_list(b"a, b,").is_err());                  // trailing comma
+assert!(structured::parse_item(b"%\"%C3%A9\"").is_err());            // uppercase hex in a Display String
+let text = structured::parse_item(b"%\"caf%c3%a9\"")?;
 let BareItem::DisplayString(d) = text.bare else { unreachable!() };
 let mut buf = [0u8; 8];
 assert_eq!(d.decode_into(&mut buf)?, "caf\u{e9}");
@@ -2133,14 +2208,17 @@ pub mod mail {
     pub fn unfold(value: &[u8]) -> Result<Unfolded<'_>, ParseError>;           // iter: &[u8] pieces
     pub fn fold(name: &str, value: &[u8], out: &mut impl Sink) -> Result<(), WriteError>;
     pub fn encode_words(text: &str, room_first_line: usize, out: &mut impl Sink) -> Result<(), WriteError>;
-    pub fn encode_words_b(text: &str, room_first_line: usize, out: &mut impl Sink) -> Result<(), WriteError>;   // 0.9.1 (D-080)
-    pub fn decode_words<'b>(value: &[u8], limits: &Limits, out: &'b mut [u8]) -> Result<&'b str, ParseError>;
+    pub fn encode_words_base64(text: &str, room_first_line: usize, out: &mut impl Sink) -> Result<(), WriteError>;   // 0.9.1 (D-080)
+    pub fn decode_words<'b>(value: &[u8], out: &'b mut [u8]) -> Result<&'b str, ParseError>;   // Tier 1 (0.10)
+    pub fn decode_words_with_limits<'b>(value: &[u8], limits: &Limits, out: &'b mut [u8]) -> Result<&'b str, ParseError>;
     pub fn parse_mime_params(s: &[u8], limits: &Limits) -> Result<(MimeParams<'_>, usize), ParseError>;
     pub fn write_mime_param(name: &str, value: &str, out: &mut impl Sink) -> Result<(), WriteError>;
     pub fn write_mime_param_at(name: &str, value: &str, room_first_line: usize, out: &mut impl Sink) -> Result<usize, WriteError>;   // 0.9.2 (D-082)
     pub fn parse_addr_spec(value: &[u8]) -> Result<AddrSpec<'_>, ParseError>;
-    pub fn parse_mailbox(value: &[u8], limits: &Limits) -> Result<Mailbox<'_>, ParseError>;
-    pub fn decode_phrase<'b>(value: &[u8], limits: &Limits, out: &'b mut [u8]) -> Result<&'b str, ParseError>;   // 0.9.2 (D-081)
+    pub fn parse_mailbox(value: &[u8]) -> Result<Mailbox<'_>, ParseError>;     // Tier 1 (0.10)
+    pub fn parse_mailbox_with_limits(value: &[u8], limits: &Limits) -> Result<Mailbox<'_>, ParseError>;
+    pub fn decode_phrase<'b>(value: &[u8], out: &'b mut [u8]) -> Result<&'b str, ParseError>;   // 0.9.2 (D-081); Tier 1 (0.10)
+    pub fn decode_phrase_with_limits<'b>(value: &[u8], limits: &Limits, out: &'b mut [u8]) -> Result<&'b str, ParseError>;
     pub fn parse_msg_id(value: &[u8]) -> Result<MsgId<'_>, ParseError>;
     pub fn write_msg_id(left: &str, right: &str, out: &mut impl Sink) -> Result<(), WriteError>;
     pub use crate::MailDate;
@@ -2156,7 +2234,7 @@ pub mod mail {
     }
     // Unfolded: iter() -> UnfoldIter (Iterator<Item = &[u8]>)
     #[derive(Clone, Copy, Debug)]
-    pub enum MimeValue<'a> { Plain(Word<'a>), Extended(ExtValue<'a>), Continued(Continuation<'a>) }
+    pub enum MimeValue<'a> { Plain(Word<'a>), Extended(ExtendedValue<'a>), Continued(Continuation<'a>) }
     #[derive(Clone, Copy, Debug)]
     pub struct Continuation<'a> { /* params text, name */ }
     impl Continuation<'_> {
@@ -2186,14 +2264,14 @@ The grammar smtp-net needs to write mail and gate-net needs to validate login ad
 | MAIL-1 | `check_header_value` | P1, 1, 0.5 | no control byte but HTAB; no physical line over 998 bytes (RFC 5322 section 2.1.1) | `BareCr`, `LineFeed`, `Nul`, `Control`, `LineTooLong` |
 | MAIL-2 | `unfold` | P2, 2, 0.5 | validates, then iterates the pieces between `CRLF WSP` folds (the CRLF removed, the WSP kept, RFC 5322 section 2.2.3) | `BareCr`, `LineFeed` (a CRLF not followed by WSP, or a lone CR or LF) |
 | MAIL-3 | `fold` | P1, 1, 0.5 | writes `Name: value` and folds at whitespace, after the colon too, so lines stay within 78 columns where possible; never a line of only whitespace; never over 998 | `NotToken` for a name outside `ftext`; `Forbidden { at }` for a control byte other than HTAB in `value`; `OutOfRange` for a word that fits on no line, or whitespace ending the value that does not fit after the last word; `Full` |
-| MAIL-4 | `encode_words` (Q) | P1, 1, 0.5 | RFC 2047: printable ASCII text without `=?` that fits a 998-byte line is written as it is; otherwise `=?UTF-8?Q?...?=` words of at most 75 bytes, split only on UTF-8 character boundaries, separated by CRLF SP; the first word fits in `room_first_line` | `Forbidden { at }` for a control character; `Full` |
-| MAIL-5 | `encode_words_b` | P2, 1, 0.9.1 (D-080) | MAIL-4 with the B encoding: `=?UTF-8?B?...?=` words of at most 75 bytes (at most 45 bytes of text, 60 base64 characters), split only between characters; text that MAIL-4 writes as it is goes out as it is. The caller picks: `B` is the shorter for text that is mostly not ASCII (a Japanese subject about 40% shorter), `Q` for text that is mostly ASCII. A private codec, no feature (D-080) | as MAIL-4 |
+| MAIL-4 | `encode_words` (Q) | P1, 1, 0.5 | RFC 2047: printable ASCII text without `=?` that fits a 998-byte line is written as it is; otherwise `=?UTF-8?Q?...?=` words of at most 75 bytes, split only on UTF-8 character boundaries, separated by CRLF SP; the first word fits in `room_first_line`, or, when not even one character fits there, holds that one character and runs past it: the output never starts with a fold, which would read back as a leading space (0.10) | `Forbidden { at }` for a control character; `Full` |
+| MAIL-5 | `encode_words_base64` | P2, 1, 0.9.1 (D-080) | MAIL-4 with the B encoding: `=?UTF-8?B?...?=` words of at most 75 bytes (at most 45 bytes of text, 60 base64 characters), split only between characters; text that MAIL-4 writes as it is goes out as it is. The caller picks: `B` is the shorter for text that is mostly not ASCII (a Japanese subject about 40% shorter), `Q` for text that is mostly ASCII. A private codec, no feature (D-080) | as MAIL-4 |
 | MAIL-6 | `decode_words` | P2, 2, 0.5 | decodes encoded words in unstructured text into `out`; whitespace between adjacent encoded words is dropped (RFC 2047 section 6.2); text outside encoded words copied, with `CRLF WSP` folds as whitespace; `_` is a space in Q; a word that does not stand between whitespace is ordinary text; words inside quoted strings are not decoded (section 5), and a lone `"` is not a quoted string; B from 0.9.1 (D-080), strictly: whole groups of four, `=` only at the end with zero bits under it, no whitespace inside, at most 75 bytes to a word, each decoded byte checked as in Q | `UnsupportedCharset`, `InvalidEncodedWord`, `ControlInDecoded` (any decoded control: C0 including HTAB, DEL, C1, as in ext-values; D-071), a control kind for a raw control other than HTAB and the CRLF of a fold (D-078), `InvalidUtf8`, `TooManyMembers` beyond `max_encoded_words`, `BufferTooSmall` |
-| MAIL-7 | `parse_mime_params`, `MimeParams` | P1, 3, 0.5 | RFC 2045 section 5.1 with the MIME `token` class (allows `{` and `}`); case-insensitive names; CFWS between parameters, comments may fold; a quoted value must be unfolded first (`unfold`); at most 64 parameters (D-072) | `NotToken`, `MissingValue`, `DuplicateParameter`, `UnterminatedQuote`, `TooManyMembers` |
-| MAIL-8 | RFC 2231 (`get`, `decode_into`, `Continuation`) | P1, 2, 0.5 | the reassembly in [PLAN 7.12](../dev/PLAN.md#712-rfc-2231-reassembly-without-allocation): sections `name*0`, `name*1*`, ... numbered from 0 without gaps or duplicates; a charset only on section 0; decoded in order into `out`; `attribute-char` keeps `{` and `}`; a section given twice is `SectionGap`; decoded controls, C1 split across sections included, and the US-ASCII rule hold over the whole value | `SectionGap`, `TooManySections`, EXT-1 and EXT-2 errors, `BufferTooSmall` |
+| MAIL-7 | `parse_mime_params`, `MimeParams` | P1, 3, 0.5 | RFC 2045 section 5.1 with the MIME `token` class (allows `{` and `}`); case-insensitive names; CFWS between parameters, comments may fold; a quoted value must be unfolded first (`unfold`); at most 64 parameters (D-072); `decode_into` checks a plain value as every decoder does: UTF-8, and no C0 (HTAB included), DEL, or C1 (0.10) | `NotToken`, `MissingValue`, `DuplicateParameter`, `UnterminatedQuote`, `TooManyMembers`; `ControlInDecoded` from `decode_into` |
+| MAIL-8 | RFC 2231 (`get`, `decode_into`, `Continuation`) | P1, 2, 0.5 | the reassembly in [PLAN 7.12](../dev/PLAN.md#712-rfc-2231-reassembly-without-allocation): sections `name*0`, `name*1*`, ... numbered from 0 without gaps or duplicates; a charset only on section 0; decoded in order into `out`; `attribute-char` keeps `{` and `}`; a section given twice is `SectionGap`; decoded controls (HTAB in a plain section included, since 0.10), C1 split across sections included, and the US-ASCII rule hold over the whole value; `name*` beside `name*0` is two values for one name and refuses the parameters (0.10, D-089) | `SectionGap`, `TooManySections`, `ForbiddenParameter`, EXT-1 and EXT-2 errors, `BufferTooSmall` |
 | MAIL-9 | `write_mime_param` | P1, 1, 0.5 | `; name=token`, `; name="quoted"`, or, for non-ASCII or long values, `; name*=UTF-8''...` split into `name*0*`, `name*1*` sections so no line passes 78 columns | `NotToken` (name), `Forbidden { at }` (control), `OutOfRange` (a name that leaves no room on a line, or more than 32 sections), `Full` |
-| MAIL-10 | `parse_addr_spec`, `AddrSpec`, `LocalPart`, `Domain` | P1, 1, 0.5 | RFC 5322 section 3.4.1 without obsolete forms, comments, or folding: `dot-atom` or quoted local part, `@`, `dot-atom` domain or `[domain-literal]`; local part at most 64 octets and the whole address at most 254 (RFC 5321 section 4.5.3.1); non-ASCII accepted only as valid UTF-8 (RFC 6532), never as raw obs-text; `is_ascii` false means SMTPUTF8 is needed | `InvalidAddrSpec` (a leading, trailing, or doubled dot, a missing `@`, a comment), `TooLong`, `InvalidUtf8` |
-| MAIL-11 | `parse_mailbox`, `Mailbox` | P2, 2, 0.5 | `[display-name] "<" addr-spec ">" [CFWS]` or a bare `addr-spec`; the display name is returned raw (phrases or encoded words; read it as text with `decode_phrase`, MAIL-15), and is `None` when only comments stand there | as MAIL-10, `UnterminatedQuote`, `UnbalancedComment` |
+| MAIL-10 | `parse_addr_spec`, `AddrSpec`, `LocalPart`, `Domain` | P1, 1, 0.5 | RFC 5322 section 3.4.1 without obsolete forms, comments, or folding: `dot-atom` or quoted local part, `@`, `dot-atom` domain or `[domain-literal]`; local part at most 64 octets and the whole address at most 254 (RFC 5321 section 4.5.3.1); non-ASCII accepted only as valid UTF-8 (RFC 6532), never as raw obs-text, and without C1 controls (0.10); `is_ascii` false means SMTPUTF8 is needed. Normalisation, invisible characters, IDNA, and whether a domain literal is allowed are the caller's | `InvalidAddrSpec` (a leading, trailing, or doubled dot, a missing `@`, a comment, a C1 control), `TooLong`, `InvalidUtf8` |
+| MAIL-11 | `parse_mailbox`, `Mailbox` | P2, 2, 0.5 | `[display-name] "<" addr-spec ">" [CFWS]` or a bare `addr-spec`; folds between the words of the display name are FWS (0.10; a fold inside a quoted string still needs `unfold` first); the display name is returned raw (phrases or encoded words; read it as text with `decode_phrase`, MAIL-15), and is `None` when only comments stand there | as MAIL-10, `UnterminatedQuote`, `UnbalancedComment` |
 | MAIL-12 | `parse_msg_id`, `write_msg_id` | P2, 2, 0.5 | `"<" id-left "@" id-right ">"`, `dot-atom-text` on both sides (or a `no-fold-literal` on the right) | `InvalidAddrSpec`; writer: `Forbidden`, `OutOfRange` (over 998 bytes), `Full` |
 | MAIL-13 | `MailDate` re-export | P1, 1, 0.5 | DAT-11 to DAT-13 | |
 | MAIL-14 | `is_field_name` | P1, 3, 0.5 | `ftext = %d33-57 / %d59-126` (RFC 5322 section 3.6.8), non-empty | none |
@@ -2228,16 +2306,19 @@ Edge cases tested: a header value of exactly 998 bytes and of 999; folding a sin
 
 ```rust
 #[cfg(feature = "alloc")]
-pub struct OwnedMediaType { /* String, offsets */ }       // MediaType::to_owned, as_view
+pub struct OwnedMediaType { /* String, offsets */ }       // MediaType::into_owned, as_view
 #[cfg(feature = "alloc")]
-pub struct OwnedEntityTag { /* weak, Vec<u8> */ }          // EntityTag::to_owned, as_view
+pub struct OwnedEntityTag { /* weak, Vec<u8> */ }          // EntityTag::into_owned, as_view
 #[cfg(feature = "alloc")]
-pub struct OwnedHostPort { /* host bytes or address, port */ }   // HostPort::to_owned, as_view
+pub struct OwnedHostPort { /* host bytes or address, port */ }   // HostPort::into_owned, as_view
 #[cfg(feature = "alloc")]
-pub mod sfv::owned { /* OwnedBareItem, OwnedItem, OwnedList, OwnedDictionary: to_owned on each view, as_view back */ }
+pub mod structured::owned { /* OwnedBareItem, OwnedItem, OwnedList, OwnedDictionary: into_owned on each view, as_view back */ }
+
+// On every owned form: the borrowed view again.
+pub fn as_view(&self) -> /* MediaType, EntityTag, HostPort, BareItem, Item, List, Dictionary */;
 ```
 
-For callers that must keep a parsed value beyond the input buffer. Each allocates once per value (`to_owned`) and gives the same view back (`as_view`), so every accessor works on both. Owned forms are never used inside parse-net, and nothing else in the crate allocates.
+For callers that must keep a parsed value beyond the input buffer. Each allocates once per value (`into_owned`, named so it never shadows `ToOwned::to_owned`, which these `Copy` views also have; 0.10) and gives the same view back (`as_view`), so every accessor works on both. Owned forms are never used inside parse-net, and nothing else in the crate allocates.
 
 ---
 
@@ -2251,7 +2332,7 @@ Every public type is `Send + Sync + Unpin` (checked at compile time), holds no i
 | `Quoted`, `Word`, `Params`, `List`, `EntityTag` | 24 bytes |
 | `MediaType` | 56 bytes |
 | `HttpDate` | 8 bytes |
-| `sfv::Item` | at most 64 bytes |
+| `structured::Item` | at most 64 bytes |
 
 ---
 
@@ -2268,12 +2349,12 @@ The 0.2 review of this API against each consumer's needs. "Moves" means the cons
 | `check_field_value` (SWAR) | `scan::check_field_value` | `BareCr` maps to http-net's smuggling error; `LineFeed`, `Nul`, `Control` to its invalid-value error |
 | `parse_decimal` (`Option`) | `num::parse_u64` (`Result`) | same accepted set |
 | `hex_value` | `class::hex_value` | same |
-| `list_elements` | `list(value)?.iter()`, `list::contains_token` | quote-aware already; parse-net also refuses unterminated quotes and bounds empty elements ([D-011](../dev/PLAN.md#16-decision-log)) |
+| `list_elements` | `parse_list(value)?.iter()`, `list::contains_token` | quote-aware already; parse-net also refuses unterminated quotes and bounds empty elements ([D-011](../dev/PLAN.md#16-decision-log)) |
 | `find_byte` | `scan::find_byte` | same SWAR algorithm; `#[inline]` justified by http-net's `request_head` benchmark (NFR-8) |
 | `push_hex`, `push_decimal` | `write::write_hex_u64`, `write_decimal_u64` with `Sink for Vec<u8>` (`alloc`) | optional: http-net may keep its own, its 7.9 says these stay |
-| `blocking.rs` `http_date` | `HttpDate::from_unix(secs)?.format()` | full year range |
+| `blocking.rs` `parse_http_date` | `HttpDate::from_unix(secs)?.format()` | full year range |
 | `is_host_value` | `parse_host_port` | stricter: real IPv4 and IPv6 validation, ports above 65535 and `127.1` refused (HST-4); http-net may keep its check until url-lib exists (its 7.9) |
-| `is_target_chars` | `pct::validate_with(t, Class::URI_TARGET)` | optional until url-lib |
+| `is_target_chars` | `percent::validate_with(t, Class::URI_TARGET)` | optional until url-lib |
 | `is_reason`, `is_protocol`, head scanning, chunk lines | stay in http-net | RFC 9112 |
 | `Date`, `Last-Modified`, conditional requests, ranges, media types for callers | `HttpDate`, `etag`, `range`, `media` | from parse-net 0.3 and 0.4 |
 
@@ -2312,9 +2393,9 @@ The 0.2 review of this API against each consumer's needs. "Moves" means the cons
 | every parameter including duplicates | duplicates are refused at parse time by default (`DuplicateParameter`): form-net refuses them too, so the outcome is the same; `DuplicatePolicy::First` with `Params::iter` shows them all if form-net wants its own error mapping |
 | quoted-string in RFC 9110 mode | `Word::unescape_into` |
 | quoted-string in form-data mode (backslash literal) | `Quoted::raw` plus refusing raw bytes containing `\"`; see the note under [Content-Disposition](#content-disposition-disposition) |
-| `filename*` decode, UTF-8 only, into a caller buffer | `ContentDisposition::filename_ext`, then `ExtValue::charset() == Charset::Utf8` and `decode_into` |
+| `filename*` decode, UTF-8 only, into a caller buffer | `ContentDisposition::filename_ext`, then `ExtendedValue::charset() == Charset::Utf8` and `decode_into` |
 | `Content-Disposition` type, parameters, raw value bytes | `disposition::parse`, `kind`, `name`, `filename_plain`, `params` |
-| RFC 7578 percent-encoded file names | `Filename::decode_percent_into`, `pct::decode_into` |
+| RFC 7578 percent-encoded file names | `Filename::decode_percent_into`, `percent::decode_into` |
 | budgets per call | `Limits::max_params` and the other bounds; the maximum input length is the caller's check on `value.len()` |
 | legacy RFC 2047 names (optional) | `mail::decode_words` (0.5) |
 
@@ -2324,7 +2405,7 @@ The 0.2 review of this API against each consumer's needs. "Moves" means the cons
 |---|---|
 | `Date` header | `MailDate::new`, `write_to` |
 | header folding | `mail::fold` |
-| `Subject` and display names | `mail::encode_words` (Q), `mail::encode_words_b` (B, 0.9.1, for mostly non-ASCII text) |
+| `Subject` and display names | `mail::encode_words` (Q), `mail::encode_words_base64` (B, 0.9.1, for mostly non-ASCII text) |
 | `Content-Type` and `Content-Disposition` with RFC 2231 | `media::write`, `mail::write_mime_param`, `mail::write_mime_param_at` after other text on the line (0.9.2) |
 | display names of received addresses as text | `mail::parse_mailbox`, then `mail::decode_phrase` (0.9.2) |
 | whether a display name can go out as an atom phrase | `class::is_atext` |

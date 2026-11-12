@@ -5,7 +5,7 @@
 use libfuzzer_sys::fuzz_target;
 use parse_net::{
     ParseError,
-    sfv::{self, BareItem, Decimal, Item, Member, Parser, SfParams, Visitor},
+    structured::{self, BareItem, Decimal, Item, Member, Parser, SfParams, Visitor},
 };
 
 #[path = "common.rs"]
@@ -105,7 +105,7 @@ fuzz_target!(|data: &[u8]| {
     common::no_alloc(|| {
         let mut visited = Count::default();
         let v = Parser::default().visit_list(data, &mut visited);
-        match sfv::parse_list(data) {
+        match structured::parse_list(data) {
             Ok(l) => {
                 assert!(v.is_ok());
                 assert_eq!(l.iter().count(), l.len());
@@ -122,7 +122,7 @@ fuzz_target!(|data: &[u8]| {
             }
         }
         let (ls, n) = lines(data);
-        if let Ok(ll) = sfv::parse_list_lines(&ls[..n]) {
+        if let Ok(ll) = structured::parse_list_lines(&ls[..n]) {
             let mut len = 0;
             for (i, l) in ls[..n].iter().enumerate() {
                 if i > 0 {
@@ -132,7 +132,7 @@ fuzz_target!(|data: &[u8]| {
                 joined[len..len + l.len()].copy_from_slice(l);
                 len += l.len();
             }
-            let j = sfv::parse_list(&joined[..len]).expect("joined lines parse");
+            let j = structured::parse_list(&joined[..len]).expect("joined lines parse");
             assert_eq!(j.len(), ll.len());
             assert!(j.iter().eq(ll.iter()) || ll.iter().count() == j.iter().count());
         }

@@ -8,7 +8,7 @@
 //! use parse_net::{self as pn, Host, HostPort};
 //!
 //! assert_eq!(pn::parse_host_port(b"[::1]:8080")?,
-//!            HostPort { host: Host::V6(Ipv6Addr::LOCALHOST), port: Some(8080), empty_port: false });
+//!            HostPort::new(Host::V6(Ipv6Addr::LOCALHOST), Some(8080)));
 //! assert_eq!(pn::parse_host_port(b"Example.COM.")?.host, Host::Name(b"Example.COM."));
 //! assert_eq!(pn::parse_host_port(b"127.1").unwrap_err().kind(), pn::ErrorKind::InvalidAddress);
 //! assert_eq!(pn::parse_host_port(b"a.com:80@b.com").unwrap_err().kind(), pn::ErrorKind::InvalidHost);
@@ -42,10 +42,14 @@ use crate::{
 /// assert_eq!(parse_host_port(b"[v1.fe]")?.host, Host::Future(b"v1.fe"));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Host<'a> {
     /// A registered name (`reg-name`), as sent: case and a trailing dot are
-    /// kept, `%XX` triples are not decoded. Empty when the field was empty.
+    /// kept. Never holds `%`: an escaped name is refused, since browsers
+    /// decode before they send and a raw comparison would miss
+    /// `%61dmin.example` for `admin.example`. Empty when the field was
+    /// empty.
     Name(&'a [u8]),
     /// A dotted-decimal IPv4 address.
     V4(Ipv4Addr),
@@ -147,11 +151,10 @@ impl Host<'_> {
 fn check_reg_name(n: &[u8]) -> core::result::Result<(), WriteError> {
     let mut i = 0usize;
     while let Some(&b) = n.get(i) {
-        match (b, n.get(i + 1), n.get(i + 2)) {
-            (b'%', Some(&h), Some(&l)) if class::is_hexdig(h) && class::is_hexdig(l) => i += 3,
-            _ if REG_NAME.contains(b) => i += 1,
-            _ => return Err(WriteError::forbidden(i)),
+        if !REG_NAME.contains(b) {
+            return Err(WriteError::forbidden(i));
         }
+        i += 1;
     }
     Ok(())
 }
@@ -177,6 +180,7 @@ impl<S: Sink> fmt::Write for SinkWriter<'_, S> {
 /// assert_eq!(parse_host_port(b"example.com:8080")?.port, Some(8080));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct HostPort<'a> {
     /// The host.
@@ -188,7 +192,30 @@ pub struct HostPort<'a> {
     pub empty_port: bool,
 }
 
-impl HostPort<'_> {
+impl<'a> HostPort<'a> {
+    /// A host and an optional port, with no empty `:` (the struct is
+    /// `#[non_exhaustive]`, so this is how a caller builds one to write).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{Host, HostPort, SliceSink};
+    ///
+    /// let mut buf = [0u8; 32];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// HostPort::new(Host::Name(b"example.com"), Some(8443)).write_to(&mut out)?;
+    /// assert_eq!(out.written(), b"example.com:8443");
+    /// # Ok::<(), parse_net::WriteError>(())
+    /// ```
+    #[must_use]
+    pub const fn new(host: Host<'a>, port: Option<u16>) -> Self {
+        Self {
+            host,
+            port,
+            empty_port: false,
+        }
+    }
+
     /// Writes the host, then `:port` when there is a port.
     ///
     /// # Errors
@@ -244,8 +271,11 @@ impl HostPort<'_> {
 /// [`ErrorKind::InvalidHost`] for userinfo (any `@`, checked first), a byte
 /// outside the name class, a port with no host, or unbracketed IPv6;
 /// [`ErrorKind::InvalidAddress`] for a malformed IP literal or a numeric
-/// name that is not canonical IPv4; [`ErrorKind::InvalidPort`];
-/// [`ErrorKind::InvalidPercentEncoding`]; a control kind for a control byte.
+/// name that is not canonical IPv4; [`ErrorKind::InvalidPort`]; a control
+/// kind for a control byte. A `%` is [`ErrorKind::InvalidHost`]: RFC 3986
+/// allows escapes in a reg-name, but no browser sends one, and a name
+/// compared raw (`%61dmin.example`) would pass a check the decoded name
+/// fails.
 ///
 /// # Examples
 ///
@@ -427,71 +457,8 @@ fn is_numeric_label(label: &[u8]) -> bool {
     }
 }
 
-/// Which number a label of decoded bytes could be, as far as it has been read.
-#[derive(Clone, Copy)]
-struct NumericLabel {
-    len: usize,
-    decimal: bool,
-    hex: bool,
-}
-
-impl NumericLabel {
-    const EMPTY: Self = Self {
-        len: 0,
-        decimal: true,
-        hex: true,
-    };
-
-    fn push(&mut self, b: u8) {
-        self.decimal &= b.is_ascii_digit();
-        self.hex &= match self.len {
-            0 => b == b'0',
-            1 => matches!(b, b'x' | b'X'),
-            _ => class::is_hexdig(b),
-        };
-        self.len += 1;
-    }
-
-    const fn is_number(&self) -> bool {
-        self.decimal && self.len > 0 || self.hex && self.len >= 2
-    }
-}
-
-/// [`is_numeric_label`] and the digits-and-dots rule over the percent-decoded
-/// bytes of a validated reg-name: `%2e` separates labels, as it does for a
-/// browser. No allocation: one pass with the last two labels' state.
-fn decoded_is_numeric(name: &[u8]) -> bool {
-    let (mut label, mut previous) = (NumericLabel::EMPTY, NumericLabel::EMPTY);
-    let (mut digits_dots, mut i) = (true, 0usize);
-    while let Some(&b) = name.get(i) {
-        let byte = match (b, name.get(i + 1), name.get(i + 2)) {
-            (b'%', Some(&h), Some(&l)) => {
-                i += 2;
-                match (class::hex_value(h), class::hex_value(l)) {
-                    (Some(h), Some(l)) => (h << 4) | l,
-                    _ => b,
-                }
-            }
-            _ => b,
-        };
-        i += 1;
-        digits_dots &= byte.is_ascii_digit() || byte == b'.';
-        if byte == b'.' {
-            previous = label;
-            label = NumericLabel::EMPTY;
-        } else {
-            label.push(byte);
-        }
-    }
-    digits_dots
-        || if label.len == 0 {
-            previous.is_number()
-        } else {
-            label.is_number()
-        }
-}
-
-/// `unreserved / sub-delims`: the reg-name bytes other than `pct-encoded`.
+/// `unreserved / sub-delims`: the reg-name bytes accepted (`pct-encoded` is
+/// refused, D-088).
 const REG_NAME: class::Class = class::Class::UNRESERVED.union(class::Class::SUB_DELIM);
 
 /// Reads the name at the start of `v` up to a `:` or the end, in one pass:
@@ -502,7 +469,6 @@ fn reg_name_or_ipv4(v: &[u8]) -> Result<(Host<'_>, usize)> {
     let mut digits_dots = true;
     let mut label_start = 0usize;
     let mut prev_label_start = 0usize;
-    let mut escaped = false;
     while let Some(&b) = v.get(i) {
         if REG_NAME.contains(b) {
             if b == b'.' {
@@ -514,13 +480,6 @@ fn reg_name_or_ipv4(v: &[u8]) -> Result<(Host<'_>, usize)> {
             i += 1;
         } else if b == b':' {
             break;
-        } else if b == b'%' {
-            match (v.get(i + 1), v.get(i + 2)) {
-                (Some(&h), Some(&l)) if class::is_hexdig(h) && class::is_hexdig(l) => i += 3,
-                _ => return err(ErrorKind::InvalidPercentEncoding, i),
-            }
-            digits_dots = false;
-            escaped = true;
         } else if crate::scan::is_control(b) {
             return err(control_kind(b), i);
         } else {
@@ -528,11 +487,6 @@ fn reg_name_or_ipv4(v: &[u8]) -> Result<(Host<'_>, usize)> {
         }
     }
     let name = v.get(..i).unwrap_or(&[]);
-    // A browser decodes first, so `127.0.0.%31` is an address there, and
-    // only the canonical plain form may be one here (D-040).
-    if escaped && decoded_is_numeric(name) {
-        return err(ErrorKind::InvalidAddress, 0);
-    }
     // The last label, ignoring one trailing dot.
     let last = if name.last() == Some(&b'.') {
         name.get(prev_label_start..i - 1).unwrap_or(&[])
@@ -607,8 +561,17 @@ mod tests {
             Host::V4(Ipv4Addr::new(1, 2, 3, 4))
         );
         assert_eq!(hp(b"[::1]x").unwrap_err().kind(), InvalidHost);
-        assert_eq!(hp(b"%41.com").unwrap().host, Host::Name(b"%41.com"));
-        assert_eq!(hp(b"%4.com").unwrap_err().kind(), InvalidPercentEncoding);
+        // Escapes are refused, whatever they decode to.
+        for v in [
+            &b"%41.com"[..],
+            b"%4.com",
+            b"a%00b.example",
+            b"evil.example%2F.good.example",
+            b"evil.example%40good.example",
+            b"%61dmin.example",
+        ] {
+            assert_eq!(hp(v).unwrap_err().kind(), InvalidHost, "{v:?}");
+        }
         assert_eq!(hp(b"a b").unwrap_err().kind(), InvalidHost);
         assert_eq!(hp(b"a/b").unwrap_err().kind(), InvalidHost);
         assert_eq!(

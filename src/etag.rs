@@ -4,12 +4,12 @@
 //! # Examples
 //!
 //! ```
-//! use parse_net::{self as pn, EntityTag};
+//! use parse_net::{self as pn, EntityTag, Representation};
 //!
-//! let v2 = EntityTag::strong(b"v2")?;
-//! assert!(pn::if_none_match(b"\"v1\", W/\"v2\"", &v2)?);         // weak comparison: 304
-//! assert!(!pn::if_match(b"W/\"v2\"", Some(&v2))?);               // strong comparison: 412
-//! assert!(pn::if_match(b"*", Some(&v2))? && !pn::if_match(b"*", None)?);
+//! let v2 = Representation::Tagged(EntityTag::strong(b"v2")?);
+//! assert!(pn::if_none_match(b"\"v1\", W/\"v2\"", v2)?);        // weak comparison: 304
+//! assert!(!pn::if_match(b"W/\"v2\"", v2)?);                     // strong comparison: 412
+//! assert!(pn::if_match(b"*", v2)? && !pn::if_match(b"*", Representation::Absent)?);
 //! # Ok::<(), pn::ParseError>(())
 //! ```
 
@@ -264,10 +264,10 @@ fn parse_prefix(s: &[u8]) -> Result<(EntityTag<'_>, usize)> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::{etag::parse_condition, Condition, Limits};
+/// use parse_net::{etag, Condition, Limits};
 ///
-/// assert_eq!(parse_condition(b"*", &Limits::DEFAULT)?, Condition::Any);
-/// assert!(matches!(parse_condition(b"\"a\"", &Limits::DEFAULT)?, Condition::Tags(t) if t.len() == 1));
+/// assert_eq!(etag::parse(b"*", &Limits::DEFAULT)?, Condition::Any);
+/// assert!(matches!(etag::parse(b"\"a\"", &Limits::DEFAULT)?, Condition::Tags(t) if t.len() == 1));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -283,9 +283,9 @@ pub enum Condition<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::{etag::parse_condition, Condition, Limits};
+/// use parse_net::{etag, Condition, Limits};
 ///
-/// let Condition::Tags(tags) = parse_condition(b"\"a\", W/\"b\"", &Limits::DEFAULT)? else { unreachable!() };
+/// let Condition::Tags(tags) = etag::parse(b"\"a\", W/\"b\"", &Limits::DEFAULT)? else { unreachable!() };
 /// assert_eq!(tags.iter().filter(|t| t.is_weak()).count(), 1);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
@@ -302,9 +302,9 @@ impl<'a> TagList<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{etag::parse_condition, Condition, Limits};
+    /// use parse_net::{etag, Condition, Limits};
     ///
-    /// let Condition::Tags(tags) = parse_condition(b"\"a\", W/\"b\"", &Limits::DEFAULT)? else { unreachable!() };
+    /// let Condition::Tags(tags) = etag::parse(b"\"a\", W/\"b\"", &Limits::DEFAULT)? else { unreachable!() };
     /// let opaque: Vec<_> = tags.iter().map(|t| t.opaque()).collect();
     /// assert_eq!(opaque, [&b"a"[..], &b"b"[..]]);
     /// # Ok::<(), parse_net::ParseError>(())
@@ -318,9 +318,9 @@ impl<'a> TagList<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{etag::parse_condition, Condition, Limits};
+    /// use parse_net::{etag, Condition, Limits};
     ///
-    /// let Condition::Tags(tags) = parse_condition(b"\"a\", , \"b\"", &Limits::DEFAULT)? else { unreachable!() };
+    /// let Condition::Tags(tags) = etag::parse(b"\"a\", , \"b\"", &Limits::DEFAULT)? else { unreachable!() };
     /// assert_eq!(tags.len(), 2);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -334,9 +334,9 @@ impl<'a> TagList<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{etag::parse_condition, Condition, Limits};
+    /// use parse_net::{etag, Condition, Limits};
     ///
-    /// let Condition::Tags(tags) = parse_condition(b"\"a\"", &Limits::DEFAULT)? else { unreachable!() };
+    /// let Condition::Tags(tags) = etag::parse(b"\"a\"", &Limits::DEFAULT)? else { unreachable!() };
     /// assert!(!tags.is_empty());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -442,15 +442,15 @@ fn walk<'a>(v: &'a [u8], limits: &Limits, mut f: impl FnMut(EntityTag<'a>)) -> R
 /// # Examples
 ///
 /// ```
-/// use parse_net::{etag::{parse_condition, Condition}, Limits};
+/// use parse_net::{etag::{self, Condition}, Limits};
 ///
-/// let Condition::Tags(tags) = parse_condition(b"\"a\", , W/\"b\"", &Limits::DEFAULT)? else { unreachable!() };
+/// let Condition::Tags(tags) = etag::parse(b"\"a\", , W/\"b\"", &Limits::DEFAULT)? else { unreachable!() };
 /// assert_eq!(tags.len(), 2);
-/// assert!(matches!(parse_condition(b"*", &Limits::DEFAULT)?, Condition::Any));
-/// assert!(parse_condition(b"*, \"a\"", &Limits::DEFAULT).is_err());
+/// assert!(matches!(etag::parse(b"*", &Limits::DEFAULT)?, Condition::Any));
+/// assert!(etag::parse(b"*, \"a\"", &Limits::DEFAULT).is_err());
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn parse_condition<'a>(value: &'a [u8], limits: &Limits) -> Result<Condition<'a>> {
+pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<Condition<'a>> {
     let lead = skip_ows(value);
     let v = trim_ows(value);
     Ok(
@@ -461,66 +461,109 @@ pub fn parse_condition<'a>(value: &'a [u8], limits: &Limits) -> Result<Condition
     )
 }
 
-/// Evaluates `If-None-Match` against the current representation's tag by
-/// weak comparison (RFC 9110 section 13.1.2).
-///
-/// `true` means the condition is false for the request: answer 304 (GET,
-/// HEAD) or 412 (other methods). `*` matches any current representation.
-///
-/// # Errors
-///
-/// As [`parse_condition`].
+/// What the server holds for the target resource, which `If-Match` and
+/// `If-None-Match` are evaluated against.
 ///
 /// # Examples
 ///
 /// ```
-/// use parse_net::{if_none_match, EntityTag};
+/// use parse_net::{if_none_match, EntityTag, Representation};
 ///
-/// assert!(if_none_match(b"W/\"x\"", &EntityTag::strong(b"x")?)?);
-/// assert!(!if_none_match(b"\"y\"", &EntityTag::strong(b"x")?)?);
+/// // `PUT` with `If-None-Match: *` creates only when nothing is there.
+/// assert!(!if_none_match(b"*", Representation::Absent)?);
+/// assert!(if_none_match(b"*", Representation::Untagged)?);
+/// assert!(if_none_match(b"\"a\"", Representation::Tagged(EntityTag::strong(b"a")?))?);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn if_none_match(value: &[u8], current: &EntityTag<'_>) -> Result<bool> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Representation<'a> {
+    /// No current representation: the request would create the resource.
+    Absent,
+    /// A current representation without an entity tag: `*` matches it, and
+    /// no listed tag does.
+    Untagged,
+    /// A current representation with this entity tag.
+    Tagged(EntityTag<'a>),
+}
+
+impl Representation<'_> {
+    /// The current tag, if any.
+    const fn tag(&self) -> Option<&EntityTag<'_>> {
+        match self {
+            Representation::Tagged(t) => Some(t),
+            _ => None,
+        }
+    }
+}
+
+/// Evaluates `If-None-Match` against the current representation by weak
+/// comparison (RFC 9110 section 13.1.2).
+///
+/// `true` means the condition is false for the request: answer 304 (GET,
+/// HEAD) or 412 (other methods). `*` matches any current representation,
+/// tagged or not, and never [`Representation::Absent`].
+///
+/// # Errors
+///
+/// As [`parse`].
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{if_none_match, EntityTag, Representation};
+///
+/// let current = Representation::Tagged(EntityTag::strong(b"x")?);
+/// assert!(if_none_match(b"W/\"x\"", current)?);
+/// assert!(!if_none_match(b"\"y\"", current)?);
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
+pub fn if_none_match(value: &[u8], current: Representation<'_>) -> Result<bool> {
     // One pass: the whole field is validated, and the comparison runs as each
     // tag is read.
     let lead = skip_ows(value);
+    let tag = current.tag();
     let mut matched = false;
     let walked = walk(trim_ows(value), &Limits::DEFAULT, |t| {
-        matched |= t.weak_eq(current)
+        matched |= tag.is_some_and(|c| t.weak_eq(c));
     })
     .map_err(|e| e.shifted(lead))?;
-    Ok(matches!(walked, Walked::Any) || matched)
+    Ok(match walked {
+        Walked::Any => current != Representation::Absent,
+        Walked::Tags(_) => matched,
+    })
 }
 
 /// Evaluates `If-Match` by strong comparison (RFC 9110 section 13.1.1).
 ///
 /// `true` means the precondition holds; `false` means answer 412. `*` holds
-/// when a current representation exists (`current` is `Some`).
+/// when a current representation exists, tagged or not.
 ///
 /// # Errors
 ///
-/// As [`parse_condition`].
+/// As [`parse`].
 ///
 /// # Examples
 ///
 /// ```
-/// use parse_net::{if_match, EntityTag};
+/// use parse_net::{if_match, EntityTag, Representation};
 ///
-/// let current = EntityTag::strong(b"x")?;
-/// assert!(if_match(b"\"x\"", Some(&current))?);
-/// assert!(!if_match(b"W/\"x\"", Some(&current))?);
-/// assert!(!if_match(b"\"x\"", None)?);
+/// let current = Representation::Tagged(EntityTag::strong(b"x")?);
+/// assert!(if_match(b"\"x\"", current)?);
+/// assert!(!if_match(b"W/\"x\"", current)?);
+/// assert!(!if_match(b"\"x\"", Representation::Absent)?);
+/// assert!(if_match(b"*", Representation::Untagged)?);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn if_match(value: &[u8], current: Option<&EntityTag<'_>>) -> Result<bool> {
+pub fn if_match(value: &[u8], current: Representation<'_>) -> Result<bool> {
     let lead = skip_ows(value);
+    let tag = current.tag();
     let mut matched = false;
     let walked = walk(trim_ows(value), &Limits::DEFAULT, |t| {
-        matched |= current.is_some_and(|c| t.strong_eq(c));
+        matched |= tag.is_some_and(|c| t.strong_eq(c));
     })
     .map_err(|e| e.shifted(lead))?;
     Ok(match walked {
-        Walked::Any => current.is_some(),
+        Walked::Any => current != Representation::Absent,
         Walked::Tags(_) => matched,
     })
 }
@@ -563,21 +606,29 @@ mod tests {
     fn test_conditions() {
         let l = Limits::DEFAULT;
         assert_eq!(
-            parse_condition(b"*, \"a\"", &l).unwrap_err().kind(),
+            parse(b"*, \"a\"", &l).unwrap_err().kind(),
             ErrorKind::Malformed
         );
         assert_eq!(
-            parse_condition(b"\"a\" \"b\"", &l).unwrap_err().kind(),
+            parse(b"\"a\" \"b\"", &l).unwrap_err().kind(),
             ErrorKind::InvalidEntityTag
         );
-        let e = parse_condition(b"\"a\", w/\"b\"", &l).unwrap_err();
+        let e = parse(b"\"a\", w/\"b\"", &l).unwrap_err();
         assert_eq!((e.kind(), e.offset()), (ErrorKind::InvalidEntityTag, 5));
-        let s = EntityTag::strong(b"b").unwrap();
-        assert!(if_none_match(b"\"a\", , \"b\"", &s).unwrap());
-        assert!(if_none_match(b"*", &s).unwrap());
-        assert!(!if_match(b"*", None).unwrap());
-        assert!(if_match(b"\"a\", \"b\"", Some(&s)).unwrap());
-        assert!(if_none_match(b"\"a", &s).is_err());
+        let s = Representation::Tagged(EntityTag::strong(b"b").unwrap());
+        assert!(if_none_match(b"\"a\", , \"b\"", s).unwrap());
+        assert!(if_none_match(b"*", s).unwrap());
+        assert!(!if_match(b"*", Representation::Absent).unwrap());
+        assert!(if_match(b"\"a\", \"b\"", s).unwrap());
+        assert!(if_none_match(b"\"a", s).is_err());
+        // A representation without a tag, and none at all.
+        let (none, untagged) = (Representation::Absent, Representation::Untagged);
+        assert!(!if_none_match(b"*", none).unwrap());
+        assert!(if_none_match(b"*", untagged).unwrap());
+        assert!(!if_none_match(b"\"b\"", untagged).unwrap());
+        assert!(if_match(b"*", untagged).unwrap());
+        assert!(!if_match(b"\"b\"", untagged).unwrap());
+        assert!(!if_none_match(b"\"b\"", none).unwrap());
     }
 
     #[test]
@@ -591,7 +642,7 @@ mod tests {
                 .collect::<std::vec::Vec<_>>()
                 .join(", ")
         };
-        let count = |v: &str| match parse_condition(v.as_bytes(), &l) {
+        let count = |v: &str| match parse(v.as_bytes(), &l) {
             Ok(Condition::Tags(t)) => Ok(t.len()),
             Ok(Condition::Any) => Ok(usize::MAX),
             Err(e) => Err(e.kind()),
@@ -600,9 +651,9 @@ mod tests {
             assert_eq!(count(&tags(n)), Ok(n), "{n}");
         }
         assert_eq!(count(&tags(1025)), Err(ErrorKind::TooManyMembers));
-        let s = EntityTag::strong(b"t1023").unwrap();
-        assert!(if_none_match(tags(1024).as_bytes(), &s).unwrap());
-        assert!(if_match(tags(1024).replace("W/", "").as_bytes(), Some(&s)).unwrap());
+        let s = Representation::Tagged(EntityTag::strong(b"t1023").unwrap());
+        assert!(if_none_match(tags(1024).as_bytes(), s).unwrap());
+        assert!(if_match(tags(1024).replace("W/", "").as_bytes(), s).unwrap());
         // Empty elements are still counted, before, between, and after.
         let empties = |n: usize| std::format!("\"a\",{}\"b\"", ", ".repeat(n));
         assert_eq!(count(&empties(16)), Ok(2));

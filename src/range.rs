@@ -814,7 +814,10 @@ impl IfRange<'_> {
     /// Whether the condition holds, so the ranges may be served (RFC 9110
     /// section 13.1.5): a tag matches by strong comparison (a weak tag never
     /// matches); a date matches when it equals `last_modified` exactly. When
-    /// it does not hold, send the whole representation.
+    /// it does not hold, send the whole representation. Pass a date only
+    /// when it is a strong validator (RFC 9110 section 8.8.2.2: at least one
+    /// second older than the response `Date`); otherwise pass `None`, so two
+    /// changes within one second never splice ranges from two versions.
     ///
     /// # Examples
     ///
@@ -846,7 +849,7 @@ impl IfRange<'_> {
 ///
 /// # Errors
 ///
-/// The errors of [`EntityTag::parse`] or [`HttpDate::parse_at`].
+/// The errors of [`EntityTag::parse`] or [`parse_http_date_at`](crate::parse_http_date_at).
 ///
 /// # Examples
 ///
@@ -864,7 +867,7 @@ pub fn parse_if_range_at(value: &[u8], now: i64) -> Result<IfRange<'_>> {
     if v.starts_with(b"W/") || v.starts_with(b"\"") {
         EntityTag::parse(value).map(IfRange::Tag)
     } else {
-        HttpDate::parse_at(value, now).map(IfRange::Date)
+        crate::parse_http_date_at(value, now).map(IfRange::Date)
     }
 }
 
@@ -875,7 +878,7 @@ pub fn parse_if_range_at(value: &[u8], now: i64) -> Result<IfRange<'_>> {
 ///
 /// # Errors
 ///
-/// The errors of [`EntityTag::parse`] or [`HttpDate::parse_at`].
+/// The errors of [`EntityTag::parse`] or [`parse_http_date_at`](crate::parse_http_date_at).
 ///
 /// # Examples
 ///

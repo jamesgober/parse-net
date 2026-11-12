@@ -18,8 +18,8 @@ strictness.
 |---|---|---|---|---|---|
 | `scan::check_field_value` | 64-byte `User-Agent` text | 4.68 ns | 24.3 ns (bytewise loop, http-net's former code) | 81% | met |
 | `byte_ranges` | `bytes=0-499` | 7.71 ns | 33.5 ns (`headers`) | 77% | met |
-| `sfv::parse_dictionary` | 5 members of mixed types | 147 ns | 504 ns (`sfv` 0.16.0, owned) | 71% | met |
-| `sfv::parse_list` | 10 tokens with one parameter each | 352 ns | 991 ns (`sfv`, owned) | 64% | met |
+| `structured::parse_dictionary` | 5 members of mixed types | 147 ns | 504 ns (`sfv` 0.16.0, owned) | 71% | met |
+| `structured::parse_list` | 10 tokens with one parameter each | 352 ns | 991 ns (`sfv`, owned) | 64% | met |
 | `HttpDate::format` | | 17.2 ns | 44.4 ns (`httpdate`, allocates a `String`) | 61% | met |
 | `mail::decode_words`, one `B` word | 39 bytes of Japanese, `=?UTF-8?B?...?=` | 145 ns | 373 ns (`mailparse` 0.15.0, `parse_header` and `get_value`, allocates) | 61% | met |
 | `MailDate::parse` | `Wed, 21 Oct 2026 17:38:00 +0200` | 20.0 ns | 47.3 ns (`mailparse`) | 58% | met |
@@ -28,10 +28,10 @@ strictness.
 | `parse_media_type` and `charset` | `text/html; charset=utf-8` | 20.6 ns | 37.6 ns (`mime` 0.3.17) | 45% | met |
 | `parse_content_disposition` and `filename` | `attachment; filename="a.txt"; filename*=UTF-8''%E2%82%AC.txt` | 108 ns | 173 ns (`mailparse`; `content_disposition` 0.4.0 178 ns) | 38% | met |
 | `best_media` | Chrome's navigation `Accept`, 3 offers | 444 ns | 630 ns (`mime` and a selection loop) | 30% | met |
-| `response_cache_control` | `public, max-age=31536000, immutable` | 37.8 ns | 50.7 ns (`headers`) | 25% | met; 6.6% fewer instructions at 0.9.3, wall clock waits for a quiet run |
+| `parse_response_cache_control` | `public, max-age=31536000, immutable` | 37.8 ns | 50.7 ns (`headers`) | 25% | met; 6.6% fewer instructions at 0.9.3, wall clock waits for a quiet run |
 | `client_address` | 3-hop `X-Forwarded-For`, IPv4 | 37.6 ns | no Rust crate resolves through trusted proxies | n/a | estimate 60 ns: met |
 | `mail::encode_words` | 36-byte UTF-8 subject (PLAN row: 40 bytes) | 176 ns | no allocation-free Rust encoder | n/a | estimate 200 ns: met |
-| `mail::encode_words_b` | the same subject; 39 bytes of Japanese | 92.2 ns; 103 ns (`encode_words` 131 ns) | no allocation-free Rust encoder | n/a | none set |
+| `mail::encode_words_base64` | the same subject; 39 bytes of Japanese | 92.2 ns; 103 ns (`encode_words` 131 ns) | no allocation-free Rust encoder | n/a | none set |
 | `param::parse_optional` and `find` | `; client_max_window_bits; server_no_context_takeover` | 29.2 ns | no Rust crate reads RFC 6455 extension parameters as a library call; `param::parse` and `get` on the same names with values, 24.6 ns | n/a | none set |
 
 parse-net validates every byte of the field in these rows (where it has been
@@ -42,7 +42,7 @@ allocation.
 The numbers are from one run of the whole suite at 0.9.1 on a quiet machine
 (load average 0.7 to 2.0 on 32 threads), the first since 0.7. Every row is
 faster than at 0.9.0, whose run shared the machine with other builds. The
-percentages moved little, except `response_cache_control`: `headers` gained
+percentages moved little, except `parse_response_cache_control`: `headers` gained
 more from the quiet machine than parse-net did, and the row reads 25% where
 the loaded run read 33%. It is the narrowest row, above the 20% target, and
 is on the list for the release candidates.
@@ -54,10 +54,31 @@ bytes, in `Q`. The
 `find` walks the list through the iterator, where `Params::get` skips the
 names it does not want.
 
+## What 0.10.0 changed
+
+Instructions per call (callgrind), 0.9.3 against 0.10.0 built side by side
+from the same driver: every row within one instruction of 0.9.3 (the renames
+change no code path), except negotiation, which issue #14's fixes rewrote.
+`best_media` on the browser `Accept` 10,861 to 10,702 (-1.5%), on four ranges
+with parameters 8,014 to 7,959 (-0.7%), and `best_language` on five ranges
+10,547 to 9,990 (-5.3%). Lookup no longer ranks every range against every
+offer twice over; the media check walks the parameters on each side of `q`
+on its own, and the parameter split is inlined.
+
+The security fixes of 0.10.0, in the same measure: `client_address` 1,314 to
+913 (-30.5%) for a 3-hop `X-Forwarded-For` and 5,350 to 3,077 (-42.5%) for a
+2-element `Forwarded`, since it now stops at the client;
+`parse_response_cache_control` 835 to 801 (-4.1%), the walk handing
+directives to a visitor; `mail::parse_mailbox` 1,622 to 1,562 (-3.7%).
+`parse_content_disposition` costs 2.9% to 3.2% more (3,597 to 3,703 with
+`filename*`, 2,370 to 2,445 for a `form-data` part): two byte searches for
+the `*` of an RFC 2231 continuation, which it now refuses. A full walk over
+the parameters for the same check cost 7%.
+
 ## What 0.9.3 changed
 
 Instructions per call (callgrind), 0.9.2 against 0.9.3:
-`response_cache_control` on `public, max-age=31536000, immutable` 881 to 823
+`parse_response_cache_control` on `public, max-age=31536000, immutable` 881 to 823
 (-6.6%). The directive names were compared a byte at a time after the
 length had picked the candidate; the length is a constant there, so the
 name is now compared as two or three overlapping words with `0x20` OR-ed
@@ -75,7 +96,7 @@ Instructions per call (callgrind), 0.9.1 against 0.9.2 built side by side:
 `write_mime_param` on a 44-byte quoted file name 3,271 to 2,292 (-30%), on
 a non-ASCII one 2,088 to 1,974 (-5.5%); `decode_words` on two `Q` words
 5,462 to 5,295 (-3%). `decode_words` on `B` words, `encode_words`, and
-`encode_words_b` stayed within 0.5%. The quoted form now writes the runs
+`encode_words_base64` stayed within 0.5%. The quoted form now writes the runs
 between escapes whole, an ASCII value's controls are checked a byte at a time
 rather than a `char` at a time, the one-line form is chosen once for both of
 the writer's passes, and a `Q` word's plain bytes go out as one run.
@@ -119,7 +140,7 @@ Instructions per call (callgrind), which other builds do not disturb:
 | `client_address` | 3,193 | 1,289 | -60% |
 | `parse_content_disposition` and `filename` | 4,014 | 3,585 | -11% |
 | `parse_media_type` and `charset` | 797 | 729 | -9% |
-| `response_cache_control` | 884 | 881 | flat |
+| `parse_response_cache_control` | 884 | 881 | flat |
 
 - `byte_ranges` reads the shape nearly every request sends by position:
   `bytes=a-b`, `bytes=a-`, or `bytes=-n`. Anything else takes the general path,
@@ -146,7 +167,7 @@ rewritten:
 | Operation | 0.6 | 0.7 | Instructions per call, 0.6 to 0.7 |
 |---|---|---|---|
 | `parse_media_type` and `charset` | 32.0 ns (17% faster than `mime`) | 26.1 ns (30% faster) | 885 to 705 |
-| `response_cache_control` | 47.8 ns (19% faster than `headers`) | 41.2 ns (31% faster) | 922 to 884 |
+| `parse_response_cache_control` | 47.8 ns (19% faster than `headers`) | 41.2 ns (31% faster) | 922 to 884 |
 | `parse_content_disposition` and `filename` | 158 ns | 133 ns | 4,112 to 3,909 |
 
 - `param::parse` walks a shrinking slice and computes an offset only for an
@@ -174,7 +195,7 @@ rows that changed:
 | `encode_words` | 7,513 | 5,703 | -24% |
 | `client_address` | 5,469 | 3,193 | -42% |
 | `MailDate::parse` (canonical form) | 1,527 | fixed-position path | 54 ns to 22 ns |
-| `response_cache_control` | 1,084 | 925 | -15% |
+| `parse_response_cache_control` | 1,084 | 925 | -15% |
 | `byte_ranges` | 998 | 815 | -18% |
 | `parse_media_type` and `charset` | 972 | 877 | -10% |
 

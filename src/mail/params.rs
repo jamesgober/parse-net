@@ -5,7 +5,7 @@ use super::cfws;
 use crate::{
     class,
     error::{ErrorKind, ParseError, Result, WriteError, err},
-    ext_value::{Charset, ExtValue, is_mime_attribute_char},
+    extended_value::{Charset, ExtendedValue, decode_checked, is_mime_attribute_char},
     limits::{Limits, MAX_RFC2231_SECTIONS},
     param::{MAX_CHECKED_PARAMS, Names},
     scan::control_kind,
@@ -131,10 +131,12 @@ fn pct_chars(t: &[u8]) -> Option<usize> {
 /// [`ErrorKind::TooManyMembers`] beyond `max_params` or
 /// [`MAX_CHECKED_PARAMS`](crate::param::MAX_CHECKED_PARAMS); for RFC 2231:
 /// [`ErrorKind::SectionGap`], [`ErrorKind::TooManySections`] beyond
-/// `max_rfc2231_sections`, the [`ExtValue::parse`] errors (a charset outside
+/// `max_rfc2231_sections`, the [`ExtendedValue::parse`] errors (a charset outside
 /// section 0 is [`ErrorKind::InvalidPercentEncoding`] at its `'`),
-/// [`ErrorKind::InvalidUtf8`], [`ErrorKind::ControlInDecoded`];
-/// [`ErrorKind::UnbalancedComment`], [`ErrorKind::CommentTooDeep`].
+/// [`ErrorKind::InvalidUtf8`], [`ErrorKind::ControlInDecoded`], and
+/// [`ErrorKind::ForbiddenParameter`] for `name*` beside `name*0` (two values
+/// for one name); [`ErrorKind::UnbalancedComment`],
+/// [`ErrorKind::CommentTooDeep`].
 ///
 /// # Examples
 ///
@@ -167,7 +169,7 @@ pub fn parse_mime_params<'a>(s: &'a [u8], limits: &Limits) -> Result<(MimeParams
         }
         match (split_name(name).1, value) {
             (Section::Ext | Section::Part { n: 0, ext: true }, Word::Token(t)) => {
-                let ext = ExtValue::parse_mime(t).map_err(|e| e.shifted(at))?;
+                let ext = ExtendedValue::parse_mime(t).map_err(|e| e.shifted(at))?;
                 if split_name(name).1 == Section::Ext {
                     ext.check_text()
                         .map_err(|e| ParseError::new(e.kind(), at))?;
@@ -190,9 +192,18 @@ pub fn parse_mime_params<'a>(s: &'a [u8], limits: &Limits) -> Result<(MimeParams
         text: s.get(..i).unwrap_or(&[]),
         count,
     };
-    // Every continuation must be whole and decodable.
+    // Every continuation must be whole and decodable, and no `name*` may
+    // stand beside one: a reader that prefers either would see another value.
     for (name, _) in params.iter() {
-        if let (base, Section::Part { n: 0, .. }) = split_name(name) {
+        if let (base, Section::Ext) = split_name(name) {
+            let continued = params.iter().any(|(n, _)| {
+                matches!(split_name(n), (b, Section::Part { n: 0, .. }) if b.eq_ignore_ascii_case(base))
+            });
+            if continued {
+                let at = (name.as_ptr() as usize).saturating_sub(s.as_ptr() as usize);
+                return err(ErrorKind::ForbiddenParameter, at);
+            }
+        } else if let (base, Section::Part { n: 0, .. }) = split_name(name) {
             let c = Continuation { params, name: base };
             let _ = c.walk(limits, &mut |_| {})?;
         } else if let (base, Section::Part { .. }) = split_name(name) {
@@ -256,7 +267,7 @@ impl<'a> MimeParams<'a> {
                 }
                 (b, Section::Ext) if b.eq_ignore_ascii_case(want) => {
                     if let Word::Token(t) = w {
-                        ext = ExtValue::parse_mime(t).ok();
+                        ext = ExtendedValue::parse_mime(t).ok();
                     }
                 }
                 (b, Section::Plain) if b.eq_ignore_ascii_case(want) => plain = Some(w),
@@ -272,7 +283,9 @@ impl<'a> MimeParams<'a> {
     /// # Errors
     ///
     /// [`ErrorKind::BufferTooSmall`]; [`ErrorKind::InvalidUtf8`] for a plain
-    /// value that is not UTF-8. Nothing is written on error.
+    /// value that is not UTF-8; [`ErrorKind::ControlInDecoded`] for a control
+    /// character (HTAB, DEL, and C1 included) in any value. Nothing is
+    /// written on error.
     ///
     /// # Examples
     ///
@@ -292,21 +305,19 @@ impl<'a> MimeParams<'a> {
             Some(MimeValue::Continued(c)) => c.decode_into(out).map(Some),
             Some(MimeValue::Extended(e)) => e.decode_into(out).map(Some),
             Some(MimeValue::Plain(w)) => {
-                let Some(dst) = out.get_mut(..w.len()) else {
-                    return err(ErrorKind::BufferTooSmall, 0);
+                // Checked before anything is written, as every decoder
+                // checks: UTF-8, and no C0 (HTAB included), DEL, or C1.
+                let text = self.value_text(&w);
+                let shift = |e: ParseError| match e.kind() {
+                    ErrorKind::BufferTooSmall => e,
+                    _ => ParseError::new(e.kind(), text),
                 };
-                // Checked before anything is written.
-                let (mut utf8, text) = (crate::utf8::Utf8::new(), self.value_text(&w));
-                let valid = match w {
-                    Word::Token(t) => t.iter().all(|&b| utf8.push(b)),
-                    Word::Quoted(q) => q.bytes().all(|b| utf8.push(b)),
-                };
-                if !valid || !utf8.is_complete() {
-                    return err(ErrorKind::InvalidUtf8, text);
+                match w {
+                    Word::Token(t) => decode_checked(t.iter().copied(), Charset::Utf8, out),
+                    Word::Quoted(q) => decode_checked(q.bytes(), Charset::Utf8, out),
                 }
-                core::str::from_utf8(w.unescape_into(dst)?)
-                    .map(Some)
-                    .map_err(|e| ParseError::new(ErrorKind::InvalidUtf8, e.valid_up_to()))
+                .map(Some)
+                .map_err(shift)
             }
         }
     }
@@ -421,7 +432,7 @@ pub enum MimeValue<'a> {
     /// `name=value`.
     Plain(Word<'a>),
     /// `name*=charset'lang'value`.
-    Extended(ExtValue<'a>),
+    Extended(ExtendedValue<'a>),
     /// `name*0`, `name*1*`, ...: RFC 2231 continuations.
     Continued(Continuation<'a>),
 }
@@ -564,9 +575,10 @@ impl Continuation<'_> {
         let mut utf8 = crate::utf8::Utf8::new();
         let (mut count, mut prev) = (0usize, 0u8);
         // Every section passes through here, so what spans two sections is
-        // seen whole: `strict` also refuses HTAB, for decoded bytes.
-        let mut put = |b: u8, charset: Charset, strict: bool, off: usize| -> Result<()> {
-            if (b < 0x20 && (strict || b != b'\t')) || b == 0x7f {
+        // seen whole. HTAB is refused too, in plain sections as in encoded
+        // ones: no decoded value holds a control (T2).
+        let mut put = |b: u8, charset: Charset, off: usize| -> Result<()> {
+            if b < 0x20 || b == 0x7f {
                 return err(ErrorKind::ControlInDecoded, off);
             }
             if charset == Charset::UsAscii && b >= 0x80 {
@@ -600,7 +612,7 @@ impl Continuation<'_> {
             let Some((ext, w)) = *slot else { continue };
             let raw: &[u8] = match (k, ext, w) {
                 (0, true, Word::Token(t)) => {
-                    let e = ExtValue::parse_mime(t)?;
+                    let e = ExtendedValue::parse_mime(t)?;
                     charset = e.charset();
                     e.encoded()
                 }
@@ -628,18 +640,18 @@ impl Continuation<'_> {
                         i += 1;
                         b
                     };
-                    put(byte, charset, true, at(raw) + start)?;
+                    put(byte, charset, at(raw) + start)?;
                 }
             } else {
                 match w {
                     Word::Token(t) => {
                         for (i, &byte) in t.iter().enumerate() {
-                            put(byte, charset, false, at(t) + i)?;
+                            put(byte, charset, at(t) + i)?;
                         }
                     }
                     Word::Quoted(q) => {
                         for byte in q.bytes() {
-                            put(byte, charset, false, at(q.raw()))?;
+                            put(byte, charset, at(q.raw()))?;
                         }
                     }
                 }
@@ -998,6 +1010,35 @@ mod tests {
         assert_eq!(k(b"; t*0*=UTF-8''%C3"), ErrorKind::InvalidUtf8);
         assert_eq!(k(b"; t*0*=UTF-8''%0D"), ErrorKind::ControlInDecoded);
         assert_eq!(k(b"; t*=\"UTF-8''x\""), ErrorKind::InvalidCharset);
+        // `t*` beside `t*0` is two values for one name.
+        let at = |v: &[u8]| {
+            parse_mime_params(v, &Limits::DEFAULT)
+                .map(|_| ())
+                .map_err(|e| (e.kind(), e.offset()))
+        };
+        assert_eq!(
+            at(b"; filename*=UTF-8''safe.txt; filename*0=evil; filename*1=.exe"),
+            Err((ErrorKind::ForbiddenParameter, 2))
+        );
+        assert_eq!(
+            at(b"; T*0=a; t*=UTF-8''b"),
+            Err((ErrorKind::ForbiddenParameter, 9))
+        );
+        assert!(at(b"; t*=UTF-8''b; u*0=a").is_ok());
+        // Plain values are checked as decoded ones are.
+        let dec = |v: &[u8]| {
+            p(v).decode_into("name", &mut [0u8; 32])
+                .map(|_| ())
+                .map_err(|e| e.kind())
+        };
+        assert_eq!(
+            dec(b"; name=\"a\xc2\x85b\""),
+            Err(ErrorKind::ControlInDecoded)
+        );
+        assert_eq!(dec(b"; name=\"a\tb\""), Err(ErrorKind::ControlInDecoded));
+        assert_eq!(dec(b"; name=\"a\xffb\""), Err(ErrorKind::InvalidUtf8));
+        assert_eq!(dec(b"; name=\"caf\xc3\xa9\""), Ok(()));
+        assert_eq!(k(b"; name*0=\"a\tb\""), ErrorKind::ControlInDecoded);
         let mut v = Vec::new();
         for i in 0..32 {
             v.extend_from_slice(format!("; t*{i}=x").as_bytes());

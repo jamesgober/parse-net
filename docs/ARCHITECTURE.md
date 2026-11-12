@@ -58,7 +58,7 @@ src/
   date/mail_date.rs MailDate (RFC 5322 date-time)
   etag.rs           entity tags and conditions
   range.rs          Range, Content-Range, If-Range
-  ext_value.rs      RFC 8187 values
+  extended_value.rs      RFC 8187 values
   disposition.rs    Content-Disposition
   cache.rs          Cache-Control
   link.rs           Link
@@ -80,9 +80,9 @@ src/
 
 Every module uses only the shared modules (`class`, `scan`, `error`,
 `limits`, `utf8`, `write`, `num`, `text`) plus these field modules:
-`disposition` and `link` use `ext_value`; `negotiate` uses `media`;
+`disposition` and `link` use `extended_value`; `negotiate` uses `media`;
 `forwarded` and `origin` use `host`; `range` uses `date` and `etag`; `mail`
-uses `ext_value` and re-exports `MailDate`; `owned` uses the views it owns.
+uses `extended_value` and re-exports `MailDate`; `owned` uses the views it owns.
 The graph has no cycles.
 
 ## The byte-class table
@@ -137,17 +137,17 @@ noticed.
 | `MailDate` | UTC seconds, offset minutes, two flags | 16 |
 | `EntityTag` | a weak flag and the opaque slice | 24 |
 | `ByteRange` | first and last byte | 16 |
-| `ExtValue` | charset, language, encoded text | 40 |
+| `ExtendedValue` | charset, language, encoded text | 40 |
 | `ContentDisposition` | type and `Params` | 48 |
 | `HostPort` | host, port, empty-port flag | 32 |
 | `Origin` | scheme, host, port | 48 |
 | `Credentials` | scheme and payload | 48 |
 | `LinkValue` | target and parameter text | 40 |
 | `mail::AddrSpec` | local part and domain | 48 |
-| `sfv::BareItem` | the largest variant: a slice and a flag | 24 |
-| `sfv::Item` | bare item and parameter text | 48 |
-| `sfv::Member` | item or inner list | 56 |
-| `sfv::List`, `sfv::Dictionary` | the validated text and a count | 24 |
+| `structured::BareItem` | the largest variant: a slice and a flag | 24 |
+| `structured::Item` | bare item and parameter text | 48 |
+| `structured::Member` | item or inner list | 56 |
+| `structured::List`, `structured::Dictionary` | the validated text and a count | 24 |
 
 ## Algorithms
 
@@ -182,16 +182,21 @@ equal to its bytewise definition.
 
 ### Content negotiation
 
-Each media range has a specificity: an exact type with parameters 4, an exact
-type 3, `type/*` 2, `*/*` 1. An offer's weight is the q-value of the most
-specific range that matches it; `q=0` means not acceptable; ties go to the
+Each media range has a specificity: an exact type outranks `type/*`, which
+outranks `*/*`, and within each more parameters outrank fewer. `q` is the
+weight wherever it stands among the parameters. An offer's weight is the
+q-value of the most specific range that matches it; `q=0` means not acceptable; ties go to the
 earlier offer (the server's preference). Offers are scored in groups of 32
 per pass over the header, so the work is bounded by the member limit times
 the number of offers. An absent header gives every offer weight 1; a header
 that does not parse is treated as absent and reported as
 `Outcome::HeaderIgnored`, or refused with `MalformedPolicy::Refuse`.
-`Accept-Language` uses RFC 4647 lookup (truncate the range from the right)
-or basic filtering (prefix on a `-` boundary). `Accept-Encoding` keeps
+`Accept-Language` uses RFC 4647 lookup or basic filtering (prefix on a `-`
+boundary). Lookup takes the ranges in priority order and truncates each from
+the right until it equals an offer, skipping a `*` that other ranges follow.
+It is computed in the same one walk per group of offers: each offer keeps
+the best (weight, earlier range, longer truncation) of the ranges that reach
+it, which is the pair lookup would stop at, with no list sorted or stored. `Accept-Encoding` keeps
 `identity` acceptable unless `identity;q=0`, or `*;q=0` without an explicit
 `identity`.
 
@@ -200,7 +205,7 @@ or basic filtering (prefix on a `-` boundary). `Accept-Encoding` keeps
 The calendar is Howard Hinnant's `days_from_civil` and `civil_from_days` over
 `i64` days, valid for years 1 to 9999. IMF-fixdate is 29 bytes parsed by
 position. RFC 850 two-digit years are resolved against a `now` the caller
-passes (`http_date_at`), or the system clock with `std` (`http_date`): a date
+passes (`parse_http_date_at`), or the system clock with `std` (`parse_http_date`): a date
 more than 50 years ahead is taken as the most recent past year with the same
 last two digits (D-039). Formatting writes into a `[u8; 29]` (HTTP) or
 `[u8; 31]` (mail) by table lookup. `MailDate` parses RFC 5322 `date-time`
@@ -298,7 +303,7 @@ pub trait Sink {
 counts and writes nothing; `Vec<u8>` (with `alloc`) grows. Writers that build
 a value from parts write it once into a `CountSink`, check the room with
 `remaining`, then write it for real, so a `SliceSink` is never left holding
-half a value. Structured writers (`sfv::Writer`, `cache::Writer`) reserve per
+half a value. Structured writers (`structured::Writer`, `cache::Writer`) reserve per
 call.
 
 ## Features
@@ -307,7 +312,7 @@ call.
 |---|---|---|
 | (none) | yes | everything not listed below; `no_std`, no allocator |
 | `alloc` | no | the owned forms, `Sink for Vec<u8>` |
-| `std` | no | `HttpDate` to and from `SystemTime`, `HttpDate::now`, `http_date`; implies `alloc` |
+| `std` | no | `HttpDate` to and from `SystemTime`, `HttpDate::now`, `parse_http_date`; implies `alloc` |
 | `encode-lib` | no | declared and empty until encode-lib is published; base64 decoding then moves here (D-002) |
 
 `core::error::Error` is implemented without `std`.

@@ -16,7 +16,7 @@ fuzz_target!(|data: &[u8]| {
     let errors = common::no_alloc(|| {
         let mut errors = [None; 3];
         for (slot, now) in errors.iter_mut().zip([0i64, 1_792_540_800, HttpDate::MAX.unix()]) {
-            match HttpDate::parse_at(data, now) {
+            match parse_net::parse_http_date_at(data, now) {
                 Ok(d) => assert_eq!(HttpDate::parse_imf_fixdate(&d.format()), Ok(d)),
                 Err(e) => *slot = Some(e),
             }

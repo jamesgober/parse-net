@@ -475,8 +475,9 @@ impl<'a> Params<'a> {
 
     /// The parameters before the first one named `name` (ASCII
     /// case-insensitive), and that parameter; all of them and `None` when no
-    /// parameter has the name. Used to split media-type parameters from
-    /// `q` and the `accept-ext` after it.
+    /// parameter has the name. Used to find the weight of a coding,
+    /// charset, or language member, where nothing but `q` may follow.
+    #[inline]
     pub(crate) fn split_at_name(&self, name: &[u8]) -> (Params<'a>, Option<Param<'a>>) {
         for (index, p) in self.iter().enumerate() {
             if p.name.eq_ignore_ascii_case(name) {
@@ -497,6 +498,44 @@ impl<'a> Params<'a> {
             }
         }
         (*self, None)
+    }
+
+    /// The parameters before the first one named `name` (ASCII
+    /// case-insensitive), that parameter, and the parameters after it; all
+    /// of them, `None`, and none when no parameter has the name. Used to
+    /// take `q` out of a media range wherever it stands (RFC 9110 section
+    /// 12.5.1).
+    #[inline]
+    pub(crate) fn split_around_name(
+        &self,
+        name: &[u8],
+    ) -> (Params<'a>, Option<Param<'a>>, Params<'a>) {
+        let (before, found) = self.split_at_name(name);
+        let Some(p) = found else {
+            return (
+                before,
+                None,
+                Params {
+                    text: &[],
+                    count: 0,
+                    policy: self.policy,
+                },
+            );
+        };
+        // The text after the value: `OWS ";" ...`, validated already.
+        let value = match p.value {
+            Word::Token(t) => t,
+            Word::Quoted(q) => q.raw(),
+        };
+        let end = (value.as_ptr() as usize + value.len())
+            .saturating_sub(self.text.as_ptr() as usize)
+            + usize::from(matches!(p.value, Word::Quoted(_)));
+        let after = Params {
+            text: self.text.get(end..).unwrap_or(&[]),
+            count: self.count.saturating_sub(before.count).saturating_sub(1),
+            policy: self.policy,
+        };
+        (before, Some(p), after)
     }
 
     /// The number of parameters.

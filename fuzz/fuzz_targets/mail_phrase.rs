@@ -6,7 +6,7 @@
 //! `parse_mailbox` accepts decodes or fails with a listed error.
 
 use libfuzzer_sys::fuzz_target;
-use parse_net::{Limits, mail};
+use parse_net::mail;
 
 #[path = "common.rs"]
 mod common;
@@ -52,7 +52,7 @@ fuzz_target!(|data: &[u8]| {
     let mut want = [0u8; 8192];
     let mut quoted = [0u8; 16384];
     common::no_alloc(|| {
-        match mail::decode_phrase(data, &Limits::DEFAULT, &mut out) {
+        match mail::decode_phrase(data, &mut out) {
             Ok(s) => {
                 assert!(s.len() <= 2 * data.len());
                 assert!(!s.chars().any(|c| c.is_control() && c != '\t'), "{s:?}");
@@ -82,14 +82,14 @@ fuzz_target!(|data: &[u8]| {
                 }
                 quoted[n] = b'"';
                 n += 1;
-                let back = mail::decode_phrase(&quoted[..n], &Limits::DEFAULT, &mut out).expect("quoted text decodes");
+                let back = mail::decode_phrase(&quoted[..n], &mut out).expect("quoted text decodes");
                 assert_eq!(back, text);
             }
         }
 
-        if let Ok(m) = mail::parse_mailbox(data, &Limits::DEFAULT) {
+        if let Ok(m) = mail::parse_mailbox(data) {
             if let Some(name) = m.display_name {
-                match mail::decode_phrase(name, &Limits::DEFAULT, &mut out) {
+                match mail::decode_phrase(name, &mut out) {
                     Ok(s) => assert!(s.len() <= 2 * name.len()),
                     Err(e) => common::check_error(&e),
                 }

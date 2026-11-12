@@ -7,7 +7,7 @@ use core::net::IpAddr;
 
 use parse_net::{
     Limits, MailDate, SliceSink, forwarded, link, mail,
-    sfv::{self, BareItem, Member, Writer},
+    structured::{self, BareItem, Member, Writer},
 };
 use proptest::prelude::*;
 
@@ -30,7 +30,7 @@ proptest! {
     fn test_mail_and_link_parsers_never_panic(v in bytes(), g in grammar_bytes()) {
         let mut out = [0u8; 512];
         for input in [&v[..], &g[..]] {
-            if let Ok(l) = parse_net::parse_link(input, &Limits::DEFAULT) {
+            if let Ok(l) = parse_net::parse_link(input) {
                 for x in l.iter() {
                     let _ = x.rels().count();
                     if let Some(t) = x.title() {
@@ -38,13 +38,13 @@ proptest! {
                     }
                 }
             }
-            let _ = MailDate::parse(input, false);
-            let _ = MailDate::parse(input, true);
+            let _ = MailDate::parse(input);
+            let _ = MailDate::parse_obsolete(input);
             let _ = mail::check_header_value(input);
             if let Ok(u) = mail::unfold(input) {
                 let _ = u.iter().count();
             }
-            let _ = mail::decode_words(input, &Limits::DEFAULT, &mut out);
+            let _ = mail::decode_words(input, &mut out);
             if let Ok((p, _)) = mail::parse_mime_params(input, &Limits::DEFAULT) {
                 for (n, _) in p.iter() {
                     if let Ok(n) = std::str::from_utf8(n) {
@@ -53,12 +53,12 @@ proptest! {
                 }
             }
             let _ = mail::parse_addr_spec(input);
-            if let Ok(m) = mail::parse_mailbox(input, &Limits::DEFAULT) {
+            if let Ok(m) = mail::parse_mailbox(input) {
                 if let Some(name) = m.display_name {
-                    let _ = mail::decode_phrase(name, &Limits::DEFAULT, &mut out);
+                    let _ = mail::decode_phrase(name, &mut out);
                 }
             }
-            let _ = mail::decode_phrase(input, &Limits::DEFAULT, &mut out);
+            let _ = mail::decode_phrase(input, &mut out);
             let _ = mail::parse_msg_id(input);
         }
     }
@@ -72,7 +72,7 @@ proptest! {
         let mut buf = [0u8; 512];
         let mut out = SliceSink::new(&mut buf);
         link::write_link(target.as_bytes(), &pairs, &mut out).expect("valid input");
-        let l = parse_net::parse_link(out.written(), &Limits::DEFAULT).expect("written link parses");
+        let l = parse_net::parse_link(out.written()).expect("written link parses");
         let v = l.iter().next().expect("one link");
         prop_assert_eq!(v.target(), target.as_bytes());
         let got: Vec<_> = v.params().iter().collect();
@@ -90,7 +90,7 @@ proptest! {
     fn test_mail_date_round_trip(secs in -62_135_596_800i64..253_402_300_799, off in -5999i16..=5999) {
         if let Ok(d) = MailDate::new(secs, off) {
             let (b, n) = d.format();
-            let back = MailDate::parse(&b[..n], false).expect("formatted date parses");
+            let back = MailDate::parse(&b[..n]).expect("formatted date parses");
             prop_assert_eq!((back.utc(), back.offset_minutes()), (secs, off));
         }
     }
@@ -112,7 +112,7 @@ proptest! {
                 v[at] = byte;
             }
             let spaced = [b" ".as_slice(), &v].concat();
-            match (MailDate::parse(&v, false), MailDate::parse(&spaced, false)) {
+            match (MailDate::parse(&v), MailDate::parse(&spaced)) {
                 (Ok(a), Ok(b)) => prop_assert_eq!(a, b),
                 (Err(a), Err(b)) => {
                     prop_assert_eq!(a.kind(), b.kind());
@@ -127,12 +127,12 @@ proptest! {
     fn test_b_encoded_words_round_trip(text in "\\PC{0,80}", room in 0usize..90) {
         let mut buf = vec![0u8; 8192];
         let mut out = SliceSink::new(&mut buf);
-        mail::encode_words_b(&text, room, &mut out).expect("no control characters");
+        mail::encode_words_base64(&text, room, &mut out).expect("no control characters");
         let flat: Vec<u8> = mail::unfold(out.written()).expect("unfolds").iter().flatten().copied().collect();
         let mut dec = vec![0u8; 8192];
         let l = Limits::DEFAULT.max_encoded_words(u16::MAX);
         let lead = if out.written().starts_with(b"\r\n ") { " " } else { "" };
-        prop_assert_eq!(mail::decode_words(&flat, &l, &mut dec).expect("decodes"), format!("{lead}{text}"));
+        prop_assert_eq!(mail::decode_words_with_limits(&flat, &l, &mut dec).expect("decodes"), format!("{lead}{text}"));
     }
 
     #[test]
@@ -146,7 +146,7 @@ proptest! {
         // When nothing fits in `room`, the words start after a fold, whose
         // space stays in front (as it would after `Subject:`).
         let lead = if out.written().starts_with(b"\r\n ") { " " } else { "" };
-        prop_assert_eq!(mail::decode_words(&flat, &l, &mut dec).expect("decodes"), format!("{lead}{text}"));
+        prop_assert_eq!(mail::decode_words_with_limits(&flat, &l, &mut dec).expect("decodes"), format!("{lead}{text}"));
     }
 
     #[test]
@@ -225,11 +225,13 @@ proptest! {
     fn test_forwarded_element_round_trip(a in any::<[u8; 4]>(), b in any::<[u16; 8]>(), port in prop::option::of(any::<u16>()), https in any::<bool>()) {
         let v4 = IpAddr::from(a);
         let v6 = IpAddr::from(b);
-        let e = forwarded::Element {
-            for_: Some(forwarded::Node::Addr(v4, port.map(forwarded::NodePort::Number))),
-            by: Some(forwarded::Node::Addr(v6, None)),
-            host: None,
-            proto: Some(if https { forwarded::Proto::Https } else { forwarded::Proto::Http }),
+        let e = {
+            let mut e = forwarded::Element::new();
+            e.for_ = Some(forwarded::Node::Addr(v4, port.map(forwarded::NodePort::Number)));
+            e.by = Some(forwarded::Node::Addr(v6, None));
+            e.host = None;
+            e.proto = Some(if https { forwarded::Proto::Https } else { forwarded::Proto::Http });
+            e
         };
         let mut buf = [0u8; 128];
         let mut out = SliceSink::new(&mut buf);
@@ -260,7 +262,7 @@ proptest! {
         w.close_inner_list().expect("close");
         w.param_key("d").expect("key").display_string(&disp).expect("text");
         w.finish().expect("finish");
-        let l = sfv::parse_list(out.written()).expect("written list parses");
+        let l = structured::parse_list(out.written()).expect("written list parses");
         let members: Vec<_> = l.iter().collect();
         prop_assert_eq!(members.len(), ints.len() + decs.len() + 1);
         for (m, &i) in members.iter().zip(&ints) {

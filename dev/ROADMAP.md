@@ -71,8 +71,8 @@ Exit: every P0, P1, and P2 item exists; every public item has a doctest; `cargo 
 - [x] FWD-7 (`forwarded::write_element`). ATH-5 and ATH-7 shipped in 0.4 (D-049).
 - [x] SFV-13 (the writer, with `param_key`, D-059, and canonical views, D-060; the httpwg serialisation tests and every parse case's canonical form pass), SFV-16.
 - [x] DAT-11 to DAT-13, MAIL-1 to MAIL-4, MAIL-6 to MAIL-14 (US-ASCII through `Charset::UsAscii`, D-058).
-- [x] MED-11, OWN: `OwnedMediaType`, `OwnedEntityTag`, `OwnedHostPort`, `sfv::owned`. DSP-7 shipped in 0.4 (D-049).
-- [x] The `encode-lib` feature: encode-lib is not published, so ATH-3, MAIL-5, `ByteSeq::decode_into`, `sfv::Writer::bytes`, and `B` encoded words move to 0.6, recorded per D-002 (D-062).
+- [x] MED-11, OWN: `OwnedMediaType`, `OwnedEntityTag`, `OwnedHostPort`, `structured::owned`. DSP-7 shipped in 0.4 (D-049).
+- [x] The `encode-lib` feature: encode-lib is not published, so ATH-3, MAIL-5, `ByteSeq::decode_into`, `structured::Writer::bytes`, and `B` encoded words move to 0.6, recorded per D-002 (D-062).
 - [x] `docs/ARCHITECTURE.md`; `docs/GRAMMAR.md` extended to Link and the email layer.
 - [x] Every public item has a doctest (560 items).
 - [x] Fuzz targets for the 0.5 parsers and writers (`link`, `mail_date`, `mail_words`, `mime_params`, `addr_spec`, `fold_unfold`, `sfv_roundtrip`): all 34 targets ten minutes clean against 0.5.
@@ -82,17 +82,17 @@ Exit: every P0, P1, and P2 item exists; every public item has a doctest; `cargo 
 
 Exit: every comparable row of PLAN 10.1 at least 20% faster than the best Rust competitor, or a recorded plan; no regression over 5% against 0.5.
 
-- [ ] Moved from 0.5 (D-062): ATH-3 `basic_decode_into`, MAIL-5 `encode_words_b`, `ByteSeq::decode_into`, `sfv::Writer::bytes`, `B` encoded words, behind `encode-lib`. encode-lib is still not published; they move to 0.7, then to the first release after encode-lib appears (D-002). MAIL-5 and `B` words shipped in 0.9.1 without it (D-080).
+- [ ] Moved from 0.5 (D-062): ATH-3 `basic_decode_into`, MAIL-5 `encode_words_base64`, `ByteSeq::decode_into`, `structured::Writer::bytes`, `B` encoded words, behind `encode-lib`. encode-lib is still not published; they move to 0.7, then to the first release after encode-lib appears (D-002). MAIL-5 and `B` words shipped in 0.9.1 without it (D-080).
 - [x] Benchmarks for every row of PLAN 10.1 against the named competitors (`benches/`, D-066).
 - [x] SWAR fast paths where measured to help (`scan`, from 0.3); `#[inline]` decisions recorded in `docs/PERFORMANCE.md` with D-041.
 - [x] `docs/PERFORMANCE.md`.
-- [x] Exit: 10 of 12 compared rows at least 20% faster; `parse_media_type` (17%) and `response_cache_control` (19%) have a recorded plan (D-069); no regression against 0.5.
+- [x] Exit: 10 of 12 compared rows at least 20% faster; `parse_media_type` (17%) and `parse_response_cache_control` (19%) have a recorded plan (D-069); no regression against 0.5.
 
 ## v0.7.0 - Hardening (DONE, 2026-10-24)
 
 Exit: no open fuzz or differential finding marked "ours wrong"; threat table fully tested.
 
-- [x] From 0.6 (D-069): the slice-cursor rewrite of `param::parse` and the validated reads; `parse_media_type` (30%) and `response_cache_control` (31%) meet the 20% target.
+- [x] From 0.6 (D-069): the slice-cursor rewrite of `param::parse` and the validated reads; `parse_media_type` (30%) and `parse_response_cache_control` (31%) meet the 20% target.
 - [ ] From 0.5 (D-062): the `encode-lib` helpers. encode-lib is still not published; they wait for the first release after it appears (D-002).
 - [x] Every fuzz target 24 hours clean; differential targets weekly in CI (D-073).
 - [x] Attack tests T1 to T25 all present and passing (`tests/threats.rs` and the tests it lists); complexity tests for every walker (`tests/complexity.rs`). They and the fuzz run found the quadratic repeated-name check (D-072), the decoded controls `decode_words` let through (D-071), a 999-byte line from `mail::fold`, and the entity-tag list bug fixed in 0.6.1.
@@ -111,9 +111,11 @@ Exit: two consumers in published releases with green CI; no API change requested
 Exit: four consumers end to end; no breaking change for one full release cycle; the pre-1.0 polish pass below done before any release candidate.
 
 - [ ] smtp-net and web-net built on it; ws-net on it (from 0.8); cookie-net and form-net on `^0.7` or later; API frozen except for fixes found by consumers; `0.9.x` release candidates.
-- [x] 0.9.1: `param::parse_optional` for RFC 6455 extension parameters, the gap ws-net found adopting 0.9.0 (D-079), and `mail::encode_words_b` with `B` decoding in `decode_words`, for smtp-net (D-080). Additive, except that `decode_words` reads `B` words it refused.
+- [x] 0.9.1: `param::parse_optional` for RFC 6455 extension parameters, the gap ws-net found adopting 0.9.0 (D-079), and `mail::encode_words_base64` with `B` decoding in `decode_words`, for smtp-net (D-080). Additive, except that `decode_words` reads `B` words it refused.
 - [x] 0.9.2: `mail::decode_phrase` for display names (D-081) and `mail::write_mime_param_at` for parameters after other text on a line (D-082), the gaps smtp-net found adopting 0.9.1; `class::is_atext`, the third, was already public. Additive; `write_mime_param` 30% faster on quoted values.
-- [x] 0.9.3: fixes from a review of the code added since 0.9.0 (D-084), `Cache-Control` names compared as words (6.6% fewer instructions), and the HSTS question closed (D-083). No signature changes.
+- [x] 0.9.3: fixes to the code added since 0.9.0 (D-084), `Cache-Control` names compared as words (6.6% fewer instructions), and the HSTS question closed (D-083). No signature changes.
+- [x] 0.10.0: the API simplified from an audit against the standard's API rules (D-085, `dev/AUDIT-SIMPLICITY.md`): root parsers named `parse_*`, Tier 1 without `Limits`, abbreviations spelled out, one way to do each thing, `docs/API.md` covering every public item. Breaking, with `docs/MIGRATION.md`; the no-breaking-change cycle starts again at `0.10.x`.
+- [x] 0.10.0: security fixes (D-087 to D-091): `client_address` reads nothing left of the client and never fails, `ForbiddenParameter` for file-name forms readers resolve differently, quoted-pair separators reported, `Cache-Control` struct readers skip one bad directive, `%` refused in hosts, `Representation` for conditional requests, `#[non_exhaustive]` public-field types, `into_owned`.
 
 ### Pre-1.0 polish pass (DONE at 0.9.0, 2026-11-03)
 
@@ -121,7 +123,7 @@ James's standing rule: go back and fix any issues and tune performance before ge
 
 - [x] Every accepted gap, deferred item, known issue, and missed target revisited; the `encode-lib` helpers stay blocked on encode-lib, and they and the other open items are in the readiness note.
 - [x] A fresh performance pass: every row profiled, `byte_ranges` (21% to 76%), `Content-Disposition` (24% to 42%), and `client_address` tuned, and the cost of D-072 taken back (D-074). Every row is at least 30% ahead.
-- [x] The security and edge-case review again, by three independent reviews: 46 defects found and fixed, each with a regression test; every fuzz target 24 hours on the release code.
+- [x] The security and edge-case pass again over the whole crate: 46 defects found and fixed, each with a regression test; every fuzz target 24 hours on the release code.
 - [x] Before 1.0: ask the other parameter users whether they need the optional-value shape (D-079). smtp-net does not: ESMTP parameters are space-separated, and MIME parameters (`mail::parse_mime_params`) always carry a value. web-net's `Strict-Transport-Security` (RFC 6797, `max-age=...; includeSubDomains`) has no leading `;`, but web-net writes HSTS and reads none, so it is not needed before 1.0 (D-083).
 
 Repeat before the first release candidate if the code changes: a fresh benchmark on a quiet machine, the threat table against the code, and the 24-hour run.

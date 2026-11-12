@@ -18,11 +18,11 @@ fuzz_target!(|data: &[u8]| {
             Ok(d) => assert_eq!(d.iter().count(), d.len()),
             Err(e) => common::check_error(&e),
         }
-        let _ = cache::response_cache_control(data);
-        let _ = cache::request_cache_control(data);
+        let _ = cache::parse_response_cache_control(data);
+        let _ = cache::parse_request_cache_control(data);
         let half = data.split_at(data.len() / 2);
-        let _ = cache::response_lines([half.0, half.1]);
-        let _ = cache::request_lines([half.0, half.1]);
+        let _ = cache::parse_response_lines([half.0, half.1]);
+        let _ = cache::parse_request_lines([half.0, half.1]);
         if let Ok(text) = core::str::from_utf8(data) {
             let mut out = SliceSink::new(&mut buf);
             let mut w = cache::Writer::new(&mut out);

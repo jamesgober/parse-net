@@ -5,8 +5,11 @@
 //! The leftmost `X-Forwarded-For` address is whatever the client typed; only
 //! addresses appended by proxies you trust mean anything. [`client_address`]
 //! ignores the header unless the connection's peer is trusted, walks the
-//! chain from the right, and stops at the first address it cannot trust. A
-//! malformed chain fails closed: use the peer address.
+//! chain from the right, and stops at the first address it cannot trust.
+//! Nothing left of that address is read, so the client cannot make the walk
+//! fail with text of its own. When the entry there gives no address,
+//! the answer is [`ClientAddress::Unknown`]: never use the peer then, as it
+//! is a trusted proxy.
 //!
 //! # Examples
 //!
@@ -18,12 +21,12 @@
 //! let inner: IpAddr = "10.0.0.1".parse()?;
 //! let trusted = |a: IpAddr| a == proxy || a == inner;
 //! let xff: [&[u8]; 1] = [b"203.0.113.9, 198.51.100.7, 10.0.0.1"];
-//! let ip = pn::client_address(proxy, ForwardedSource::XForwardedFor(&xff), &trusted, 16)?;
+//! let ip = pn::client_address(proxy, ForwardedSource::XForwardedFor(&xff), &trusted);
 //! assert_eq!(ip, ClientAddress::Forwarded { addr: "198.51.100.7".parse()?, hops: 2 });
 //!
 //! // The same header from an untrusted peer is ignored entirely.
 //! let stranger: IpAddr = "192.0.2.1".parse()?;
-//! assert_eq!(pn::client_address(stranger, ForwardedSource::XForwardedFor(&xff), &trusted, 16)?,
+//! assert_eq!(pn::client_address(stranger, ForwardedSource::XForwardedFor(&xff), &trusted),
 //!            ClientAddress::Peer(stranger));
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -48,7 +51,10 @@ use crate::{
 /// Decides whether an address belongs to a proxy you trust.
 ///
 /// Implemented for every `Fn(IpAddr) -> bool`; a deployment's CIDR sets
-/// (net-io, bouncer-io configuration) implement it directly.
+/// (net-io, bouncer-io configuration) implement it directly. Addresses
+/// arrive as written: an IPv4-mapped IPv6 entry (`::ffff:10.0.0.2`) is an
+/// [`IpAddr::V6`], so a set of IPv4 ranges does not trust it, which errs
+/// toward untrusted.
 ///
 /// # Examples
 ///
@@ -89,7 +95,7 @@ impl<F: Fn(IpAddr) -> bool> Trust for F {
 /// let peer: IpAddr = "10.0.0.1".parse()?;
 /// let lines: [&[u8]; 1] = [b"for=192.0.2.60"];
 /// let source = ForwardedSource::Forwarded(&lines);
-/// assert_eq!(client_address(peer, source, &|a: IpAddr| a == peer, 16)?,
+/// assert_eq!(client_address(peer, source, &|a: IpAddr| a == peer),
 ///            ClientAddress::Forwarded { addr: "192.0.2.60".parse()?, hops: 1 });
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -112,9 +118,9 @@ pub enum ForwardedSource<'a> {
 /// let peer: IpAddr = "10.0.0.1".parse()?;
 /// let trusted = |a: IpAddr| a == peer;
 /// let hidden: [&[u8]; 1] = [b"for=unknown"];
-/// assert_eq!(client_address(peer, ForwardedSource::Forwarded(&hidden), &trusted, 16)?, ClientAddress::Unknown { hops: 1 });
+/// assert_eq!(client_address(peer, ForwardedSource::Forwarded(&hidden), &trusted), ClientAddress::Unknown { hops: 1 });
 /// let none: [&[u8]; 0] = [];
-/// assert_eq!(client_address(peer, ForwardedSource::XForwardedFor(&none), &trusted, 16)?, ClientAddress::Peer(peer));
+/// assert_eq!(client_address(peer, ForwardedSource::XForwardedFor(&none), &trusted), ClientAddress::Peer(peer));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[non_exhaustive]
@@ -131,9 +137,10 @@ pub enum ClientAddress {
         /// The elements walked, the returned one included.
         hops: u8,
     },
-    /// The walk reached `unknown`, an obfuscated identifier, or an element
-    /// without `for` after `hops` elements: nothing to its left can be
-    /// trusted.
+    /// No reliable client address: after `hops` elements the walk reached
+    /// `unknown`, an obfuscated identifier, an element without `for`, text
+    /// that is not an address, or the hop limit. Never use the peer in its
+    /// place: it is a trusted proxy.
     Unknown {
         /// The elements walked, the unknown one included.
         hops: u8,
@@ -175,6 +182,7 @@ pub enum NodePort<'a> {
 /// assert_eq!(nodes[2], Some(Node::Obfuscated(b"_hidden", None)));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Node<'a> {
     /// An IP address.
@@ -245,7 +253,8 @@ fn proto(v: &[u8]) -> Option<Proto> {
 /// assert!(e.by.is_none());
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Element<'a> {
     /// `for=`: the client of this hop.
     pub for_: Option<Node<'a>>,
@@ -255,6 +264,35 @@ pub struct Element<'a> {
     pub host: Option<HostPort<'a>>,
     /// `proto=`.
     pub proto: Option<Proto>,
+}
+
+impl Element<'_> {
+    /// An element with no parameters, to fill in field by field before
+    /// [`write_element`] (the struct is `#[non_exhaustive]`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{forwarded::{write_element, Element, Node, Proto}, SliceSink};
+    ///
+    /// let mut e = Element::new();
+    /// e.for_ = Some(Node::Addr("192.0.2.60".parse()?, None));
+    /// e.proto = Some(Proto::Https);
+    /// let mut buf = [0u8; 64];
+    /// let mut out = SliceSink::new(&mut buf);
+    /// write_element(&e, &mut out)?;
+    /// assert_eq!(out.written(), b"for=192.0.2.60;proto=https");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            for_: None,
+            by: None,
+            host: None,
+            proto: None,
+        }
+    }
 }
 
 /// Limits for walking text that was already validated.
@@ -619,12 +657,12 @@ fn xff_line(line: &[u8]) -> impl Iterator<Item = &[u8]> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Copy, Debug)]
-pub struct XffChain<'a> {
+pub struct XForwardedFor<'a> {
     lines: &'a [&'a [u8]],
     count: usize,
 }
 
-impl<'a> XffChain<'a> {
+impl<'a> XForwardedFor<'a> {
     /// The addresses and ports, left to right across every line.
     ///
     /// # Examples
@@ -702,7 +740,10 @@ impl<'a> XffChain<'a> {
 /// assert!(parse_x_forwarded_for(&[&b"1.2.3.4, , 5.6.7.8"[..]], &Limits::DEFAULT).is_err());
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn parse_x_forwarded_for<'a>(lines: &'a [&'a [u8]], limits: &Limits) -> Result<XffChain<'a>> {
+pub fn parse_x_forwarded_for<'a>(
+    lines: &'a [&'a [u8]],
+    limits: &Limits,
+) -> Result<XForwardedFor<'a>> {
     let mut count = 0usize;
     for (n, line) in lines.iter().enumerate() {
         crate::scan::check_field_value(line).map_err(|e| e.on_line(n))?;
@@ -717,7 +758,7 @@ pub fn parse_x_forwarded_for<'a>(lines: &'a [&'a [u8]], limits: &Limits) -> Resu
             }
         }
     }
-    Ok(XffChain { lines, count })
+    Ok(XForwardedFor { lines, count })
 }
 
 /// Parses `X-Forwarded-Proto`: a URI scheme, case-insensitive ([`Proto`]
@@ -777,93 +818,140 @@ pub fn parse_x_forwarded_host(value: &[u8]) -> Result<HostPort<'_>> {
     crate::host::parse_host_port(value)
 }
 
-/// Resolves an `X-Forwarded-For` chain in one pass from the right: the first
-/// untrusted address is the client, and every member is still read, so a
-/// malformed chain fails closed. The outer `None` is any problem at all, and
-/// the left-to-right parser then gives the error; the inner `None` is an
-/// empty chain.
-fn xff_client(
-    lines: &[&[u8]],
-    limits: &Limits,
+/// The walk from the right shared by both header kinds. `entries` yields the
+/// chain right to left, `None` for an entry that gives no reliable address;
+/// it is lazy, so nothing left of the decision point is ever read. `None` is
+/// an empty chain.
+fn walk(
+    entries: impl Iterator<Item = Option<IpAddr>>,
     trust: &impl Trust,
-) -> Option<Option<ClientAddress>> {
-    for line in lines {
-        crate::scan::check_field_value(line).ok()?;
+    limit: u8,
+) -> Option<ClientAddress> {
+    let (mut hops, mut leftmost) = (0u8, None);
+    for entry in entries {
+        if hops == limit {
+            return Some(ClientAddress::Unknown { hops });
+        }
+        hops += 1;
+        match entry {
+            Some(a) if trust.is_trusted(a) => leftmost = Some(a),
+            Some(addr) => return Some(ClientAddress::Forwarded { addr, hops }),
+            None => return Some(ClientAddress::Unknown { hops }),
+        }
     }
-    let hops = |n: usize| u8::try_from(n).unwrap_or(u8::MAX);
-    let (mut count, mut found, mut leftmost) = (0usize, None, None);
-    for line in lines.iter().rev() {
-        for m in line.rsplit(|&b| b == b',') {
-            let (addr, _) = xff_member(trim_ows(m))?;
-            count += 1;
-            if count > usize::from(limits.hops) {
-                return None;
-            }
-            if found.is_none() {
-                if trust.is_trusted(addr) {
-                    leftmost = Some(addr);
-                } else {
-                    found = Some(ClientAddress::Forwarded {
-                        addr,
-                        hops: hops(count),
-                    });
+    leftmost.map(|addr| ClientAddress::Forwarded { addr, hops })
+}
+
+/// The `X-Forwarded-For` members right to left; a line of only OWS has
+/// none.
+fn xff_rev<'a>(lines: &'a [&'a [u8]]) -> impl Iterator<Item = Option<IpAddr>> + 'a {
+    lines
+        .iter()
+        .rev()
+        .filter(|line| !trim_ows(line).is_empty())
+        .flat_map(|line| line.rsplit(|&b| b == b','))
+        .map(|m| xff_member(trim_ows(m)).map(|(a, _)| a))
+}
+
+/// Whether every quoted string in `line` is closed, read left to right as
+/// the list grammar reads it.
+fn quotes_closed(line: &[u8]) -> bool {
+    let (mut quoted, mut escaped) = (false, false);
+    for &b in line {
+        if escaped {
+            escaped = false;
+        } else if quoted && b == b'\\' {
+            escaped = true;
+        } else if b == b'"' {
+            quoted = !quoted;
+        }
+    }
+    !quoted
+}
+
+/// The elements of one `Forwarded` line right to left, split at commas
+/// outside quoted strings. With every quote closed, a `"` met from the right
+/// outside a string closes one, and inside a string it is escaped when an
+/// odd run of `\` precedes it. A backslash outside a string can misread the
+/// split, but only inside an element the walk refuses anyway.
+fn forwarded_line_rev(line: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let (mut end, mut done) = (line.len(), false);
+    core::iter::from_fn(move || {
+        if done {
+            return None;
+        }
+        let mut quoted = false;
+        let mut i = end;
+        while i > 0 {
+            i -= 1;
+            match line.get(i) {
+                Some(b'"') if quoted => {
+                    let before = line.get(..i).unwrap_or(&[]);
+                    let run = before.iter().rev().take_while(|&&b| b == b'\\').count();
+                    if run % 2 == 0 {
+                        quoted = false;
+                    }
                 }
+                Some(b'"') => quoted = true,
+                Some(b',') if !quoted => {
+                    let e = line.get(i + 1..end).unwrap_or(&[]);
+                    end = i;
+                    return Some(e);
+                }
+                _ => {}
             }
         }
-    }
-    Some(found.or(leftmost.map(|addr| ClientAddress::Forwarded {
-        addr,
-        hops: hops(count),
-    })))
+        done = true;
+        line.get(..end)
+    })
 }
 
-/// Resolves validated `Forwarded` elements in one pass from the left (a
-/// quoted comma rules out splitting from the right): the client is the last
-/// element that is not a trusted address.
-fn forwarded_client(elements: &ForwardedElements<'_>, trust: &impl Trust) -> Option<ClientAddress> {
-    let count = elements.len();
-    let hops = |n: usize| u8::try_from(n).unwrap_or(u8::MAX);
-    let (mut last, mut leftmost) = (None, None);
-    for (i, e) in elements.iter().enumerate() {
-        match e.for_ {
-            Some(Node::Addr(a, _)) if trust.is_trusted(a) => {
-                leftmost = leftmost.or(Some(a));
-            }
-            Some(Node::Addr(addr, _)) => {
-                last = Some(ClientAddress::Forwarded {
-                    addr,
-                    hops: hops(count - i),
-                });
-            }
-            _ => {
-                last = Some(ClientAddress::Unknown {
-                    hops: hops(count - i),
-                });
-            }
-        }
-    }
-    last.or(leftmost.map(|addr| ClientAddress::Forwarded {
-        addr,
-        hops: hops(count),
-    }))
+/// The `Forwarded` elements right to left: the `for` address of each, or
+/// `None` for an element without a usable one, or for a line whose quoted
+/// strings are not closed. Empty elements are skipped, as the list grammar
+/// allows them.
+fn forwarded_rev<'a>(lines: &'a [&'a [u8]]) -> impl Iterator<Item = Option<IpAddr>> + 'a {
+    lines.iter().rev().flat_map(|&line| {
+        let closed = quotes_closed(line);
+        let broken = (!closed).then_some(None);
+        let elements = closed
+            .then(|| forwarded_line_rev(line))
+            .into_iter()
+            .flatten()
+            .map(trim_ows)
+            .filter(|e| !e.is_empty())
+            .map(|e| match element(e).map(|e| e.for_) {
+                Ok(Some(Node::Addr(a, _))) => Some(a),
+                _ => None,
+            });
+        broken.into_iter().chain(elements)
+    })
 }
 
-/// Resolves the client address of a request that arrived from `peer`.
+/// Resolves the client address of a request that arrived from `peer`, with
+/// at most 16 trusted hops ([`client_address_with_limits`] takes others).
 ///
-/// The algorithm: an untrusted `peer` gives [`ClientAddress::Peer`] and the
-/// header is never read. Otherwise the whole chain is parsed; a malformed
-/// chain anywhere is an error (fail closed: use the peer); more than
-/// `max_hops` elements is an error. The chain is walked from the right:
-/// trusted addresses are skipped; the first untrusted address is the client;
-/// `unknown`, an obfuscated identifier, or a `Forwarded` element without
-/// `for` stops the walk with [`ClientAddress::Unknown`]. When every element
-/// is trusted, the leftmost is the client. A trusted peer that sent no chain
-/// is itself the client.
+/// Proxies append on the right, so only the right end of a chain was written
+/// by hops you trust; everything left of the first untrusted address is
+/// whatever the client sent, and it is never read. The walk:
 ///
-/// # Errors
+/// - an untrusted `peer` gives [`ClientAddress::Peer`], and the header is
+///   never read;
+/// - otherwise the chain is read from the right: trusted addresses are
+///   skipped, and the first untrusted address is the client
+///   ([`ClientAddress::Forwarded`]);
+/// - an entry that gives no reliable address there (`unknown`, an obfuscated
+///   identifier, a `Forwarded` element without `for`, text that is not an
+///   address, a `Forwarded` line with an unclosed quoted string), or more
+///   trusted entries than the limit, gives [`ClientAddress::Unknown`];
+/// - when every entry is trusted, the leftmost is the client, and a trusted
+///   peer that sent no chain is itself the client.
 ///
-/// [`ErrorKind::Malformed`] (the error's offset and line point at the
-/// problem); [`ErrorKind::TooManyHops`].
+/// [`ClientAddress::Unknown`] means there is no reliable client address.
+/// Never use the peer in its place: the peer is a trusted proxy, and a
+/// client attributed to it escapes its own rate limits and bans. Treat the
+/// client as unknown (one shared bucket, no address-based allow) or refuse
+/// the request.
 ///
 /// # Examples
 ///
@@ -871,47 +959,59 @@ fn forwarded_client(elements: &ForwardedElements<'_>, trust: &impl Trust) -> Opt
 /// use core::net::IpAddr;
 /// use parse_net::{client_address, ClientAddress, ForwardedSource};
 ///
-/// let proxy: IpAddr = "203.0.113.43".parse()?;
+/// let proxy: IpAddr = "10.0.0.2".parse()?;
 /// let trusted = |a: IpAddr| a == proxy;
-/// let lines: [&[u8]; 1] = [b"for=192.0.2.60;proto=http;by=203.0.113.43"];
-/// assert_eq!(client_address(proxy, ForwardedSource::Forwarded(&lines), &trusted, 16)?,
-///            ClientAddress::Forwarded { addr: "192.0.2.60".parse()?, hops: 1 });
+/// // The proxy appended 198.51.100.7; the junk on the left is never read.
+/// let lines: [&[u8]; 1] = [b"junk, 198.51.100.7"];
+/// assert_eq!(client_address(proxy, ForwardedSource::XForwardedFor(&lines), &trusted),
+///            ClientAddress::Forwarded { addr: "198.51.100.7".parse()?, hops: 1 });
+/// let hidden: [&[u8]; 1] = [b"for=unknown"];
+/// assert_eq!(client_address(proxy, ForwardedSource::Forwarded(&hidden), &trusted),
+///            ClientAddress::Unknown { hops: 1 });
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[inline]
+#[must_use]
 pub fn client_address(
     peer: IpAddr,
     source: ForwardedSource<'_>,
     trust: &impl Trust,
-    max_hops: u8,
-) -> Result<ClientAddress> {
-    if !trust.is_trusted(peer) {
-        return Ok(ClientAddress::Peer(peer));
-    }
-    let limits = Limits::DEFAULT.max_hops(max_hops);
-    let found = match source {
-        ForwardedSource::XForwardedFor(lines) => match xff_client(lines, &limits, trust) {
-            Some(found) => found,
-            None => {
-                let _ = parse_x_forwarded_for(lines, &limits).map_err(as_malformed)?;
-                return err(ErrorKind::Malformed, 0);
-            }
-        },
-        ForwardedSource::Forwarded(lines) => {
-            let elements = parse(lines, &limits).map_err(as_malformed)?;
-            forwarded_client(&elements, trust)
-        }
-    };
-    Ok(found.unwrap_or(ClientAddress::Peer(peer)))
+) -> ClientAddress {
+    client_address_with_limits(peer, source, trust, &Limits::DEFAULT)
 }
 
-/// Every parse error of a chain becomes `Malformed` (or stays
-/// `TooManyHops`), keeping its offset and line.
-fn as_malformed(e: ParseError) -> ParseError {
-    if e.kind() == ErrorKind::TooManyHops {
-        e
-    } else {
-        ParseError::new(ErrorKind::Malformed, e.offset()).on_line(e.line())
+/// As [`client_address`], with at most [`Limits::max_hops`] trusted hops
+/// walked.
+///
+/// # Examples
+///
+/// ```
+/// use core::net::IpAddr;
+/// use parse_net::{forwarded::client_address_with_limits, ClientAddress, ForwardedSource, Limits};
+///
+/// let trusted = |a: IpAddr| matches!(a, IpAddr::V4(v) if v.is_private());
+/// let peer: IpAddr = "10.0.0.2".parse()?;
+/// let lines: [&[u8]; 1] = [b"198.51.100.7, 10.0.0.4, 10.0.0.3"];
+/// let one = Limits::DEFAULT.max_hops(1);
+/// assert_eq!(client_address_with_limits(peer, ForwardedSource::XForwardedFor(&lines), &trusted, &one),
+///            ClientAddress::Unknown { hops: 1 });
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[must_use]
+pub fn client_address_with_limits(
+    peer: IpAddr,
+    source: ForwardedSource<'_>,
+    trust: &impl Trust,
+    limits: &Limits,
+) -> ClientAddress {
+    if !trust.is_trusted(peer) {
+        return ClientAddress::Peer(peer);
     }
+    let found = match source {
+        ForwardedSource::XForwardedFor(lines) => walk(xff_rev(lines), trust, limits.hops),
+        ForwardedSource::Forwarded(lines) => walk(forwarded_rev(lines), trust, limits.hops),
+    };
+    found.unwrap_or(ClientAddress::Peer(peer))
 }
 
 /// [`client_address`] and whether the other header kind was present too.
@@ -920,11 +1020,11 @@ fn as_malformed(e: ParseError) -> ParseError {
 ///
 /// ```
 /// use core::net::IpAddr;
-/// use parse_net::{forwarded::client_address_detailed, ClientAddress, ForwardedSource};
+/// use parse_net::{forwarded::client_address_detailed, ClientAddress, ForwardedSource, Limits};
 ///
 /// let peer: IpAddr = "10.0.0.1".parse()?;
 /// let xff: [&[u8]; 1] = [b"198.51.100.7"];
-/// let r = client_address_detailed(peer, ForwardedSource::XForwardedFor(&xff), &[], &|a: IpAddr| a == peer, 16)?;
+/// let r = client_address_detailed(peer, ForwardedSource::XForwardedFor(&xff), &[], &|a: IpAddr| a == peer, &Limits::DEFAULT);
 /// assert_eq!(r.address, ClientAddress::Forwarded { addr: "198.51.100.7".parse()?, hops: 1 });
 /// assert!(!r.other_present);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -941,34 +1041,31 @@ pub struct Resolved {
 /// As [`client_address`], and reports whether `other_lines` (the field
 /// lines of the header kind not configured) were present.
 ///
-/// # Errors
-///
-/// As [`client_address`].
-///
 /// # Examples
 ///
 /// ```
 /// use core::net::IpAddr;
-/// use parse_net::{forwarded::client_address_detailed, ForwardedSource};
+/// use parse_net::{forwarded::client_address_detailed, ForwardedSource, Limits};
 ///
 /// let peer: IpAddr = "10.0.0.1".parse()?;
 /// let xff: [&[u8]; 1] = [b"198.51.100.7"];
 /// let fwd: [&[u8]; 1] = [b"for=192.0.2.1"];
-/// let r = client_address_detailed(peer, ForwardedSource::XForwardedFor(&xff), &fwd, &|a: IpAddr| a == peer, 16)?;
+/// let r = client_address_detailed(peer, ForwardedSource::XForwardedFor(&xff), &fwd, &|a: IpAddr| a == peer, &Limits::DEFAULT);
 /// assert!(r.other_present);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+#[must_use]
 pub fn client_address_detailed(
     peer: IpAddr,
     source: ForwardedSource<'_>,
     other_lines: &[&[u8]],
     trust: &impl Trust,
-    max_hops: u8,
-) -> Result<Resolved> {
-    Ok(Resolved {
-        address: client_address(peer, source, trust, max_hops)?,
+    limits: &Limits,
+) -> Resolved {
+    Resolved {
+        address: client_address_with_limits(peer, source, trust, limits),
         other_present: other_lines.iter().any(|l| !trim_ows(l).is_empty()),
-    })
+    }
 }
 
 /// Writes a node's text: the address (IPv6 in brackets), `unknown`, or the
@@ -1111,12 +1208,10 @@ fn put_element(e: &Element<'_>, out: &mut impl Sink) -> core::result::Result<(),
 /// use core::net::IpAddr;
 /// use parse_net::{forwarded::{self, Element, Node, NodePort, Proto}, SliceSink};
 ///
-/// let e = Element {
-///     for_: Some(Node::Addr("192.0.2.60".parse::<IpAddr>()?, None)),
-///     by: Some(Node::Addr("2001:db8::17".parse::<IpAddr>()?, Some(NodePort::Number(4711)))),
-///     host: None,
-///     proto: Some(Proto::Https),
-/// };
+/// let mut e = Element::new();
+/// e.for_ = Some(Node::Addr("192.0.2.60".parse::<IpAddr>()?, None));
+/// e.by = Some(Node::Addr("2001:db8::17".parse::<IpAddr>()?, Some(NodePort::Number(4711))));
+/// e.proto = Some(Proto::Https);
 /// let mut buf = [0u8; 96];
 /// let mut out = SliceSink::new(&mut buf);
 /// forwarded::write_element(&e, &mut out)?;
@@ -1289,13 +1384,8 @@ mod tests {
         let t = |a: IpAddr| a == ip4("10.0.0.1");
         let lines: [&[u8]; 1] = [b"garbage that would be refused"];
         assert_eq!(
-            client_address(
-                ip4("192.0.2.9"),
-                ForwardedSource::XForwardedFor(&lines),
-                &t,
-                16
-            ),
-            Ok(ClientAddress::Peer(ip4("192.0.2.9")))
+            client_address(ip4("192.0.2.9"), ForwardedSource::XForwardedFor(&lines), &t),
+            ClientAddress::Peer(ip4("192.0.2.9"))
         );
     }
 
@@ -1304,42 +1394,83 @@ mod tests {
         let t = |a: IpAddr| a == ip4("10.0.0.1") || a == ip4("10.0.0.2");
         let lines: [&[u8]; 1] = [b"1.1.1.1, 203.0.113.7, 10.0.0.2"];
         assert_eq!(
-            client_address(
-                ip4("10.0.0.1"),
-                ForwardedSource::XForwardedFor(&lines),
-                &t,
-                16
-            ),
-            Ok(ClientAddress::Forwarded {
+            client_address(ip4("10.0.0.1"), ForwardedSource::XForwardedFor(&lines), &t),
+            ClientAddress::Forwarded {
                 addr: ip4("203.0.113.7"),
                 hops: 2
-            })
+            }
+        );
+    }
+
+    /// Text left of the client address is the client's own and
+    /// is never read, so it cannot turn the answer into an error (which the
+    /// 0.9 docs told callers to answer with the peer, a trusted proxy).
+    #[test]
+    fn test_client_text_left_of_the_client_is_never_read() {
+        let lb = ip4("10.0.0.2");
+        let t = |a: IpAddr| a == lb;
+        let real = ClientAddress::Forwarded {
+            addr: ip4("198.51.100.7"),
+            hops: 1,
+        };
+        let xff = |lines: &[&[u8]]| client_address(lb, ForwardedSource::XForwardedFor(lines), &t);
+        let fwd = |lines: &[&[u8]]| client_address(lb, ForwardedSource::Forwarded(lines), &t);
+        assert_eq!(xff(&[b"x, 198.51.100.7"]), real);
+        assert_eq!(xff(&[b"x", b"198.51.100.7"]), real);
+        assert_eq!(xff(&[b"unknown, 198.51.100.7"]), real);
+        assert_eq!(xff(&[b"unknown", b"198.51.100.7"]), real);
+        assert_eq!(xff(&[b"\x00\x7f, , 198.51.100.7"]), real);
+        let mut padded = std::string::String::new();
+        for i in 0..40 {
+            padded.push_str(&std::format!("192.0.2.{i}, "));
+        }
+        padded.push_str("198.51.100.7");
+        assert_eq!(xff(&[padded.as_bytes()]), real);
+        assert_eq!(fwd(&[b"for=nonsense, for=198.51.100.7"]), real);
+        assert_eq!(fwd(&[b"for=nonsense", b"for=198.51.100.7"]), real);
+        assert_eq!(fwd(&[b"for=\"x", b"for=198.51.100.7"]), real);
+        assert_eq!(
+            fwd(&[b"(, for=\"a,b\";by=\"\\\"\", for=198.51.100.7"]),
+            real
+        );
+        // An unclosed quote on the proxy's own line swallows its element:
+        // nothing reliable is left.
+        assert_eq!(
+            fwd(&[b"for=\"x, for=198.51.100.7"]),
+            ClientAddress::Unknown { hops: 1 }
         );
     }
 
     #[test]
-    fn test_xff_malformed_fails_closed() {
+    fn test_unreliable_entry_at_the_decision_point() {
         let t = |_: IpAddr| true;
+        let peer = ip4("10.0.0.1");
         let lines: [&[u8]; 2] = [b"1.1.1.1", b"10.0.0.2, nope"];
-        let e = client_address(
-            ip4("10.0.0.1"),
-            ForwardedSource::XForwardedFor(&lines),
-            &t,
-            16,
-        )
-        .unwrap_err();
-        assert_eq!((e.kind(), e.line()), (ErrorKind::Malformed, 1));
-        let too_many: [&[u8]; 1] = [b"1.1.1.1, 1.1.1.2, 1.1.1.3"];
         assert_eq!(
-            client_address(
-                ip4("10.0.0.1"),
-                ForwardedSource::XForwardedFor(&too_many),
-                &t,
-                2
-            )
-            .unwrap_err()
-            .kind(),
-            ErrorKind::TooManyHops
+            client_address(peer, ForwardedSource::XForwardedFor(&lines), &t),
+            ClientAddress::Unknown { hops: 1 }
+        );
+        let lines: [&[u8]; 1] = [b"1.1.1.1, 1.1.1.2, 1.1.1.3"];
+        let two = Limits::DEFAULT.max_hops(2);
+        assert_eq!(
+            client_address_with_limits(peer, ForwardedSource::XForwardedFor(&lines), &t, &two),
+            ClientAddress::Unknown { hops: 2 }
+        );
+        let three = Limits::DEFAULT.max_hops(3);
+        assert_eq!(
+            client_address_with_limits(peer, ForwardedSource::XForwardedFor(&lines), &t, &three),
+            ClientAddress::Forwarded {
+                addr: ip4("1.1.1.1"),
+                hops: 3
+            }
+        );
+        let blank: [&[u8]; 2] = [b"1.1.1.1", b"  "];
+        assert_eq!(
+            client_address(peer, ForwardedSource::XForwardedFor(&blank), &t),
+            ClientAddress::Forwarded {
+                addr: ip4("1.1.1.1"),
+                hops: 1
+            }
         );
     }
 
@@ -1352,51 +1483,53 @@ mod tests {
                 peer,
                 ForwardedSource::XForwardedFor(std::boxed::Box::leak(std::boxed::Box::new([v]))),
                 &t,
-                16,
             )
         };
         assert_eq!(
             x(b"127.0.0.1, 10.0.0.1"),
-            Ok(ClientAddress::Forwarded {
+            ClientAddress::Forwarded {
                 addr: ip4("127.0.0.1"),
                 hops: 2
-            })
+            }
         );
         let none: [&[u8]; 0] = [];
         assert_eq!(
-            client_address(peer, ForwardedSource::XForwardedFor(&none), &t, 16),
-            Ok(ClientAddress::Peer(peer))
+            client_address(peer, ForwardedSource::XForwardedFor(&none), &t),
+            ClientAddress::Peer(peer)
         );
         let f = |v: &'static [u8]| {
             client_address(
                 peer,
                 ForwardedSource::Forwarded(std::boxed::Box::leak(std::boxed::Box::new([v]))),
                 &t,
-                16,
             )
         };
         assert_eq!(
             f(b"for=192.0.2.1, for=unknown, for=127.0.0.1"),
-            Ok(ClientAddress::Unknown { hops: 2 })
+            ClientAddress::Unknown { hops: 2 }
         );
         assert_eq!(
             f(b"for=192.0.2.1, for=_hidden"),
-            Ok(ClientAddress::Unknown { hops: 1 })
+            ClientAddress::Unknown { hops: 1 }
         );
         assert_eq!(
             f(b"for=192.0.2.1, proto=https"),
-            Ok(ClientAddress::Unknown { hops: 1 })
+            ClientAddress::Unknown { hops: 1 }
         );
         assert_eq!(
             f(b"for=\"[2001:db8::7]\""),
-            Ok(ClientAddress::Forwarded {
+            ClientAddress::Forwarded {
                 addr: "2001:db8::7".parse().unwrap(),
                 hops: 1
-            })
+            }
         );
+        assert_eq!(f(b"for=2001:db8::7"), ClientAddress::Unknown { hops: 1 });
         assert_eq!(
-            f(b"for=2001:db8::7").unwrap_err().kind(),
-            ErrorKind::Malformed
+            f(b"for=192.0.2.1,, for=127.0.0.1 ,"),
+            ClientAddress::Forwarded {
+                addr: ip4("192.0.2.1"),
+                hops: 2
+            }
         );
     }
 
@@ -1410,9 +1543,8 @@ mod tests {
             ForwardedSource::XForwardedFor(&xff),
             &fwd,
             &t,
-            16,
-        )
-        .unwrap();
+            &Limits::DEFAULT,
+        );
         assert!(r.other_present);
         assert_eq!(
             r.address,
@@ -1428,9 +1560,8 @@ mod tests {
                 ForwardedSource::XForwardedFor(&xff),
                 &empty,
                 &t,
-                16
+                &Limits::DEFAULT
             )
-            .unwrap()
             .other_present
         );
     }
@@ -1450,10 +1581,11 @@ mod tests {
         );
     }
 
-    /// The 0.8 readers, kept as the references the one-pass versions are
-    /// compared with (`test_client_address_agrees_with_reference`).
+    /// The 0.8 member reader and a collect-then-walk resolver, kept as the
+    /// references the one-pass versions are compared with.
     mod reference {
         use super::super::*;
+        use std::vec::Vec;
 
         pub(super) fn xff_member(m: &[u8]) -> Option<(IpAddr, Option<u16>)> {
             let port = |p: &[u8]| -> Option<Option<u16>> {
@@ -1486,77 +1618,90 @@ mod tests {
             }
         }
 
-        enum Step {
-            Addr(IpAddr),
-            Unknown,
-        }
-
-        fn walk(
-            count: usize,
-            trust: &impl Trust,
-            mut step: impl FnMut(usize) -> Step,
-        ) -> Option<ClientAddress> {
-            let mut leftmost: Option<IpAddr> = None;
-            for (walked, i) in (0..count).rev().enumerate() {
-                let hops = u8::try_from(walked + 1).unwrap_or(u8::MAX);
-                match step(i) {
-                    Step::Addr(a) if trust.is_trusted(a) => leftmost = Some(a),
-                    Step::Addr(addr) => return Some(ClientAddress::Forwarded { addr, hops }),
-                    Step::Unknown => return Some(ClientAddress::Unknown { hops }),
+        /// Every entry, left to right; `None` has no usable address.
+        fn xff_entries(lines: &[&[u8]]) -> Vec<Option<IpAddr>> {
+            let mut out = Vec::new();
+            for line in lines.iter().filter(|l| !trim_ows(l).is_empty()) {
+                for m in line.split(|&b| b == b',') {
+                    out.push(super::super::xff_member(trim_ows(m)).map(|(a, _)| a));
                 }
             }
-            leftmost.map(|addr| ClientAddress::Forwarded {
-                addr,
-                hops: u8::try_from(count).unwrap_or(u8::MAX),
-            })
+            out
         }
 
-        fn nth_member<'a, I: Iterator<Item = &'a [u8]>>(
-            lines: &[&'a [u8]],
-            i: usize,
-            members: impl Fn(&'a [u8]) -> I,
-        ) -> Option<&'a [u8]> {
-            lines.iter().flat_map(|line| members(line)).nth(i)
+        /// One line split left to right at commas outside quoted strings;
+        /// `None` when a quoted string is not closed.
+        fn split(line: &[u8]) -> Option<Vec<&[u8]>> {
+            let (mut out, mut start) = (Vec::new(), 0);
+            let (mut quoted, mut escaped) = (false, false);
+            for (i, &b) in line.iter().enumerate() {
+                if escaped {
+                    escaped = false;
+                } else if quoted && b == b'\\' {
+                    escaped = true;
+                } else if b == b'"' {
+                    quoted = !quoted;
+                } else if b == b',' && !quoted {
+                    out.push(&line[start..i]);
+                    start = i + 1;
+                }
+            }
+            if quoted {
+                return None;
+            }
+            out.push(&line[start..]);
+            Some(out)
+        }
+
+        fn forwarded_entries(lines: &[&[u8]]) -> Vec<Option<IpAddr>> {
+            let mut out = Vec::new();
+            for line in lines {
+                let Some(elements) = split(line) else {
+                    out.push(None);
+                    continue;
+                };
+                for e in elements.into_iter().map(trim_ows).filter(|e| !e.is_empty()) {
+                    out.push(match element(e).map(|e| e.for_) {
+                        Ok(Some(Node::Addr(a, _))) => Some(a),
+                        _ => None,
+                    });
+                }
+            }
+            out
         }
 
         pub(super) fn client_address(
             peer: IpAddr,
             source: ForwardedSource<'_>,
             trust: &impl Trust,
-            max_hops: u8,
-        ) -> Result<ClientAddress> {
+            limit: u8,
+        ) -> ClientAddress {
             if !trust.is_trusted(peer) {
-                return Ok(ClientAddress::Peer(peer));
+                return ClientAddress::Peer(peer);
             }
-            let limits = Limits::DEFAULT.max_hops(max_hops);
-            let found = match source {
-                ForwardedSource::XForwardedFor(lines) => {
-                    let chain = parse_x_forwarded_for(lines, &limits).map_err(as_malformed)?;
-                    walk(chain.len(), trust, |i| {
-                        match nth_member(lines, i, xff_line).and_then(xff_member) {
-                            Some((a, _)) => Step::Addr(a),
-                            None => Step::Unknown,
-                        }
-                    })
-                }
-                ForwardedSource::Forwarded(lines) => {
-                    let elements = parse(lines, &limits).map_err(as_malformed)?;
-                    walk(elements.len(), trust, |i| {
-                        let e = nth_member(lines, i, |line| {
-                            list::parse(line, &Limits::DEFAULT)
-                                .ok()
-                                .into_iter()
-                                .flat_map(|l| l.into_iter())
-                        })
-                        .and_then(|e| element(e).ok());
-                        match e.and_then(|e| e.for_) {
-                            Some(Node::Addr(a, _)) => Step::Addr(a),
-                            _ => Step::Unknown,
-                        }
-                    })
-                }
+            let entries = match source {
+                ForwardedSource::XForwardedFor(lines) => xff_entries(lines),
+                ForwardedSource::Forwarded(lines) => forwarded_entries(lines),
             };
-            Ok(found.unwrap_or(ClientAddress::Peer(peer)))
+            let mut leftmost = None;
+            for (walked, e) in entries.iter().rev().enumerate() {
+                if walked == usize::from(limit) {
+                    return ClientAddress::Unknown { hops: limit };
+                }
+                let hops = u8::try_from(walked + 1).unwrap();
+                match *e {
+                    Some(a) if trust.is_trusted(a) => leftmost = Some(a),
+                    Some(addr) => return ClientAddress::Forwarded { addr, hops },
+                    None => return ClientAddress::Unknown { hops },
+                }
+            }
+            match leftmost {
+                Some(addr) => ClientAddress::Forwarded {
+                    addr,
+                    hops: u8::try_from(entries.len()).unwrap(),
+                },
+                None => ClientAddress::Peer(peer),
+            }
         }
     }
 
@@ -1580,12 +1725,14 @@ mod tests {
         fn test_client_address_agrees_with_reference(
             xff in proptest::collection::vec(proptest::sample::select(&[
                 "10.0.0.1", "10.0.0.2", "1.2.3.4", "198.51.100.7:80", "[2001:db8::1]:443",
-                "2001:db8::2", "::1", "", "bad", "01.2.3.4", "1.2.3", "1.2.3.4:99999", "[::1",
+                "2001:db8::2", "::1", "", "  ", "bad", "unknown", "01.2.3.4", "1.2.3", "1.2.3.4:99999", "[::1",
             ][..]), 0..12),
             fwd in proptest::collection::vec(proptest::sample::select(&[
                 "for=10.0.0.1", "for=10.0.0.2;proto=http", "for=1.2.3.4", "for=unknown",
                 "for=_hidden", "proto=https", "for=\"[2001:db8::1]:80\"", "for=\"::1\"",
-                "by=10.0.0.1;for=198.51.100.7", "bad", "for=", "",
+                "by=10.0.0.1;for=198.51.100.7", "bad", "for=", "", " ",
+                r#"for="a,b""#, r#"for="x"#, r#"by="\",";for=10.0.0.2"#, r#"x\"y"#,
+                r#"for="10.0.0.1\\""#, "(c, d)",
             ][..]), 0..12),
             cuts in proptest::collection::vec(proptest::bool::ANY, 12),
             max_hops in 0u8..10,
@@ -1610,18 +1757,18 @@ mod tests {
             }
             let peer = if trusted_peer { v4("10.0.0.1") } else { v4("203.0.113.1") };
             let trust = |a: IpAddr| a == v4("10.0.0.1") || a == v4("10.0.0.2") || a == v4("::1");
-            let shape = |r: Result<ClientAddress>| r.map_err(|e| (e.kind(), e.offset(), e.line()));
+            let limits = Limits::DEFAULT.max_hops(max_hops);
             let mut store = Vec::new();
             let ls = lines(&xff, &cuts, &mut store);
             proptest::prop_assert_eq!(
-                shape(client_address(peer, ForwardedSource::XForwardedFor(&ls), &trust, max_hops)),
-                shape(reference::client_address(peer, ForwardedSource::XForwardedFor(&ls), &trust, max_hops))
+                client_address_with_limits(peer, ForwardedSource::XForwardedFor(&ls), &trust, &limits),
+                reference::client_address(peer, ForwardedSource::XForwardedFor(&ls), &trust, max_hops)
             );
             let mut store = Vec::new();
             let ls = lines(&fwd, &cuts, &mut store);
             proptest::prop_assert_eq!(
-                shape(client_address(peer, ForwardedSource::Forwarded(&ls), &trust, max_hops)),
-                shape(reference::client_address(peer, ForwardedSource::Forwarded(&ls), &trust, max_hops))
+                client_address_with_limits(peer, ForwardedSource::Forwarded(&ls), &trust, &limits),
+                reference::client_address(peer, ForwardedSource::Forwarded(&ls), &trust, max_hops)
             );
         }
     }

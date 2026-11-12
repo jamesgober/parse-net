@@ -138,9 +138,9 @@ fn put_words(
         if !open {
             if OVERHEAD + n > limit {
                 // Not even one character fits in the room left on the first
-                // line: start on a new one.
-                out.put(b"\r\n ")?;
-                limit = WORD_LIMIT;
+                // line: the first word runs past it. A fold here would read
+                // back as a leading space. It holds this one character.
+                limit = OVERHEAD + n;
             }
             out.put(b"=?UTF-8?Q?")?;
             open = true;
@@ -160,8 +160,9 @@ fn put_words(
 /// RFC 2047 `=?UTF-8?Q?...?=`
 /// words of at most 75 bytes, split only between characters, separated by
 /// CRLF SP. The first word fits in `room_first_line` (the columns left after
-/// `Name: `); when not even one character fits there, the words start on a
-/// new line.
+/// `Name: `); when not even one character fits there, the first word runs
+/// past it, still far below the 998-byte line limit. The output never starts
+/// with a fold, which would read back as a leading space.
 ///
 /// # Errors
 ///
@@ -224,9 +225,9 @@ fn put_words_b(
         }
         if len == 0 && OVERHEAD + b64::encoded_len(w) > limit {
             // Not even one character fits in the room left on the first
-            // line: start on a new one.
-            out.put(b"\r\n ")?;
-            limit = WORD_LIMIT;
+            // line: the first word runs past it with this one character,
+            // as in `put_words`.
+            limit = OVERHEAD + b64::encoded_len(w);
         }
         len += w;
     }
@@ -255,15 +256,15 @@ fn put_words_b(
 ///
 /// let mut buf = [0u8; 256];
 /// let mut out = SliceSink::new(&mut buf);
-/// mail::encode_words_b("\u{4f1a}\u{8b70}\u{306e}\u{304a}\u{77e5}\u{3089}\u{305b}", 64, &mut out).expect("room");
+/// mail::encode_words_base64("\u{4f1a}\u{8b70}\u{306e}\u{304a}\u{77e5}\u{3089}\u{305b}", 64, &mut out).expect("room");
 /// assert_eq!(out.written(), b"=?UTF-8?B?5Lya6K2w44Gu44GK55+l44KJ44Gb?=");
 ///
 /// let mut text = [0u8; 64];
-/// let s = mail::decode_words(out.written(), &Limits::DEFAULT, &mut text)?;
+/// let s = mail::decode_words(out.written(), &mut text)?;
 /// assert_eq!(s, "\u{4f1a}\u{8b70}\u{306e}\u{304a}\u{77e5}\u{3089}\u{305b}");
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn encode_words_b(
+pub fn encode_words_base64(
     text: &str,
     room_first_line: usize,
     out: &mut impl Sink,
@@ -669,6 +670,26 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
     Ok(())
 }
 
+/// [`decode_words_with_limits`] under [`Limits::DEFAULT`], the call to use
+/// unless a limit needs changing.
+///
+/// # Errors
+///
+/// As [`decode_words_with_limits`].
+///
+/// # Examples
+///
+/// ```
+/// let mut buf = [0u8; 64];
+/// let subject = parse_net::mail::decode_words(b"=?UTF-8?Q?Caf=C3=A9?= menu", &mut buf)?;
+/// assert_eq!(subject, "Caf\u{e9} menu");
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
+#[inline]
+pub fn decode_words<'b>(value: &[u8], out: &'b mut [u8]) -> Result<&'b str> {
+    decode_words_with_limits(value, &Limits::DEFAULT, out)
+}
+
 /// Decodes the RFC 2047 encoded words in unstructured header text into
 /// `out` and returns the text. Text outside encoded words is copied;
 /// whitespace between two adjacent encoded words is dropped (section 6.2);
@@ -678,8 +699,16 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
 /// `*language`. `B` words are read strictly (D-080): whole groups of four,
 /// `=` padding only at the end with zero bits under it, no whitespace inside,
 /// and at most 75 bytes to a word. `CRLF WSP` folds count as whitespace, so
-/// the output of [`encode_words`] and [`encode_words_b`] reads back as
+/// the output of [`encode_words`] and [`encode_words_base64`] reads back as
 /// written.
+///
+/// Where common mail readers differ: words inside `"..."` stay as written
+/// (RFC 2047 section 5 rules them out of quoted strings, though unstructured
+/// text has none); a word in any charset but UTF-8, US-ASCII, and
+/// ISO-8859-1 (`windows-1252`, for example) fails the whole field; and `Q`
+/// words longer than 75 bytes are read. A filter that looks for words in a
+/// subject should read it with this function, so it sees what the crate
+/// sees.
 ///
 /// # Errors
 ///
@@ -701,11 +730,15 @@ fn walk(v: &[u8], limits: &Limits, emit: &mut impl FnMut(&[u8])) -> Result<()> {
 /// use parse_net::{mail, Limits};
 ///
 /// let mut buf = [0u8; 64];
-/// let s = mail::decode_words(b"=?utf-8?q?Caf=C3=A9?= =?ISO-8859-1?Q?_cr=E8me?= now", &Limits::DEFAULT, &mut buf)?;
+/// let s = mail::decode_words(b"=?utf-8?q?Caf=C3=A9?= =?ISO-8859-1?Q?_cr=E8me?= now", &mut buf)?;
 /// assert_eq!(s, "Caf\u{e9} cr\u{e8}me now");
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn decode_words<'b>(value: &[u8], limits: &Limits, out: &'b mut [u8]) -> Result<&'b str> {
+pub fn decode_words_with_limits<'b>(
+    value: &[u8],
+    limits: &Limits,
+    out: &'b mut [u8],
+) -> Result<&'b str> {
     let mut len = 0usize;
     walk(value, limits, &mut |b: &[u8]| len += b.len())?;
     let Some(dst) = out.get_mut(..len) else {
@@ -736,7 +769,7 @@ mod tests {
 
     fn dec(v: &[u8]) -> Result<String> {
         let mut buf = vec![0u8; 2048];
-        decode_words(v, &Limits::DEFAULT, &mut buf).map(String::from)
+        decode_words(v, &mut buf).map(String::from)
     }
 
     #[test]
@@ -755,7 +788,10 @@ mod tests {
         let e = enc(&"\u{20ac}".repeat(7), 75);
         assert_eq!(e.len(), 12 + 63);
         assert!(!e.starts_with("\r\n "));
-        assert!(enc("\u{e9}", 5).starts_with("\r\n =?UTF-8?Q?"));
+        // No room for one character runs past the room; a
+        // leading fold would read back as a leading space.
+        assert_eq!(enc("\u{e9}", 5), "=?UTF-8?Q?=C3=A9?=");
+        assert_eq!(dec(enc("\u{e9}", 0).as_bytes()).unwrap(), "\u{e9}");
         let mut buf = [0u8; 8];
         let mut out = crate::SliceSink::new(&mut buf);
         assert_eq!(
@@ -812,18 +848,16 @@ mod tests {
         assert_eq!(dec(b"raw \xe9").unwrap_err().kind(), ErrorKind::InvalidUtf8);
         let l = Limits::DEFAULT.max_encoded_words(2);
         let mut buf = [0u8; 64];
-        assert!(decode_words(b"=?UTF-8?Q?a?= =?UTF-8?Q?b?=", &l, &mut buf).is_ok());
+        assert!(decode_words_with_limits(b"=?UTF-8?Q?a?= =?UTF-8?Q?b?=", &l, &mut buf).is_ok());
         assert_eq!(
-            decode_words(b"=?UTF-8?Q?a?= =?UTF-8?Q?b?= =?UTF-8?Q?c?=", &l, &mut buf)
+            decode_words_with_limits(b"=?UTF-8?Q?a?= =?UTF-8?Q?b?= =?UTF-8?Q?c?=", &l, &mut buf)
                 .unwrap_err()
                 .kind(),
             ErrorKind::TooManyMembers
         );
         let mut small = [0u8; 2];
         assert_eq!(
-            decode_words(b"abc", &Limits::DEFAULT, &mut small)
-                .unwrap_err()
-                .kind(),
+            decode_words(b"abc", &mut small).unwrap_err().kind(),
             ErrorKind::BufferTooSmall
         );
         assert_eq!(small, [0, 0]);
@@ -832,7 +866,7 @@ mod tests {
     fn enc_b(text: &str, room: usize) -> String {
         let mut buf = vec![0u8; 4096];
         let mut out = crate::SliceSink::new(&mut buf);
-        encode_words_b(text, room, &mut out).unwrap();
+        encode_words_base64(text, room, &mut out).unwrap();
         String::from_utf8(out.written().to_vec()).unwrap()
     }
 
@@ -917,9 +951,10 @@ mod tests {
         assert_eq!(e.len(), 72);
         let e = enc_b(&"\u{20ac}".repeat(16), 75);
         assert_eq!(e.split("\r\n ").map(str::len).collect::<Vec<_>>(), [72, 16]);
-        // The first word fits the room left on the line, or starts a new one.
-        assert!(enc_b("\u{e9}", 16).starts_with("=?UTF-8?B?"));
-        assert!(enc_b("\u{e9}", 15).starts_with("\r\n =?UTF-8?B?"));
+        // The first word fits the room left on the line, or holds one
+        // character and runs past it.
+        assert_eq!(enc_b("\u{e9}", 16), "=?UTF-8?B?w6k=?=");
+        assert_eq!(enc_b("\u{e9}", 15), "=?UTF-8?B?w6k=?=");
         assert!(
             enc_b(&"\u{e9}".repeat(20), 20)
                 .split("\r\n ")
@@ -934,11 +969,11 @@ mod tests {
         let mut buf = [0u8; 8];
         let mut out = crate::SliceSink::new(&mut buf);
         assert_eq!(
-            encode_words_b("a\u{1b}", 70, &mut out),
+            encode_words_base64("a\u{1b}", 70, &mut out),
             Err(WriteError::Forbidden { at: 1 })
         );
         assert_eq!(
-            encode_words_b("\u{e9}\u{e9}", 70, &mut out),
+            encode_words_base64("\u{e9}\u{e9}", 70, &mut out),
             Err(WriteError::Full)
         );
         assert!(out.is_empty());
@@ -950,15 +985,17 @@ mod tests {
             let e = enc_b(&text, room);
             for (i, w) in e.split("\r\n ").enumerate() {
                 if w.starts_with("=?") {
-                    proptest::prop_assert!(w.len() <= if i == 0 { room.min(75) } else { 75 }, "{w}");
+                    // One character of up to four bytes is 20 bytes in a word.
+                    proptest::prop_assert!(w.len() <= if i == 0 { room.clamp(20, 75) } else { 75 }, "{w}");
                 }
             }
-            // A fold before the first word follows `Name:` in the field, where
-            // a reader drops it with the whitespace after the colon.
-            let value = |s: &str| String::from(s.strip_prefix("\r\n ").unwrap_or(s));
-            proptest::prop_assert_eq!(&dec(value(&e).as_bytes()).unwrap(), &text);
-            // Q and B read back the same.
-            proptest::prop_assert_eq!(dec(value(&enc(&text, room)).as_bytes()).unwrap(), text);
+            // Never a fold first, so both read back exactly, with no space
+            // added in front.
+            proptest::prop_assert!(!e.starts_with("\r\n"));
+            proptest::prop_assert_eq!(&dec(e.as_bytes()).unwrap(), &text);
+            let q = enc(&text, room);
+            proptest::prop_assert!(!q.starts_with("\r\n"));
+            proptest::prop_assert_eq!(dec(q.as_bytes()).unwrap(), text);
         }
     }
 }

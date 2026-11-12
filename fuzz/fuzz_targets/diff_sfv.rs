@@ -7,7 +7,7 @@
 //! accept, the member counts must agree.
 
 use libfuzzer_sys::fuzz_target;
-use parse_net::{ErrorKind, ParseError, sfv as ours};
+use parse_net::{ErrorKind, ParseError, structured as ours};
 
 /// The refusals parse-net makes on purpose that `sfv` does not.
 fn recorded(e: &ParseError) -> bool {

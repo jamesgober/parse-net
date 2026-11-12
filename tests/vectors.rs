@@ -49,7 +49,7 @@ fn test_vectors_http_date() {
     let all = cases("http_date.txt");
     assert!(all.len() >= 15);
     for (expected, input) in all {
-        let got = match pn::http_date_at(&input, 1_792_540_800) {
+        let got = match pn::parse_http_date_at(&input, 1_792_540_800) {
             Ok(d) => d.unix().to_string(),
             Err(e) => kind_name(e.kind()),
         };
@@ -98,6 +98,7 @@ fn test_vectors_host() {
                     Host::V4(a) => format!("v4:{a}"),
                     Host::V6(a) => format!("v6:{a}"),
                     Host::Future(f) => format!("future:{}", String::from_utf8_lossy(f)),
+                    _ => "other".to_string(),
                 };
                 if let Some(p) = hp.port {
                     s.push_str(&format!("|{p}"));
@@ -117,7 +118,7 @@ fn test_vectors_list() {
     let all = cases("list.txt");
     assert!(all.len() >= 10);
     for (expected, input) in all {
-        let got = match pn::list(&input) {
+        let got = match pn::parse_list(&input) {
             Ok(l) => l
                 .iter()
                 .map(|e| String::from_utf8_lossy(e).into_owned())

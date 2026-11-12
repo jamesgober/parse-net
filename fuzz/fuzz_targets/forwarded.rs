@@ -1,10 +1,14 @@
 #![no_main]
 //! `Forwarded`: no panic, no allocation; the element list counts what it
-//! iterates, and resolution never reports more hops than allowed.
+//! iterates, resolution never reports more hops than allowed, and no text
+//! left of the element a trusted proxy appended changes the answer.
 
-use libfuzzer_sys::fuzz_target;
 use core::net::IpAddr;
-use parse_net::{ClientAddress, ForwardedSource, Limits, client_address, forwarded};
+use libfuzzer_sys::fuzz_target;
+use parse_net::{
+    ClientAddress, ForwardedSource, Limits, client_address, forwarded,
+    forwarded::client_address_with_limits,
+};
 
 #[path = "common.rs"]
 mod common;
@@ -26,18 +30,30 @@ fuzz_target!(|data: &[u8]| {
                 IpAddr::V4(v) => v.is_private(),
                 IpAddr::V6(_) => false,
             };
+            let limits = Limits::DEFAULT.max_hops(max);
             for r in [
-                client_address(peer, ForwardedSource::Forwarded(&lines), &all, max),
-                client_address(peer, ForwardedSource::Forwarded(&lines), &private, max),
+                client_address_with_limits(peer, ForwardedSource::Forwarded(&lines), &all, &limits),
+                client_address_with_limits(
+                    peer,
+                    ForwardedSource::Forwarded(&lines),
+                    &private,
+                    &limits,
+                ),
             ] {
                 match r {
-                    Ok(ClientAddress::Forwarded { hops, .. } | ClientAddress::Unknown { hops }) => {
-                        assert!(hops >= 1 && hops <= max)
-                    }
-                    Ok(_) => {}
-                    Err(e) => common::check_error(&e),
+                    ClientAddress::Forwarded { hops, .. } => assert!(hops >= 1 && hops <= max),
+                    ClientAddress::Unknown { hops } => assert!(hops <= max),
+                    _ => {}
                 }
             }
         }
+        let only_peer = |a: IpAddr| a == peer;
+        assert_eq!(
+            client_address(peer, ForwardedSource::Forwarded(&lines), &only_peer),
+            ClientAddress::Forwarded {
+                addr: IpAddr::from([192, 0, 2, 60]),
+                hops: 1
+            }
+        );
     });
 });

@@ -10,7 +10,7 @@ fn bench(c: &mut Criterion) {
     let mut g = c.benchmark_group("cache_control/public, max-age, immutable");
     g.bench_function("parse-net", |b| {
         b.iter(|| {
-            parse_net::response_cache_control(black_box(VALUE))
+            parse_net::parse_response_cache_control(black_box(VALUE))
                 .expect("valid")
                 .max_age
         })

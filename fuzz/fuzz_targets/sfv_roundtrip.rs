@@ -6,7 +6,7 @@
 use libfuzzer_sys::fuzz_target;
 use parse_net::{
     SliceSink, WriteError,
-    sfv::{self, Item, Member, Writer},
+    structured::{self, Item, Member, Writer},
 };
 
 #[path = "common.rs"]
@@ -41,7 +41,7 @@ fn member(w: &mut Writer<'_, SliceSink<'_>>, m: Member<'_>) -> Result<(), WriteE
 }
 
 fn list_text<'b>(v: &[u8], buf: &'b mut [u8]) -> Option<&'b [u8]> {
-    let l = sfv::parse_list(v).ok()?;
+    let l = structured::parse_list(v).ok()?;
     if l.is_empty() {
         return None;
     }
@@ -60,9 +60,9 @@ fuzz_target!(|data: &[u8]| {
     let mut b = [0u8; 65536];
     common::no_alloc(|| {
         for e in [
-            sfv::parse_list(data).err(),
-            sfv::parse_item(data).err(),
-            sfv::parse_dictionary(data).err(),
+            structured::parse_list(data).err(),
+            structured::parse_item(data).err(),
+            structured::parse_dictionary(data).err(),
         ]
         .iter()
         .flatten()
@@ -70,20 +70,20 @@ fuzz_target!(|data: &[u8]| {
             common::check_error(e);
         }
         if let Some(first) = list_text(data, &mut a) {
-            let members = sfv::parse_list(first).expect("canonical text parses").len();
-            assert_eq!(members, sfv::parse_list(data).map(|l| l.len()).unwrap_or(0));
+            let members = structured::parse_list(first).expect("canonical text parses").len();
+            assert_eq!(members, structured::parse_list(data).map(|l| l.len()).unwrap_or(0));
             let second = list_text(first, &mut b).expect("canonical text serializes");
             assert_eq!(first, second);
         }
-        if let Ok(i) = sfv::parse_item(data) {
+        if let Ok(i) = structured::parse_item(data) {
             let mut out = SliceSink::new(&mut a);
             let mut w = Writer::item(&mut out);
             item(&mut w, i).expect("a parsed item writes");
             w.finish().expect("finishes");
             let n = out.len();
-            assert!(sfv::parse_item(&a[..n]).is_ok());
+            assert!(structured::parse_item(&a[..n]).is_ok());
         }
-        if let Ok(d) = sfv::parse_dictionary(data) {
+        if let Ok(d) = structured::parse_dictionary(data) {
             if !d.is_empty() {
                 let mut out = SliceSink::new(&mut a);
                 let mut w = Writer::dictionary(&mut out);
@@ -93,7 +93,7 @@ fuzz_target!(|data: &[u8]| {
                 }
                 w.finish().expect("finishes");
                 let n = out.len();
-                let back = sfv::parse_dictionary(&a[..n]).expect("written dictionary parses");
+                let back = structured::parse_dictionary(&a[..n]).expect("written dictionary parses");
                 assert_eq!(back.len(), d.len());
             }
         }

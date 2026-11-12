@@ -4,9 +4,9 @@
 //! # Examples
 //!
 //! ```
-//! use parse_net::{ExtValue, Charset};
+//! use parse_net::{ExtendedValue, Charset};
 //!
-//! let v = ExtValue::parse(b"UTF-8'en'%E2%82%AC%20rates.txt")?;
+//! let v = ExtendedValue::parse(b"UTF-8'en'%E2%82%AC%20rates.txt")?;
 //! assert_eq!((v.charset(), v.language()), (Charset::Utf8, &b"en"[..]));
 //! let mut buf = [0u8; 32];
 //! assert_eq!(v.decode_into(&mut buf)?, "\u{20ac} rates.txt");
@@ -16,7 +16,7 @@
 use crate::{
     class,
     error::{ErrorKind, Result, WriteError, err},
-    pct::{EncodeSet, HexCase},
+    percent::{EncodeSet, HexCase},
     scan::control_kind,
     utf8::Utf8,
     write::{Sink, reserve},
@@ -27,10 +27,10 @@ use crate::{
 /// # Examples
 ///
 /// ```
-/// use parse_net::{Charset, ExtValue};
+/// use parse_net::{Charset, ExtendedValue};
 ///
-/// assert_eq!(ExtValue::parse(b"iso-8859-1''%A3")?.charset(), Charset::Iso8859_1);
-/// assert_eq!(ExtValue::parse(b"US-ASCII''abc")?.charset(), Charset::UsAscii);
+/// assert_eq!(ExtendedValue::parse(b"iso-8859-1''%A3")?.charset(), Charset::Iso8859_1);
+/// assert_eq!(ExtendedValue::parse(b"US-ASCII''abc")?.charset(), Charset::UsAscii);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 #[non_exhaustive]
@@ -49,13 +49,13 @@ pub enum Charset {
 /// # Examples
 ///
 /// ```
-/// let v = parse_net::ExtValue::parse(b"UTF-8''na%C3%AFve.txt")?;
+/// let v = parse_net::ExtendedValue::parse(b"UTF-8''na%C3%AFve.txt")?;
 /// let mut buf = [0u8; 16];
 /// assert_eq!(v.decode_into(&mut buf)?, "na\u{ef}ve.txt");
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct ExtValue<'a> {
+pub struct ExtendedValue<'a> {
     charset: Charset,
     language: &'a [u8],
     encoded: &'a [u8],
@@ -91,7 +91,7 @@ const fn is_control_point(c: u32) -> bool {
     c < 0x20 || (c >= 0x7f && c <= 0x9f)
 }
 
-impl<'a> ExtValue<'a> {
+impl<'a> ExtendedValue<'a> {
     /// Parses an extended value.
     ///
     /// The charset is `UTF-8` or `ISO-8859-1` (case-insensitive); the
@@ -108,12 +108,12 @@ impl<'a> ExtValue<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{ErrorKind, ExtValue};
+    /// use parse_net::{ErrorKind, ExtendedValue};
     ///
-    /// assert!(ExtValue::parse(b"UTF-8''a%20b").is_ok());
-    /// assert_eq!(ExtValue::parse(b"UTF-8'a%20b").unwrap_err().kind(), ErrorKind::InvalidCharset);
-    /// assert_eq!(ExtValue::parse(b"Shift_JIS''x").unwrap_err().kind(), ErrorKind::UnsupportedCharset);
-    /// assert_eq!(ExtValue::parse(b"UTF-8''a%2").unwrap_err().kind(), ErrorKind::InvalidPercentEncoding);
+    /// assert!(ExtendedValue::parse(b"UTF-8''a%20b").is_ok());
+    /// assert_eq!(ExtendedValue::parse(b"UTF-8'a%20b").unwrap_err().kind(), ErrorKind::InvalidCharset);
+    /// assert_eq!(ExtendedValue::parse(b"Shift_JIS''x").unwrap_err().kind(), ErrorKind::UnsupportedCharset);
+    /// assert_eq!(ExtendedValue::parse(b"UTF-8''a%2").unwrap_err().kind(), ErrorKind::InvalidPercentEncoding);
     /// ```
     pub fn parse(value: &'a [u8]) -> Result<Self> {
         Self::parse_with(value, class::is_attr_char)
@@ -197,7 +197,7 @@ impl<'a> ExtValue<'a> {
     /// # Examples
     ///
     /// ```
-    /// let v = parse_net::ExtValue::parse(b"utf-8''x")?;
+    /// let v = parse_net::ExtendedValue::parse(b"utf-8''x")?;
     /// assert_eq!(v.charset(), parse_net::Charset::Utf8);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -211,10 +211,10 @@ impl<'a> ExtValue<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::ExtValue;
+    /// use parse_net::ExtendedValue;
     ///
-    /// assert_eq!(ExtValue::parse(b"UTF-8'de-CH'Gr%C3%BCezi")?.language(), b"de-CH");
-    /// assert!(ExtValue::parse(b"UTF-8''Gr%C3%BCezi")?.language().is_empty());
+    /// assert_eq!(ExtendedValue::parse(b"UTF-8'de-CH'Gr%C3%BCezi")?.language(), b"de-CH");
+    /// assert!(ExtendedValue::parse(b"UTF-8''Gr%C3%BCezi")?.language().is_empty());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -227,7 +227,7 @@ impl<'a> ExtValue<'a> {
     /// # Examples
     ///
     /// ```
-    /// let v = parse_net::ExtValue::parse(b"UTF-8''a%20b")?;
+    /// let v = parse_net::ExtendedValue::parse(b"UTF-8''a%20b")?;
     /// assert_eq!(v.encoded(), b"a%20b");
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -249,7 +249,7 @@ impl<'a> ExtValue<'a> {
     /// # Examples
     ///
     /// ```
-    /// let v = parse_net::ExtValue::parse(b"ISO-8859-1''%E9t%E9")?;
+    /// let v = parse_net::ExtendedValue::parse(b"ISO-8859-1''%E9t%E9")?;
     /// assert_eq!(v.max_decoded_len(), 6);
     /// let mut buf = [0u8; 6];
     /// assert_eq!(v.decode_into(&mut buf)?.len(), 5);
@@ -284,11 +284,11 @@ impl<'a> ExtValue<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{ErrorKind, ExtValue};
+    /// use parse_net::{ErrorKind, ExtendedValue};
     ///
     /// let mut buf = [0u8; 8];
-    /// assert_eq!(ExtValue::parse(b"ISO-8859-1''%A3%205")?.decode_into(&mut buf)?, "\u{a3} 5");
-    /// let crlf = ExtValue::parse(b"UTF-8''a%0D%0Ab")?;
+    /// assert_eq!(ExtendedValue::parse(b"ISO-8859-1''%A3%205")?.decode_into(&mut buf)?, "\u{a3} 5");
+    /// let crlf = ExtendedValue::parse(b"UTF-8''a%0D%0Ab")?;
     /// assert_eq!(crlf.decode_into(&mut buf).unwrap_err().kind(), ErrorKind::ControlInDecoded);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -424,14 +424,17 @@ impl Iterator for PctBytes<'_> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::{ext_value::write_ext_value, SliceSink};
+/// use parse_net::{extended_value::write_extended_value, SliceSink};
 ///
 /// let mut buf = [0u8; 64];
 /// let mut out = SliceSink::new(&mut buf);
-/// write_ext_value("\u{20ac} rates.txt", &mut out).expect("room");
+/// write_extended_value("\u{20ac} rates.txt", &mut out).expect("room");
 /// assert_eq!(out.written(), b"UTF-8''%E2%82%AC%20rates.txt");
 /// ```
-pub fn write_ext_value(text: &str, out: &mut impl Sink) -> core::result::Result<(), WriteError> {
+pub fn write_extended_value(
+    text: &str,
+    out: &mut impl Sink,
+) -> core::result::Result<(), WriteError> {
     for (i, c) in text.char_indices() {
         if is_control_point(u32::from(c)) {
             return Err(WriteError::forbidden(i));
@@ -440,10 +443,10 @@ pub fn write_ext_value(text: &str, out: &mut impl Sink) -> core::result::Result<
     let set = EncodeSet::ATTR_CHAR_COMPLEMENT;
     reserve(
         out,
-        7usize.saturating_add(crate::pct::encoded_len(text.as_bytes(), &set)),
+        7usize.saturating_add(crate::percent::encoded_len(text.as_bytes(), &set)),
     )?;
     out.put(b"UTF-8''")?;
-    crate::pct::encode(text.as_bytes(), &set, HexCase::Upper, out)
+    crate::percent::encode(text.as_bytes(), &set, HexCase::Upper, out)
 }
 
 #[cfg(test)]
@@ -451,7 +454,7 @@ mod tests {
     use super::*;
 
     fn decode(v: &[u8]) -> Result<std::string::String> {
-        let e = ExtValue::parse(v)?;
+        let e = ExtendedValue::parse(v)?;
         let mut buf = [0u8; 64];
         e.decode_into(&mut buf).map(std::string::String::from)
     }
@@ -476,23 +479,23 @@ mod tests {
         );
         assert_eq!(decode(b"ISO-8859-1''%C3%A9").unwrap(), "\u{c3}\u{a9}");
         assert_eq!(
-            ExtValue::parse(b"UTF-16''a").unwrap_err().kind(),
+            ExtendedValue::parse(b"UTF-16''a").unwrap_err().kind(),
             ErrorKind::UnsupportedCharset
         );
         assert_eq!(
-            ExtValue::parse(b"''a").unwrap_err().kind(),
+            ExtendedValue::parse(b"''a").unwrap_err().kind(),
             ErrorKind::InvalidCharset
         );
         assert_eq!(
-            ExtValue::parse(b"UTF-8'a").unwrap_err().kind(),
+            ExtendedValue::parse(b"UTF-8'a").unwrap_err().kind(),
             ErrorKind::InvalidCharset
         );
         assert_eq!(
-            ExtValue::parse(b"UTF 8''a").unwrap_err().kind(),
+            ExtendedValue::parse(b"UTF 8''a").unwrap_err().kind(),
             ErrorKind::InvalidCharset
         );
         assert_eq!(
-            ExtValue::parse(b"UTF-8'e n'a").unwrap_err().kind(),
+            ExtendedValue::parse(b"UTF-8'e n'a").unwrap_err().kind(),
             ErrorKind::InvalidCharset
         );
     }
@@ -500,11 +503,11 @@ mod tests {
     #[test]
     fn test_ext_value_percent_crlf_refused() {
         assert_eq!(
-            ExtValue::parse(b"UTF-8''%").unwrap_err().kind(),
+            ExtendedValue::parse(b"UTF-8''%").unwrap_err().kind(),
             ErrorKind::InvalidPercentEncoding
         );
         assert_eq!(
-            ExtValue::parse(b"UTF-8''%G0").unwrap_err().kind(),
+            ExtendedValue::parse(b"UTF-8''%G0").unwrap_err().kind(),
             ErrorKind::InvalidPercentEncoding
         );
         assert_eq!(
@@ -533,18 +536,18 @@ mod tests {
         );
         assert_eq!(decode(b"UTF-8''a%2Fb").unwrap(), "a/b");
         assert_eq!(
-            ExtValue::parse(b"UTF-8''a b").unwrap_err().kind(),
+            ExtendedValue::parse(b"UTF-8''a b").unwrap_err().kind(),
             ErrorKind::InvalidByte
         );
         assert_eq!(
-            ExtValue::parse(b"UTF-8''a\rb").unwrap_err().kind(),
+            ExtendedValue::parse(b"UTF-8''a\rb").unwrap_err().kind(),
             ErrorKind::BareCr
         );
     }
 
     #[test]
     fn test_ext_value_buffer_and_lengths() {
-        let e = ExtValue::parse(b"ISO-8859-1''%E9%E9").unwrap();
+        let e = ExtendedValue::parse(b"ISO-8859-1''%E9%E9").unwrap();
         assert_eq!(e.max_decoded_len(), 4);
         let mut short = [0xaau8; 3];
         assert_eq!(
@@ -552,7 +555,7 @@ mod tests {
             ErrorKind::BufferTooSmall
         );
         assert_eq!(short, [0xaa; 3]);
-        let u = ExtValue::parse(b"UTF-8''%E2%82%AC").unwrap();
+        let u = ExtendedValue::parse(b"UTF-8''%E2%82%AC").unwrap();
         assert_eq!(u.max_decoded_len(), 3);
     }
 
@@ -561,15 +564,15 @@ mod tests {
         let mut buf = [0u8; 128];
         let mut out = crate::SliceSink::new(&mut buf);
         assert_eq!(
-            write_ext_value("a\r\nb", &mut out),
+            write_extended_value("a\r\nb", &mut out),
             Err(WriteError::Forbidden { at: 1 })
         );
         assert_eq!(
-            write_ext_value("x\u{85}", &mut out),
+            write_extended_value("x\u{85}", &mut out),
             Err(WriteError::Forbidden { at: 1 })
         );
-        write_ext_value("caf\u{e9} \u{1f600}/", &mut out).unwrap();
-        let back = ExtValue::parse(out.written()).unwrap();
+        write_extended_value("caf\u{e9} \u{1f600}/", &mut out).unwrap();
+        let back = ExtendedValue::parse(out.written()).unwrap();
         let mut dec = [0u8; 64];
         assert_eq!(back.decode_into(&mut dec).unwrap(), "caf\u{e9} \u{1f600}/");
     }

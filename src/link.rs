@@ -12,7 +12,7 @@
 //! ```
 //! use parse_net::{parse_link, Limits};
 //!
-//! let links = parse_link(b"<https://x.test/p?page=2,3>; rel=\"next last\", </a>; rel=prev; crossorigin", &Limits::DEFAULT)?;
+//! let links = parse_link(b"<https://x.test/p?page=2,3>; rel=\"next last\", </a>; rel=prev; crossorigin")?;
 //! let all: Vec<_> = links.iter().collect();
 //! assert_eq!(all[0].target(), b"https://x.test/p?page=2,3");
 //! assert!(all[0].has_rel("last") && all[1].has_rel("prev"));
@@ -23,7 +23,7 @@ use crate::{
     class,
     disposition::Filename,
     error::{ErrorKind, ParseError, Result, WriteError, err},
-    ext_value::ExtValue,
+    extended_value::ExtendedValue,
     limits::Limits,
     scan::control_kind,
     text::{Word, is_token, parse_word, skip_ows, trim_ows},
@@ -114,9 +114,18 @@ fn link_value(v: &[u8], i: usize, limits: &Limits) -> Result<(usize, usize)> {
                         None => return err(ErrorKind::InvalidCharset, eq),
                     },
                 };
-                let ext = ExtValue::parse(t).map_err(|e| e.shifted(at))?;
+                let ext = ExtendedValue::parse(t).map_err(|e| e.shifted(at))?;
                 ext.check_text()
                     .map_err(|e| ParseError::new(e.kind(), at))?;
+            }
+            // A relation type is a token or a URI and never needs a quoted
+            // pair, so `rel="pre\load"` is refused rather than read one way
+            // by `rel` and another by a reader that unescapes.
+            if let Word::Quoted(q) = w {
+                if q.as_plain().is_none() && name.eq_ignore_ascii_case(b"rel") {
+                    let pair = q.raw().iter().position(|&b| b == b'\\').unwrap_or(0);
+                    return err(ErrorKind::InvalidQuotedPair, eq + 1 + pair);
+                }
             }
             i = eq + used;
         } else {
@@ -129,7 +138,26 @@ fn link_value(v: &[u8], i: usize, limits: &Limits) -> Result<(usize, usize)> {
     }
 }
 
-/// Parses a `Link` field value.
+/// Parses a `Link` field value, under [`Limits::DEFAULT`].
+///
+/// # Errors
+///
+/// As [`parse`].
+///
+/// # Examples
+///
+/// ```
+/// let links = parse_net::parse_link(b"<https://example.com/2>; rel=next")?;
+/// let next = links.iter().find(|l| l.has_rel("next")).map(|l| l.target());
+/// assert_eq!(next, Some(&b"https://example.com/2"[..]));
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
+#[inline]
+pub fn parse_link(value: &[u8]) -> Result<Links<'_>> {
+    parse(value, &Limits::DEFAULT)
+}
+
+/// Parses a `Link` field value under `limits`.
 ///
 /// # Errors
 ///
@@ -137,7 +165,8 @@ fn link_value(v: &[u8], i: usize, limits: &Limits) -> Result<(usize, usize)> {
 /// target, a member that does not start with `<`);
 /// [`ErrorKind::UnterminatedQuote`] (no closing `>` or `"`);
 /// [`ErrorKind::InvalidPercentEncoding`]; [`ErrorKind::NotToken`] and
-/// [`ErrorKind::MissingValue`] for a parameter; the [`ExtValue::parse`]
+/// [`ErrorKind::MissingValue`] for a parameter; [`ErrorKind::InvalidQuotedPair`]
+/// for a quoted pair in `rel`; the [`ExtendedValue::parse`]
 /// errors for `title*`; [`ErrorKind::TooManyMembers`] beyond
 /// `max_list_members` links or `max_params` parameters;
 /// [`ErrorKind::TooManyEmptyElements`]; [`ErrorKind::TrailingData`].
@@ -145,14 +174,15 @@ fn link_value(v: &[u8], i: usize, limits: &Limits) -> Result<(usize, usize)> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::{parse_link, ErrorKind, Limits};
+/// use parse_net::{link, ErrorKind, Limits};
 ///
-/// let l = parse_link(b"<a>; rel=next; rel=prev", &Limits::DEFAULT)?;
+/// let l = link::parse(b"<a>; rel=next; rel=prev", &Limits::DEFAULT)?;
 /// assert!(l.iter().next().is_some_and(|v| v.has_rel("next") && !v.has_rel("prev")));
-/// assert_eq!(parse_link(b"<a b>", &Limits::DEFAULT).unwrap_err().kind(), ErrorKind::InvalidByte);
+/// assert_eq!(link::parse(b"<a b>", &Limits::DEFAULT).unwrap_err().kind(), ErrorKind::InvalidByte);
+/// assert_eq!(link::parse(b"<a>, <b>", &Limits::DEFAULT.max_list_members(1)).unwrap_err().kind(), ErrorKind::TooManyMembers);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn parse_link<'a>(value: &'a [u8], limits: &Limits) -> Result<Links<'a>> {
+pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<Links<'a>> {
     let lead = skip_ows(value);
     let v = trim_ows(value);
     let (mut i, mut count, mut empty) = (0usize, 0usize, 0usize);
@@ -193,7 +223,7 @@ pub fn parse_link<'a>(value: &'a [u8], limits: &Limits) -> Result<Links<'a>> {
 /// ```
 /// use parse_net::{parse_link, Limits};
 ///
-/// let links = parse_link(b"</a>; rel=next, </b>; rel=prev", &Limits::DEFAULT)?;
+/// let links = parse_link(b"</a>; rel=next, </b>; rel=prev")?;
 /// assert_eq!(links.len(), 2);
 /// assert!(links.iter().any(|v| v.has_rel("prev")));
 /// # Ok::<(), parse_net::ParseError>(())
@@ -212,7 +242,7 @@ impl<'a> Links<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let links = parse_link(b"</a>; rel=next, </b>; rel=prev", &Limits::DEFAULT)?;
+    /// let links = parse_link(b"</a>; rel=next, </b>; rel=prev")?;
     /// let targets: Vec<&[u8]> = links.iter().map(|v| v.target()).collect();
     /// assert_eq!(targets, [&b"/a"[..], b"/b"]);
     /// # Ok::<(), parse_net::ParseError>(())
@@ -229,7 +259,7 @@ impl<'a> Links<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// assert_eq!(parse_link(b"</a>, </b>, </c>", &Limits::DEFAULT)?.len(), 3);
+    /// assert_eq!(parse_link(b"</a>, </b>, </c>")?.len(), 3);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -244,8 +274,8 @@ impl<'a> Links<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// assert!(parse_link(b"", &Limits::DEFAULT)?.is_empty());
-    /// assert!(!parse_link(b"</a>", &Limits::DEFAULT)?.is_empty());
+    /// assert!(parse_link(b"")?.is_empty());
+    /// assert!(!parse_link(b"</a>")?.is_empty());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -261,7 +291,7 @@ impl<'a> Links<'a> {
 /// ```
 /// use parse_net::{link::LinkIter, parse_link, Limits};
 ///
-/// let links = parse_link(b"</a>, </b>", &Limits::DEFAULT)?;
+/// let links = parse_link(b"</a>, </b>")?;
 /// let mut it: LinkIter<'_> = links.iter();
 /// assert_eq!(it.next().map(|v| v.target()), Some(&b"/a"[..]));
 /// assert_eq!(it.count(), 1);
@@ -305,7 +335,7 @@ impl<'a> Iterator for LinkIter<'a> {
 /// ```
 /// use parse_net::{parse_link, Limits};
 ///
-/// let v = parse_link(b"<https://x.test/>; rel=canonical", &Limits::DEFAULT)?.iter().next().expect("one link");
+/// let v = parse_link(b"<https://x.test/>; rel=canonical")?.iter().next().expect("one link");
 /// assert_eq!(v.target(), b"https://x.test/");
 /// assert!(v.has_rel("canonical"));
 /// # Ok::<(), parse_net::ParseError>(())
@@ -324,7 +354,7 @@ impl<'a> LinkValue<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let v = parse_link(b"</docs/%7Euser>", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let v = parse_link(b"</docs/%7Euser>")?.iter().next().expect("one link");
     /// assert_eq!(v.target(), b"/docs/%7Euser");
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -340,7 +370,7 @@ impl<'a> LinkValue<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let v = parse_link(b"</a>; rel=next; crossorigin", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let v = parse_link(b"</a>; rel=next; crossorigin")?.iter().next().expect("one link");
     /// let p = v.params();
     /// assert_eq!(p.len(), 2);
     /// assert!(p.iter().any(|(n, w)| n == b"crossorigin" && w.is_none()));
@@ -368,7 +398,7 @@ impl<'a> LinkValue<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let v = parse_link(b"</a>; rel=\"next last\"; rel=prev", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let v = parse_link(b"</a>; rel=\"next last\"; rel=prev")?.iter().next().expect("one link");
     /// assert!(v.rel().is_some_and(|w| w.eq_bytes(b"next last")));
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -378,15 +408,15 @@ impl<'a> LinkValue<'a> {
     }
 
     /// The relation types of the first `rel`, split on spaces. A relation
-    /// type is a token or a URI, so it never needs a quoted pair; one that
-    /// has one is yielded as sent.
+    /// type is a token or a URI, so it never needs a quoted pair, and a `rel`
+    /// with one is refused by the parse.
     ///
     /// # Examples
     ///
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let v = parse_link(b"</a>; rel=\"next last\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let v = parse_link(b"</a>; rel=\"next last\"")?.iter().next().expect("one link");
     /// let rels: Vec<&[u8]> = v.rels().collect();
     /// assert_eq!(rels, [&b"next"[..], b"last"]);
     /// # Ok::<(), parse_net::ParseError>(())
@@ -408,7 +438,7 @@ impl<'a> LinkValue<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let l = parse_link(b"</style.css>; rel=\"Preload stylesheet\"", &Limits::DEFAULT)?;
+    /// let l = parse_link(b"</style.css>; rel=\"Preload stylesheet\"")?;
     /// let v = l.iter().next().expect("one link");
     /// assert!(v.has_rel("preload") && v.has_rel("STYLESHEET") && !v.has_rel("style"));
     /// # Ok::<(), parse_net::ParseError>(())
@@ -425,7 +455,7 @@ impl<'a> LinkValue<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let v = parse_link(b"</a>; rel=next; anchor=\"#top\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let v = parse_link(b"</a>; rel=next; anchor=\"#top\"")?.iter().next().expect("one link");
     /// assert!(v.anchor().is_some_and(|w| w.eq_bytes(b"#top")));
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -441,7 +471,7 @@ impl<'a> LinkValue<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let v = parse_link(b"</a>; rel=alternate; hreflang=en; hreflang=de", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let v = parse_link(b"</a>; rel=alternate; hreflang=en; hreflang=de")?.iter().next().expect("one link");
     /// let langs: Vec<_> = v.hreflang().map(|w| w.as_str()).collect();
     /// assert_eq!(langs, [Some("en"), Some("de")]);
     /// # Ok::<(), parse_net::ParseError>(())
@@ -461,7 +491,7 @@ impl<'a> LinkValue<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let l = parse_link(b"<a>; title=\"EUR\"; title*=UTF-8''%E2%82%AC", &Limits::DEFAULT)?;
+    /// let l = parse_link(b"<a>; title=\"EUR\"; title*=UTF-8''%E2%82%AC")?;
     /// let mut buf = [0u8; 8];
     /// let t = l.iter().next().and_then(|v| v.title()).expect("a title");
     /// assert_eq!(t.decode_into(&mut buf)?, "\u{20ac}");
@@ -470,8 +500,8 @@ impl<'a> LinkValue<'a> {
     #[must_use]
     pub fn title(&self) -> Option<Filename<'a>> {
         let ext = self.first("title*").flatten().and_then(|w| match w {
-            Word::Token(t) => ExtValue::parse(t).ok(),
-            Word::Quoted(q) => ExtValue::parse(q.as_plain()?).ok(),
+            Word::Token(t) => ExtendedValue::parse(t).ok(),
+            Word::Quoted(q) => ExtendedValue::parse(q.as_plain()?).ok(),
         });
         ext.map(Filename::Ext)
             .or_else(|| self.first("title").flatten().map(Filename::Plain))
@@ -484,7 +514,7 @@ impl<'a> LinkValue<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let v = parse_link(b"</s.css>; rel=stylesheet; media=\"screen\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let v = parse_link(b"</s.css>; rel=stylesheet; media=\"screen\"")?.iter().next().expect("one link");
     /// assert!(v.media().is_some_and(|w| w.eq_bytes(b"screen")));
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -500,7 +530,7 @@ impl<'a> LinkValue<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let v = parse_link(b"</a.json>; rel=alternate; type=\"application/json\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let v = parse_link(b"</a.json>; rel=alternate; type=\"application/json\"")?.iter().next().expect("one link");
     /// assert!(v.type_().is_some_and(|w| w.eq_bytes(b"application/json")));
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -517,7 +547,7 @@ impl<'a> LinkValue<'a> {
 /// ```
 /// use parse_net::{parse_link, Limits};
 ///
-/// let v = parse_link(b"</a>; rel=next; title=\"Next\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+/// let v = parse_link(b"</a>; rel=next; title=\"Next\"")?.iter().next().expect("one link");
 /// let p = v.params();
 /// assert_eq!(p.len(), 2);
 /// assert!(p.iter().any(|(n, w)| n == b"title" && w.is_some_and(|w| w.eq_bytes(b"Next"))));
@@ -537,7 +567,7 @@ impl<'a> LinkParams<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let v = parse_link(b"</a>; rel=next; title=\"Next\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let v = parse_link(b"</a>; rel=next; title=\"Next\"")?.iter().next().expect("one link");
     /// let names: Vec<&[u8]> = v.params().iter().map(|(n, _)| n).collect();
     /// assert_eq!(names, [&b"rel"[..], b"title"]);
     /// # Ok::<(), parse_net::ParseError>(())
@@ -554,7 +584,7 @@ impl<'a> LinkParams<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let v = parse_link(b"</a>; rel=next; title=x; crossorigin", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let v = parse_link(b"</a>; rel=next; title=x; crossorigin")?.iter().next().expect("one link");
     /// assert_eq!(v.params().len(), 3);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -570,7 +600,7 @@ impl<'a> LinkParams<'a> {
     /// ```
     /// use parse_net::{parse_link, Limits};
     ///
-    /// let v = parse_link(b"</a>", &Limits::DEFAULT)?.iter().next().expect("one link");
+    /// let v = parse_link(b"</a>")?.iter().next().expect("one link");
     /// assert!(v.params().is_empty());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -587,7 +617,7 @@ impl<'a> LinkParams<'a> {
 /// ```
 /// use parse_net::{link::LinkParamIter, parse_link, Limits};
 ///
-/// let v = parse_link(b"</a>; rel=next", &Limits::DEFAULT)?.iter().next().expect("one link");
+/// let v = parse_link(b"</a>; rel=next")?.iter().next().expect("one link");
 /// let mut it: LinkParamIter<'_> = v.params().iter();
 /// assert_eq!(it.next().map(|(n, _)| n), Some(&b"rel"[..]));
 /// assert!(it.next().is_none());
@@ -637,7 +667,7 @@ impl<'a> Iterator for LinkParamIter<'a> {
 /// ```
 /// use parse_net::{parse_link, Limits};
 ///
-/// let v = parse_link(b"</s.css>; rel=\"preload stylesheet\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+/// let v = parse_link(b"</s.css>; rel=\"preload stylesheet\"")?.iter().next().expect("one link");
 /// let mut rels = v.rels();
 /// assert_eq!(rels.next(), Some(&b"preload"[..]));
 /// assert_eq!(rels.next(), Some(&b"stylesheet"[..]));
@@ -669,7 +699,7 @@ impl<'a> Iterator for RelIter<'a> {
 /// ```
 /// use parse_net::{parse_link, Limits};
 ///
-/// let v = parse_link(b"</a>; hreflang=en; rel=alternate; hreflang=\"fr\"", &Limits::DEFAULT)?.iter().next().expect("one link");
+/// let v = parse_link(b"</a>; hreflang=en; rel=alternate; hreflang=\"fr\"")?.iter().next().expect("one link");
 /// assert_eq!(v.hreflang().count(), 2);
 /// assert!(v.hreflang().last().is_some_and(|w| w.eq_bytes(b"fr")));
 /// # Ok::<(), parse_net::ParseError>(())
@@ -744,7 +774,7 @@ pub fn write_link(
         .iter()
         .find(|(name, value)| name.eq_ignore_ascii_case("title*") && !value.is_empty());
     if let Some((_, value)) = title {
-        let ext = ExtValue::parse(value.as_bytes());
+        let ext = ExtendedValue::parse(value.as_bytes());
         if ext.and_then(|e| e.check_text()).is_err() {
             return Err(WriteError::forbidden(0));
         }
@@ -780,13 +810,13 @@ mod tests {
     use std::{vec, vec::Vec};
 
     fn one(v: &[u8]) -> LinkValue<'_> {
-        let l = parse_link(v, &Limits::DEFAULT).unwrap();
+        let l = parse_link(v).unwrap();
         assert_eq!(l.len(), 1);
         l.iter().next().unwrap()
     }
 
     fn k(v: &[u8]) -> ErrorKind {
-        parse_link(v, &Limits::DEFAULT).unwrap_err().kind()
+        parse_link(v).unwrap_err().kind()
     }
 
     #[test]
@@ -817,14 +847,8 @@ mod tests {
             one(b"<a>; rel = next").rel().unwrap().as_plain(),
             Some(&b"next"[..])
         );
-        assert!(parse_link(b"", &Limits::DEFAULT).unwrap().is_empty());
-        assert_eq!(
-            parse_link(b" , <a>,, <b> ,", &Limits::DEFAULT)
-                .unwrap()
-                .iter()
-                .count(),
-            2
-        );
+        assert!(parse_link(b"").unwrap().is_empty());
+        assert_eq!(parse_link(b" , <a>,, <b> ,").unwrap().iter().count(), 2);
         assert_eq!(
             one(b"<http://[::1]:8080/a?b#c>").target(),
             b"http://[::1]:8080/a?b#c"
@@ -843,6 +867,11 @@ mod tests {
         assert!(v.type_().unwrap().eq_bytes(b"text/html"));
         assert_eq!(v.params().len(), 5);
         assert_eq!(v.params().iter().count(), 5);
+        // A quoted pair in `rel` is refused, in any `rel`.
+        let e = parse(b"<a>; rel=\"pre\\load\"", &Limits::DEFAULT).unwrap_err();
+        assert_eq!((e.kind(), e.offset()), (ErrorKind::InvalidQuotedPair, 13));
+        assert!(parse(b"<a>; rel=next; REL=\"x\\y\"", &Limits::DEFAULT).is_err());
+        assert!(parse(b"<a>; title=\"a\\\"b\"; rel=\"next\"", &Limits::DEFAULT).is_ok());
     }
 
     #[test]
@@ -869,20 +898,20 @@ mod tests {
     #[test]
     fn test_link_limits_plus_one_refused() {
         let l = Limits::DEFAULT.max_list_members(2).max_params(2);
-        assert!(parse_link(b"<a>, <b>", &l).is_ok());
+        assert!(parse(b"<a>, <b>", &l).is_ok());
         assert_eq!(
-            parse_link(b"<a>, <b>, <c>", &l).unwrap_err().kind(),
+            parse(b"<a>, <b>, <c>", &l).unwrap_err().kind(),
             ErrorKind::TooManyMembers
         );
-        assert!(parse_link(b"<a>;x;y", &l).is_ok());
+        assert!(parse(b"<a>;x;y", &l).is_ok());
         assert_eq!(
-            parse_link(b"<a>;x;y;z", &l).unwrap_err().kind(),
+            parse(b"<a>;x;y;z", &l).unwrap_err().kind(),
             ErrorKind::TooManyMembers
         );
         let e = Limits::DEFAULT.max_empty_elements(1);
-        assert!(parse_link(b"<a>,,<b>", &e).is_ok());
+        assert!(parse(b"<a>,,<b>", &e).is_ok());
         assert_eq!(
-            parse_link(b"<a>,,,<b>", &e).unwrap_err().kind(),
+            parse(b"<a>,,,<b>", &e).unwrap_err().kind(),
             ErrorKind::TooManyEmptyElements
         );
     }
@@ -935,6 +964,6 @@ mod tests {
             v.extend_from_slice(b"<a,b>; rel=x, ");
         }
         let l = Limits::DEFAULT.max_list_members(u16::MAX);
-        assert_eq!(parse_link(&v, &l).unwrap().iter().count(), 1000);
+        assert_eq!(parse(&v, &l).unwrap().iter().count(), 1000);
     }
 }

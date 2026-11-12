@@ -6,7 +6,7 @@ use parse_net::{
     WriteError,
     class::Class,
     list::{CombinedList, Elements},
-    pct::{EncodeSet, HexCase},
+    percent::{EncodeSet, HexCase},
 };
 
 fn assert_traits<T: Send + Sync + Unpin>() {}
@@ -34,7 +34,7 @@ views!(
     pn::RangeOutcome,
     pn::ContentRange,
     pn::IfRange<'static>,
-    pn::ExtValue<'static>,
+    pn::ExtendedValue<'static>,
     pn::Charset,
     pn::ContentDisposition<'static>,
     pn::Filename<'static>,
@@ -61,15 +61,15 @@ views!(
     pn::mail::MimeParams<'static>,
     pn::mail::MimeValue<'static>,
     pn::mail::Unfolded<'static>,
-    pn::sfv::BareItem<'static>,
-    pn::sfv::Decimal,
-    pn::sfv::Item<'static>,
-    pn::sfv::Member<'static>,
-    pn::sfv::InnerList<'static>,
-    pn::sfv::List<'static>,
-    pn::sfv::Dictionary<'static>,
-    pn::sfv::SfParams<'static>,
-    pn::sfv::Parser,
+    pn::structured::BareItem<'static>,
+    pn::structured::Decimal,
+    pn::structured::Item<'static>,
+    pn::structured::Member<'static>,
+    pn::structured::InnerList<'static>,
+    pn::structured::List<'static>,
+    pn::structured::Dictionary<'static>,
+    pn::structured::SfParams<'static>,
+    pn::structured::Parser,
 );
 
 #[test]
@@ -130,7 +130,7 @@ fn test_view_sizes() {
     assert_eq!(size_of::<HttpDate>(), 8);
     assert_eq!(size_of::<pn::EntityTag<'static>>(), 24);
     assert_eq!(size_of::<pn::ByteRange>(), 16);
-    assert_eq!(size_of::<pn::ExtValue<'static>>(), 40);
+    assert_eq!(size_of::<pn::ExtendedValue<'static>>(), 40);
     assert_eq!(size_of::<pn::ContentDisposition<'static>>(), 48);
     assert_eq!(size_of::<HostPort<'static>>(), 32);
     assert_eq!(size_of::<pn::Origin<'static>>(), 48);
@@ -138,8 +138,8 @@ fn test_view_sizes() {
     assert_eq!(size_of::<pn::LinkValue<'static>>(), 40);
     assert_eq!(size_of::<pn::MailDate>(), 16);
     assert_eq!(size_of::<pn::mail::AddrSpec<'static>>(), 48);
-    assert_eq!(size_of::<pn::sfv::BareItem<'static>>(), 24);
-    assert_eq!(size_of::<pn::sfv::Item<'static>>(), 48);
-    assert_eq!(size_of::<pn::sfv::Member<'static>>(), 56);
-    assert_eq!(size_of::<pn::sfv::List<'static>>(), 24);
+    assert_eq!(size_of::<pn::structured::BareItem<'static>>(), 24);
+    assert_eq!(size_of::<pn::structured::Item<'static>>(), 48);
+    assert_eq!(size_of::<pn::structured::Member<'static>>(), 56);
+    assert_eq!(size_of::<pn::structured::List<'static>>(), 24);
 }
