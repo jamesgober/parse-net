@@ -571,106 +571,181 @@ macro_rules! predicate {
 
 predicate!(
     /// Whether `b` is a `tchar`, a byte allowed in a token (RFC 9110 section 5.6.2).
-    is_tchar, TCHAR, b'~', b'('
+    is_tchar,
+    TCHAR,
+    b'~',
+    b'('
 );
 predicate!(
     /// Whether `b` is a visible ASCII character, 0x21 to 0x7E.
-    is_vchar, VCHAR, b'!', b' '
+    is_vchar,
+    VCHAR,
+    b'!',
+    b' '
 );
 predicate!(
     /// Whether `b` is `obs-text`, 0x80 to 0xFF.
-    is_obs_text, OBS_TEXT, 0x80, 0x7f
+    is_obs_text,
+    OBS_TEXT,
+    0x80,
+    0x7f
 );
 predicate!(
     /// Whether `b` may appear in a field value: `field-vchar / SP / HTAB`
     /// (RFC 9110 section 5.5).
-    is_field_text, FIELD_TEXT, b'\t', b'\r'
+    is_field_text,
+    FIELD_TEXT,
+    b'\t',
+    b'\r'
 );
 predicate!(
     /// Whether `b` may appear unescaped in a quoted string (RFC 9110 section 5.6.4).
-    is_qdtext, QDTEXT, b' ', b'"'
+    is_qdtext,
+    QDTEXT,
+    b' ',
+    b'"'
 );
 predicate!(
     /// Whether `b` may appear unescaped in a comment (RFC 9110 section 5.6.5).
-    is_ctext, CTEXT, b'a', b'('
+    is_ctext,
+    CTEXT,
+    b'a',
+    b'('
 );
 predicate!(
     /// Whether `b` may follow `\` in a `quoted-pair`: `HTAB / SP / VCHAR / obs-text`.
-    is_quoted_pair_char, QUOTED_PAIR, b'"', 0x7f
+    is_quoted_pair_char,
+    QUOTED_PAIR,
+    b'"',
+    0x7f
 );
 predicate!(
     /// Whether `b` is an `etagc` (RFC 9110 section 8.8.3).
-    is_etagc, ETAGC, b'!', b'"'
+    is_etagc,
+    ETAGC,
+    b'!',
+    b'"'
 );
 predicate!(
     /// Whether `b` is an `attr-char` (RFC 8187 section 3.2.1).
-    is_attr_char, ATTR_CHAR, b'|', b'%'
+    is_attr_char,
+    ATTR_CHAR,
+    b'|',
+    b'%'
 );
 predicate!(
     /// Whether `b` may appear in a MIME `token` (RFC 2045 section 5.1).
-    is_mime_token_char, MIME_TOKEN, b'{', b'/'
+    is_mime_token_char,
+    MIME_TOKEN,
+    b'{',
+    b'/'
 );
 predicate!(
     /// Whether `b` is `unreserved` (RFC 3986 section 2.3).
-    is_unreserved, UNRESERVED, b'~', b'!'
+    is_unreserved,
+    UNRESERVED,
+    b'~',
+    b'!'
 );
 predicate!(
     /// Whether `b` is a `sub-delims` byte (RFC 3986 section 2.2).
-    is_sub_delim, SUB_DELIM, b'!', b'/'
+    is_sub_delim,
+    SUB_DELIM,
+    b'!',
+    b'/'
 );
 predicate!(
     /// Whether `b` is a `pchar` other than the `%` of `pct-encoded`
     /// (RFC 3986 section 3.3).
-    is_pchar_no_pct, PCHAR_NO_PCT, b'@', b'/'
+    is_pchar_no_pct,
+    PCHAR_NO_PCT,
+    b'@',
+    b'/'
 );
 predicate!(
     /// Whether `b` may appear in a request target: `pchar / "/" / "?"` or the
     /// `%` of a `pct-encoded` triple (whose digits are checked apart).
-    is_uri_target, URI_TARGET, b'?', b'#'
+    is_uri_target,
+    URI_TARGET,
+    b'?',
+    b'#'
 );
 predicate!(
     /// Whether `b` is a hex digit, either case.
-    is_hexdig, HEXDIG, b'F', b'g'
+    is_hexdig,
+    HEXDIG,
+    b'F',
+    b'g'
 );
 predicate!(
     /// Whether `b` may start a Structured Field key: `lcalpha / "*"`.
-    is_sf_key_start, SF_KEY_START, b'*', b'A'
+    is_sf_key_start,
+    SF_KEY_START,
+    b'*',
+    b'A'
 );
 predicate!(
     /// Whether `b` may appear in a Structured Field key.
-    is_sf_key_char, SF_KEY, b'_', b'A'
+    is_sf_key_char,
+    SF_KEY,
+    b'_',
+    b'A'
 );
 predicate!(
     /// Whether `b` may appear in a Structured Field token after its first byte.
-    is_sf_token_char, SF_TOKEN, b':', b'"'
+    is_sf_token_char,
+    SF_TOKEN,
+    b':',
+    b'"'
 );
 predicate!(
     /// Whether `b` may appear unescaped in a Structured Field string.
-    is_sf_string_char, SF_STRING, b' ', b'\\'
+    is_sf_string_char,
+    SF_STRING,
+    b' ',
+    b'\\'
 );
 predicate!(
     /// Whether `b` is a `token68` byte other than the `=` padding.
-    is_token68_char, TOKEN68, b'~', b'='
+    is_token68_char,
+    TOKEN68,
+    b'~',
+    b'='
 );
 predicate!(
     /// Whether `b` is in the base64 alphabet (RFC 4648 section 4), padding aside.
-    is_base64_char, BASE64, b'+', b'-'
+    is_base64_char,
+    BASE64,
+    b'+',
+    b'-'
 );
 predicate!(
     /// Whether `b` is an `atext` byte (RFC 5322 section 3.2.3).
-    is_atext, ATEXT, b'{', b'@'
+    is_atext,
+    ATEXT,
+    b'{',
+    b'@'
 );
 predicate!(
     /// Whether `b` is a `bcharsnospace` byte (RFC 2046 section 5.1.1).
-    is_bchar_nospace, BCHAR_NOSPACE, b'?', b' '
+    is_bchar_nospace,
+    BCHAR_NOSPACE,
+    b'?',
+    b' '
 );
 predicate!(
     /// Whether `b` is a `cookie-octet` (rfc6265bis section 4.1.1).
-    is_cookie_octet, COOKIE_OCTET, b'!', b';'
+    is_cookie_octet,
+    COOKIE_OCTET,
+    b'!',
+    b';'
 );
 predicate!(
     /// Whether `b` may appear in a cookie attribute value (rfc6265bis section 4.1.1).
-    is_av_octet, AV_OCTET, b' ', b';'
+    is_av_octet,
+    AV_OCTET,
+    b' ',
+    b';'
 );
 
 /// Whether `b` is field text other than a list delimiter (`,` `"` `(` `)`).
