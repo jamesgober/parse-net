@@ -102,7 +102,7 @@ Exit: no open fuzz or differential finding marked "ours wrong"; threat table ful
 
 Exit: two consumers in published releases with green CI; no API change requested by them that is still open.
 
-- [x] Consumers published on parse-net, CI green on their `main` branches: http-net 0.8.0 and 0.9.0 (`parse-net ^0.7`, its only runtime dependency), cookie-net 0.3.0 to 0.7.0 and form-net 0.3.0 to 0.5.0 (`^0.6.1`). serve-net and LexerSketch Studio run against http-net on parse-net with no change.
+- [x] Consumers published on parse-net, CI green on their `main` branches: http-net 0.8.0 and 0.9.0 (`parse-net ^0.7`, its only runtime dependency), cookie-net 0.3.0 to 0.7.0 and form-net 0.3.0 to 0.5.0 (`^0.6.1`). serve-net and the editor tool run against http-net on parse-net with no change.
 - [x] No API change requested by a consumer is open. One measurement note: form-net's `FormKind::detect` took 114 ns against its 100 ns estimate on parse-net 0.6.1 (it parses, then looks for repeated names itself, then calls `get` twice); it is in the 0.9 polish list.
 - [ ] Moved to 0.9: ws-net on parse-net (ws-net 0.2.0 still carries its own grammar).
 
