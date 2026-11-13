@@ -13,9 +13,144 @@
 
 ---
 
+## [0.10.0] - 2026-11-12
+
+A simpler API before 1.0: root parsers are all named `parse_*`, Tier 1
+calls take no `Limits`, abbreviations are spelled out, and there is one way
+to do each thing. There are no deprecated aliases; `docs/MIGRATION.md` maps
+every 0.9 call to its replacement. This release also fixes a way to spoof
+`client_address`, tightens file names, `Cache-Control`, and `Host`, and makes
+content negotiation follow RFC 9110 and RFC 4647 in the four cases issue #14
+reported.
+
+### Security
+
+- `client_address` read and counted the whole `X-Forwarded-For` or
+  `Forwarded` chain, though everything left of the first untrusted address
+  is the client's own text. One junk entry there (`x, 198.51.100.7`), an
+  upstream `unknown`, or 16 padding entries made it fail, and the 0.9 docs
+  said to use the peer then, which is the trusted proxy: a client could move
+  itself out of its own rate limits and bans. It now walks from the right
+  and reads nothing past the decision point; an entry there with no
+  reliable address, or more trusted hops than the limit, is
+  `ClientAddress::Unknown`, which the docs say never to replace with the
+  peer.
+- `parse_content_disposition` preferred `filename*` in `form-data`, which
+  RFC 7578 forbids and browsers never send, so a backend reading only
+  `filename` stored another name. It now refuses the field with the new
+  `ErrorKind::ForbiddenParameter`, as it does RFC 2231 continuations
+  (`filename*0`), which some clients join into a name this parser did not
+  see; `mail::parse_mime_params` refuses `name*` beside `name*0` the same
+  way.
+- `Filename::has_path_separator` missed a backslash removed by quoted-pair
+  decoding: `filename="..\..\web.config"` decodes to `....web.config`, but
+  a browser means the backslashes. A quoted name is now checked before
+  unescaping too.
+- One `Cache-Control` directive that did not parse (`ext=a b`, `x=`) refused
+  the whole field, so a cache lost the `no-store` or `private` beside it.
+  The struct readers now skip it up to the next comma and set
+  `invalid_values`; `cache::parse` still refuses it.
+- `Host` accepted percent-encoded reg-names (`a%00b.example`,
+  `%61dmin.example`) and compared them raw, while browsers decode before
+  they send. Any `%` in a reg-name is now `InvalidHost`, which replaces the
+  older check for an escape that decodes to a number.
+
+### Fixed
+
+- `Link`: a quoted pair in `rel` (`rel="pre\load"`) is refused; `rel` and
+  `rels` read it two ways.
+- `MimeParams::decode_into` passed HTAB and C1 controls in a plain value;
+  it now refuses them as every decoder does (T2), and plain continuation
+  sections refuse HTAB too.
+- `mail::parse_addr_spec` refuses C1 controls in every part.
+- `mail::parse_mailbox` accepts a fold between the words of a display name
+  (RFC 5322 FWS); `John\r\n Doe <j@example.com>` failed.
+- `mail::encode_words` and `encode_words_base64` started with a fold when
+  not even one character fit the room, and the text read back with a
+  leading space. The first word now holds that one character and runs past
+  the room.
+
+- Content negotiation, in the four cases issue #14 reported, each checked
+  against the RFC and fixed with a regression test; property tests now
+  compare both selections with plain reference readers.
+  - `Accept`: the most specific matching range decides (RFC 9110 section
+    12.5.1), and a range with more parameters is more specific. `0.9` ranked
+    every range with parameters alike, so with `text/html;a=1;q=1,
+    text/html;a=1;b=2;q=0` the offer `text/html;a=1;b=2` was chosen; it is
+    now not acceptable. `MediaRange::specificity` orders by parameter count
+    within each level.
+  - `Accept`: `q` is the weight wherever it stands, as RFC 9110 asks of
+    recipients. `0.9` read the parameters after `q` as the removed
+    `accept-ext` and ignored them, so `text/html;q=1;level=2` matched
+    `text/html;level=1`. `MediaRange::params` returns every parameter but
+    `q` (`media::RangeParams`).
+  - `Accept-Language` lookup follows RFC 4647 section 3.4: ranges are taken
+    in priority order, each truncated until it matches, before the next is
+    tried. `0.9` let an exact match by a lower range win, so
+    `en-US;q=1,en;q=0.1,fr;q=0.5` chose `fr`; it now chooses `en`.
+  - `Accept-Language` lookup skips a `*` that other ranges follow: `0.9`
+    let `*;q=1,fr;q=0.5` choose the first offer; it now chooses `fr`.
+
+### Changed (breaking)
+
+- `client_address` returns `ClientAddress` (no `Result`) and takes no hop
+  count; `forwarded::client_address_with_limits` takes `&Limits`
+  (`max_hops`), and so does `client_address_detailed`.
+- `if_match` and `if_none_match` take a `Representation`: `Absent`,
+  `Untagged`, or `Tagged(tag)`. `If-None-Match: *` for a `PUT` that creates
+  only when nothing is there needed a way to say "no representation", and
+  a representation without a tag had no form at all.
+- `HostPort`, `Origin`, `forwarded::Element`, `Host`, and `forwarded::Node`
+  are `#[non_exhaustive]`, so a field or variant can be added in 1.x;
+  `HostPort::new`, `Origin::new`, and `Element::new` build them.
+- The owned forms are made with `into_owned`, not `to_owned`: the views are
+  `Copy`, so `ToOwned::to_owned` also applies to them and returned a view.
+- `ErrorKind::ForbiddenParameter` is new.
+- Root parsers are named `parse_*`: `list` is `parse_list`, `http_date` is
+  `parse_http_date`, `http_date_at` is `parse_http_date_at`,
+  `response_cache_control` and `request_cache_control` are
+  `parse_response_cache_control` and `parse_request_cache_control`.
+- `parse_link(value)` takes no `Limits`; `link::parse(value, &limits)` is the
+  full form. `parse_condition` left the root and is `etag::parse(value,
+  &limits)`; `if_match` and `if_none_match` stay the Tier 1 calls.
+- `mail::parse_mailbox(value)`, `mail::decode_words(value, out)`, and
+  `mail::decode_phrase(value, out)` take no `Limits`; each has a
+  `_with_limits` form that does.
+- `HttpDate::parse_at` is gone (it was `parse_http_date_at` under a second
+  name); `HttpDate::parse_at_with` is `HttpDate::parse_with_limits`.
+- `MailDate::parse(value, obsolete)` is `MailDate::parse(value)` and
+  `MailDate::parse_obsolete(value)`.
+- Plain words instead of abbreviations: module `pct` is `percent` (and
+  `decode_lower_only_into` is `decode_lowercase_into`), module `sfv` is
+  `structured`, `ext_value`, `ExtValue`, and `write_ext_value` are
+  `extended_value`, `ExtendedValue`, and `write_extended_value`,
+  `mail::encode_words_b` is `mail::encode_words_base64`, and
+  `forwarded::XffChain` is `forwarded::XForwardedFor`.
+- Several-line forms are named `parse_*_lines`: `list::combined` is
+  `list::parse_lines`, `cache::response_lines` and `cache::request_lines`
+  are `cache::parse_response_lines` and `cache::parse_request_lines`.
+
+### Documentation
+
+- The crate documentation and the README show the whole Tier 1 as compiled
+  examples, email included; they ended with an uncompiled block that said
+  those calls "arrive with 0.4.0 and 0.5.0".
+- `docs/API.md` takes the layout of the other first-party API references
+  (title block and navigation), names the current release, gives the naming
+  rule, and names every one of the 635 public items, which a script now
+  checks before each release.
+- `docs/MIGRATION.md` opens with the 0.9 to 0.10 tables: by call, by
+  signature, by behaviour, and by consumer.
+- What the caller decides is spelled out where it was only implied: RFC 2047 differences between mail readers, the bidirectional
+  marks and Windows names `has_bidi_control` leaves alone, what an email
+  address means, `IfRange::matches` and weak dates, `Dictionary::iter`
+  against `get`, and `percent::encode` with a set that lacks `%`.
+
+---
+
 ## [0.9.3] - 2026-11-08
 
-Fixes from a review of the code added since 0.9.0, and a faster
+Fixes to the code added since 0.9.0, and a faster
 `Cache-Control` reader. No call changes its signature.
 
 ### Fixed
@@ -156,8 +291,8 @@ changes its signature; `decode_words` now reads `B` words it refused.
 
 ## [0.9.0] - 2026-11-03
 
-Beta: the pre-1.0 polish pass. Three independent reviews of the whole crate
-found 46 defects; all are fixed, each with a regression test. `0.9.0` refuses
+Beta: the pre-1.0 polish pass. A security and edge-case pass over the whole
+crate found 46 defects; all are fixed, each with a regression test. `0.9.0` refuses
 some inputs that `0.8.0` accepted, and accepts some it refused.
 
 ### Security
@@ -223,8 +358,8 @@ some inputs that `0.8.0` accepted, and accepts some it refused.
 
 ### Testing
 
-- `tests/review_core.rs`, `tests/review_security.rs`, `tests/review_mail.rs`:
-  a regression for each finding.
+- `tests/regressions_core.rs`, `tests/regressions_security.rs`, `tests/regressions_mail.rs`:
+  a regression for each fix.
 - Property tests: the one-pass `client_address`, `xff_member`, and the
   `byte_ranges` path against the code they replaced; no host can forge a
   `Forwarded` pair through `write_element`.
@@ -594,7 +729,8 @@ The scaffold and the plan. No parsing code yet.
   (0.1 to 1.0 with exit criteria).
 - `fuzz/` crate skeleton; targets arrive with the parsers they cover.
 
-[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/jamesgober/parse-net/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/jamesgober/parse-net/compare/v0.9.3...v0.10.0
 [0.9.3]: https://github.com/jamesgober/parse-net/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/jamesgober/parse-net/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/jamesgober/parse-net/compare/v0.9.0...v0.9.1

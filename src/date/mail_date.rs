@@ -24,14 +24,14 @@ const MAX_OFFSET: i16 = 99 * 60 + 59;
 /// ```
 /// use parse_net::MailDate;
 ///
-/// let d = MailDate::parse(b"Wed, 21 Oct 2026 17:38:00 +0200", false)?;
+/// let d = MailDate::parse(b"Wed, 21 Oct 2026 17:38:00 +0200")?;
 /// assert_eq!(d.offset_minutes(), 120);
 /// let mut buf = [0u8; 64];
 /// let mut out = parse_net::SliceSink::new(&mut buf);
 /// d.write_to(&mut out).expect("room");
 /// assert_eq!(out.written(), b"Wed, 21 Oct 2026 17:38:00 +0200");
-/// assert!(MailDate::parse(b"21 Oct 26 17:38 EDT", false).is_err());
-/// assert_eq!(MailDate::parse(b"21 Oct 26 17:38 EDT", true)?.offset_minutes(), -240);
+/// assert!(MailDate::parse(b"21 Oct 26 17:38 EDT").is_err());
+/// assert_eq!(MailDate::parse_obsolete(b"21 Oct 26 17:38 EDT")?.offset_minutes(), -240);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -82,7 +82,7 @@ impl MailDate {
     /// # Examples
     ///
     /// ```
-    /// let d = parse_net::MailDate::parse(b"1 Jan 1970 01:00:00 +0100", false)?;
+    /// let d = parse_net::MailDate::parse(b"1 Jan 1970 01:00:00 +0100")?;
     /// assert_eq!(d.utc(), 0);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -96,7 +96,7 @@ impl MailDate {
     /// # Examples
     ///
     /// ```
-    /// let d = parse_net::MailDate::parse(b"21 Oct 2026 08:08:00 -0330", false)?;
+    /// let d = parse_net::MailDate::parse(b"21 Oct 2026 08:08:00 -0330")?;
     /// assert_eq!(d.offset_minutes(), -210);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -114,8 +114,8 @@ impl MailDate {
     /// ```
     /// use parse_net::MailDate;
     ///
-    /// assert!(MailDate::parse(b"21 Oct 2026 17:38:00 -0000", false)?.offset_unknown());
-    /// assert!(!MailDate::parse(b"21 Oct 2026 17:38:00 +0000", false)?.offset_unknown());
+    /// assert!(MailDate::parse(b"21 Oct 2026 17:38:00 -0000")?.offset_unknown());
+    /// assert!(!MailDate::parse(b"21 Oct 2026 17:38:00 +0000")?.offset_unknown());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -130,9 +130,9 @@ impl MailDate {
     /// ```
     /// use parse_net::MailDate;
     ///
-    /// let leap = MailDate::parse(b"31 Dec 2016 23:59:60 +0000", false)?;
+    /// let leap = MailDate::parse(b"31 Dec 2016 23:59:60 +0000")?;
     /// assert!(leap.leap_second());
-    /// assert_eq!(leap.utc(), MailDate::parse(b"31 Dec 2016 23:59:59 +0000", false)?.utc());
+    /// assert_eq!(leap.utc(), MailDate::parse(b"31 Dec 2016 23:59:59 +0000")?.utc());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -147,7 +147,7 @@ impl MailDate {
     /// # Examples
     ///
     /// ```
-    /// let d = parse_net::MailDate::parse(b"21 oct 2026 17:38 +0200", false)?;
+    /// let d = parse_net::MailDate::parse(b"21 oct 2026 17:38 +0200")?;
     /// let (bytes, len) = d.format();
     /// assert_eq!(&bytes[..len], b"Wed, 21 Oct 2026 17:38:00 +0200");
     /// # Ok::<(), parse_net::ParseError>(())
@@ -220,17 +220,15 @@ impl MailDate {
         Ok(())
     }
 
-    /// Parses an RFC 5322 `date-time`. Names are case-insensitive (RFC 5234
-    /// quoted strings); comments and folding whitespace may separate the
-    /// tokens. With `obsolete`, also the section 4.3 forms: two- and
-    /// three-digit years (below 50 are 20xx, others 19xx; three digits add
-    /// 1900, D-036), `UT`, `GMT`, the North American zones, and the military
-    /// zones (read as `-0000`).
+    /// Parses an RFC 5322 `date-time` (section 3.3). Names are
+    /// case-insensitive (RFC 5234 quoted strings); comments and folding
+    /// whitespace may separate the tokens. The obsolete forms of section 4.3
+    /// are refused; [`parse_obsolete`](Self::parse_obsolete) reads them.
     ///
     /// # Errors
     ///
     /// [`ErrorKind::InvalidDate`] (a field out of range, a missing token, an
-    /// obsolete form without `obsolete`); [`ErrorKind::WeekdayMismatch`];
+    /// obsolete form); [`ErrorKind::WeekdayMismatch`];
     /// [`ErrorKind::OutOfRange`] (a year outside 1 to 9999);
     /// [`ErrorKind::TrailingData`]; [`ErrorKind::UnbalancedComment`];
     /// [`ErrorKind::CommentTooDeep`]; [`ErrorKind::BareCr`] and
@@ -241,12 +239,44 @@ impl MailDate {
     /// ```
     /// use parse_net::{ErrorKind, MailDate};
     ///
-    /// let d = MailDate::parse(b"1 jan 2026 00:00 (morning) -0000", false)?;
+    /// let d = MailDate::parse(b"1 jan 2026 00:00 (morning) -0000")?;
     /// assert!(d.offset_unknown());
-    /// assert_eq!(MailDate::parse(b"Mon, 21 Oct 2026 17:38:00 +0200", false).unwrap_err().kind(), ErrorKind::WeekdayMismatch);
+    /// assert_eq!(MailDate::parse(b"Mon, 21 Oct 2026 17:38:00 +0200").unwrap_err().kind(), ErrorKind::WeekdayMismatch);
+    /// assert_eq!(MailDate::parse(b"21 Oct 26 17:38 GMT").unwrap_err().kind(), ErrorKind::InvalidDate);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
-    pub fn parse(value: &[u8], obsolete: bool) -> Result<Self> {
+    #[inline]
+    pub fn parse(value: &[u8]) -> Result<Self> {
+        Self::read(value, false)
+    }
+
+    /// As [`parse`](Self::parse), also reading the obsolete forms of RFC
+    /// 5322 section 4.3, which old mail still carries: two- and three-digit
+    /// years (below 50 are 20xx, others 19xx; three digits add 1900, D-036),
+    /// `UT`, `GMT`, the North American zones, and the military zones (read
+    /// as `-0000`).
+    ///
+    /// # Errors
+    ///
+    /// As [`parse`](Self::parse), without the refusal of obsolete forms.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::MailDate;
+    ///
+    /// let d = MailDate::parse_obsolete(b"21 Oct 26 17:38 GMT")?;
+    /// assert_eq!(d, MailDate::parse(b"21 Oct 2026 17:38 +0000")?);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
+    #[inline]
+    pub fn parse_obsolete(value: &[u8]) -> Result<Self> {
+        Self::read(value, true)
+    }
+
+    /// The parser behind [`parse`](Self::parse) and
+    /// [`parse_obsolete`](Self::parse_obsolete).
+    fn read(value: &[u8], obsolete: bool) -> Result<Self> {
         // The canonical form mailers write is read by position; anything
         // else, and anything that fails a check there, takes the general
         // path below, so results and errors are the same either way.
@@ -617,11 +647,17 @@ mod tests {
     use super::*;
 
     fn p(v: &[u8]) -> MailDate {
-        MailDate::parse(v, false).unwrap()
+        MailDate::parse(v).unwrap()
     }
 
     fn k(v: &[u8], obsolete: bool) -> ErrorKind {
-        MailDate::parse(v, obsolete).unwrap_err().kind()
+        (if obsolete {
+            MailDate::parse_obsolete(v)
+        } else {
+            MailDate::parse(v)
+        })
+        .unwrap_err()
+        .kind()
     }
 
     fn text(d: MailDate) -> std::string::String {
@@ -682,32 +718,32 @@ mod tests {
     #[test]
     fn test_mail_date_obsolete_forms() {
         assert_eq!(k(b"21 Oct 26 17:38 EDT", false), ErrorKind::InvalidDate);
-        let d = MailDate::parse(b"21 Oct 26 17:38 EDT", true).unwrap();
+        let d = MailDate::parse_obsolete(b"21 Oct 26 17:38 EDT").unwrap();
         assert_eq!(
             (d.offset_minutes(), text(d).as_str()),
             (-240, "Wed, 21 Oct 2026 17:38:00 -0400")
         );
         assert_eq!(
-            text(MailDate::parse(b"1 Jan 70 00:00 GMT", true).unwrap()),
+            text(MailDate::parse_obsolete(b"1 Jan 70 00:00 GMT").unwrap()),
             "Thu, 01 Jan 1970 00:00:00 +0000"
         );
         assert_eq!(
-            text(MailDate::parse(b"1 Jan 49 00:00 UT", true).unwrap()),
+            text(MailDate::parse_obsolete(b"1 Jan 49 00:00 UT").unwrap()),
             "Fri, 01 Jan 2049 00:00:00 +0000"
         );
         assert_eq!(
-            text(MailDate::parse(b"1 Jan 100 00:00 PST", true).unwrap()),
+            text(MailDate::parse_obsolete(b"1 Jan 100 00:00 PST").unwrap()),
             "Sat, 01 Jan 2000 00:00:00 -0800"
         );
         assert!(
-            MailDate::parse(b"1 Jan 2026 00:00 Z", true)
+            MailDate::parse_obsolete(b"1 Jan 2026 00:00 Z")
                 .unwrap()
                 .offset_unknown()
         );
         assert_eq!(k(b"1 Jan 2026 00:00 J", true), ErrorKind::InvalidDate);
         assert_eq!(k(b"1 Jan 2026 00:00 XYZ", true), ErrorKind::InvalidDate);
         assert_eq!(
-            MailDate::parse(b"1 Jan 2026 00 : 00 : 30 +0000", true)
+            MailDate::parse_obsolete(b"1 Jan 2026 00 : 00 : 30 +0000")
                 .unwrap()
                 .utc()
                 % 60,
@@ -753,7 +789,7 @@ mod tests {
             for off in [-5999i16, -300, 0, 330, 5999] {
                 if let Ok(d) = MailDate::new(secs, off) {
                     let (b, n) = d.format();
-                    let back = MailDate::parse(&b[..n], false).unwrap();
+                    let back = MailDate::parse(&b[..n]).unwrap();
                     assert_eq!((back.utc(), back.offset_minutes()), (secs, off));
                 }
             }

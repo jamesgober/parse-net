@@ -136,9 +136,11 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<MediaType<'a>> {
 /// Parses a media range, as in one member of `Accept`: `*/*`, `type/*`, or a
 /// media type, with an optional weight.
 ///
-/// The first parameter named `q` (ASCII case-insensitive) is the weight; it
-/// and every parameter after it are `accept-ext` and take no part in
-/// matching (RFC 9110 section 12.5.1). A range without `q` has weight 1.
+/// The first parameter named `q` (ASCII case-insensitive) is the weight,
+/// wherever it stands: RFC 9110 section 12.5.1 removed the `accept-ext`
+/// that once followed it and says recipients should read `q` regardless of
+/// parameter order. Every other parameter is a media-range parameter, before
+/// or after `q`. A range without `q` has weight 1.
 ///
 /// # Errors
 ///
@@ -151,7 +153,9 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<MediaType<'a>> {
 /// use parse_net::{media, Limits};
 ///
 /// let r = media::parse_range(b"text/*;q=0.5", &Limits::DEFAULT)?;
-/// assert_eq!((r.specificity(), r.weight().thousandths()), (2, 500));
+/// assert_eq!(r.weight().thousandths(), 500);
+/// let late = media::parse_range(b"text/html;q=1;level=2", &Limits::DEFAULT)?;
+/// assert!(late.params().get("level").is_some_and(|w| w.eq_bytes(b"2")));
 /// let html = parse_net::parse_media_type(b"text/html")?;
 /// assert!(r.matches(&html));
 /// assert!(media::parse_range(b"*/html", &Limits::DEFAULT).is_err());
@@ -171,7 +175,7 @@ pub fn parse_range<'a>(value: &'a [u8], limits: &Limits) -> Result<MediaRange<'a
         let at = end + skip_ows(trimmed.get(end..).unwrap_or(&[]));
         return Err(bad_byte(trimmed, at).shifted(lead));
     }
-    let (params, q) = all.split_at_name(b"q");
+    let (params, q, after) = all.split_around_name(b"q");
     let weight = match q {
         None => QValue::ONE,
         Some(p) => match p.value {
@@ -188,9 +192,101 @@ pub fn parse_range<'a>(value: &'a [u8], limits: &Limits) -> Result<MediaRange<'a
     Ok(MediaRange {
         type_,
         subtype,
-        params,
+        params: RangeParams {
+            before: params,
+            after,
+        },
         weight,
     })
+}
+
+/// The parameters of a media range, without `q`: those before it and those
+/// after it, in order.
+///
+/// # Examples
+///
+/// ```
+/// use parse_net::{media, Limits};
+///
+/// let r = media::parse_range(b"text/html;level=1;q=0.5;charset=utf-8", &Limits::DEFAULT)?;
+/// let names: Vec<&[u8]> = r.params().iter().map(|p| p.name).collect();
+/// assert_eq!(names, [&b"level"[..], b"charset"]);
+/// assert_eq!(r.params().len(), 2);
+/// assert!(r.params().get("q").is_none());
+/// # Ok::<(), parse_net::ParseError>(())
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct RangeParams<'a> {
+    before: Params<'a>,
+    after: Params<'a>,
+}
+
+impl<'a> RangeParams<'a> {
+    /// Every parameter but `q`, in order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{media, Limits};
+    ///
+    /// let r = media::parse_range(b"a/b;x=1;q=0.1;y=2", &Limits::DEFAULT)?;
+    /// assert_eq!(r.params().iter().count(), 2);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
+    pub fn iter(&self) -> impl Iterator<Item = crate::Param<'a>> + use<'a> {
+        self.before.iter().chain(self.after.iter())
+    }
+
+    /// The value of the parameter `name` (ASCII case-insensitive), as
+    /// [`Params::get`] reads it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{media, Limits};
+    ///
+    /// let r = media::parse_range(b"text/html;q=0.9;level=2", &Limits::DEFAULT)?;
+    /// assert!(r.params().get("LEVEL").is_some_and(|w| w.eq_bytes(b"2")));
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<Word<'a>> {
+        if self.before.policy == crate::DuplicatePolicy::Last {
+            self.after.get(name).or_else(|| self.before.get(name))
+        } else {
+            self.before.get(name).or_else(|| self.after.get(name))
+        }
+    }
+
+    /// The number of parameters, `q` not counted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{media, Limits};
+    ///
+    /// assert_eq!(media::parse_range(b"text/html;q=1;level=2", &Limits::DEFAULT)?.params().len(), 1);
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.before.len() + self.after.len()
+    }
+
+    /// Whether the range has no parameter but `q`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use parse_net::{media, Limits};
+    ///
+    /// assert!(media::parse_range(b"text/html;q=0.5", &Limits::DEFAULT)?.params().is_empty());
+    /// # Ok::<(), parse_net::ParseError>(())
+    /// ```
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.before.is_empty() && self.after.is_empty()
+    }
 }
 
 /// A validated media range from `Accept`.
@@ -201,16 +297,15 @@ pub fn parse_range<'a>(value: &'a [u8], limits: &Limits) -> Result<MediaRange<'a
 /// use parse_net::{media, Limits};
 ///
 /// let r = media::parse_range(b"text/html;level=1;q=0.7;ext=x", &Limits::DEFAULT)?;
-/// assert_eq!(r.params().len(), 1);              // `level` only: `q` ends the media-type parameters
+/// assert_eq!(r.params().len(), 2);              // `level` and `ext`: `q` is read wherever it stands
 /// assert_eq!(r.weight().thousandths(), 700);
-/// assert_eq!(r.specificity(), 4);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct MediaRange<'a> {
     type_: &'a [u8],
     subtype: &'a [u8],
-    params: Params<'a>,
+    params: RangeParams<'a>,
     weight: QValue,
 }
 
@@ -274,17 +369,23 @@ impl<'a> MediaRange<'a> {
                 return false;
             }
         }
-        self.params.is_empty()
-            || self.params.iter().all(|p| {
-                let charset = p.name.eq_ignore_ascii_case(b"charset");
-                offer.params().iter().any(|o| {
-                    o.name.eq_ignore_ascii_case(p.name) && p.value.same_value(&o.value, charset)
-                })
+        // Each side of `q` on its own: a chained iterator costs more than
+        // the usual one or two parameters take to compare.
+        let has = |p: crate::Param<'_>| {
+            let charset = p.name.eq_ignore_ascii_case(b"charset");
+            offer.params().iter().any(|o| {
+                o.name.eq_ignore_ascii_case(p.name) && p.value.same_value(&o.value, charset)
             })
+        };
+        (self.params.before.is_empty() || self.params.before.iter().all(has))
+            && (self.params.after.is_empty() || self.params.after.iter().all(has))
     }
 
-    /// How specific the range is: 4 for a type with parameters, 3 for an
-    /// exact type, 2 for `type/*`, 1 for `*/*`.
+    /// How specific the range is, for comparing two ranges that match the
+    /// same type: higher is more specific (RFC 9110 section 12.5.1). An exact
+    /// type outranks `type/*`, which outranks `*/*`; within each, more
+    /// parameters outrank fewer (`text/plain;format=flowed` outranks
+    /// `text/plain`), counted up to 63. Only the order is meaningful.
     ///
     /// # Examples
     ///
@@ -292,20 +393,24 @@ impl<'a> MediaRange<'a> {
     /// use parse_net::{media, Limits};
     ///
     /// let s = |v: &[u8]| media::parse_range(v, &Limits::DEFAULT).map(|r| r.specificity());
-    /// assert_eq!((s(b"*/*")?, s(b"image/*")?, s(b"image/png")?, s(b"image/png;x=1")?), (1, 2, 3, 4));
+    /// assert!(s(b"*/*")? < s(b"image/*")? && s(b"image/*")? < s(b"image/png")?);
+    /// assert!(s(b"image/png")? < s(b"image/png;x=1")?);
+    /// assert!(s(b"image/png;x=1")? < s(b"image/png;x=1;y=2")?);
+    /// assert!(s(b"image/*;x=1")? < s(b"image/png")?);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
     pub const fn specificity(&self) -> u8 {
-        if matches!(self.type_, [b'*']) {
+        let level: u8 = if matches!(self.type_, [b'*']) {
             1
         } else if matches!(self.subtype, [b'*']) {
             2
-        } else if self.params.is_empty() {
-            3
         } else {
-            4
-        }
+            3
+        };
+        let n = self.params.len();
+        let n = if n > 63 { 63 } else { n as u8 };
+        level * 64 + n
     }
 
     /// The weight (`q`), 1 when absent.
@@ -324,7 +429,8 @@ impl<'a> MediaRange<'a> {
         self.weight
     }
 
-    /// The media-type parameters: those before `q`.
+    /// The media-range parameters: every parameter but `q`, before or after
+    /// it.
     ///
     /// # Examples
     ///
@@ -337,7 +443,7 @@ impl<'a> MediaRange<'a> {
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
-    pub const fn params(&self) -> Params<'a> {
+    pub const fn params(&self) -> RangeParams<'a> {
         self.params
     }
 }

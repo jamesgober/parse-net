@@ -4,11 +4,11 @@
 //! # Examples
 //!
 //! ```
-//! use parse_net::sfv::{self, owned::OwnedDictionary, BareItem, Member};
+//! use parse_net::structured::{self, owned::OwnedDictionary, BareItem, Member};
 //!
 //! let owned: OwnedDictionary = {
 //!     let input = b"u=1, i".to_vec();
-//!     sfv::parse_dictionary(&input)?.to_owned()
+//!     structured::parse_dictionary(&input)?.into_owned()
 //! };
 //! assert!(matches!(owned.as_view().get("u"), Some(Member::Item(i)) if i.bare == BareItem::Integer(1)));
 //! # Ok::<(), parse_net::ParseError>(())
@@ -66,11 +66,11 @@ fn view(kind: Kind, bytes: &[u8]) -> BareItem<'_> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, owned::OwnedBareItem, BareItem};
+/// use parse_net::structured::{self, owned::OwnedBareItem, BareItem};
 ///
 /// let owned: OwnedBareItem = {
 ///     let input = b"tok".to_vec();
-///     sfv::parse_item(&input)?.bare.to_owned()
+///     structured::parse_item(&input)?.bare.into_owned()
 /// };
 /// assert_eq!(owned.as_view(), BareItem::Token("tok"));
 /// # Ok::<(), parse_net::ParseError>(())
@@ -87,15 +87,15 @@ impl BareItem<'_> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let bare = sfv::parse_item(b"\"hi\"")?.bare;
-    /// assert_eq!(bare.to_owned().as_view(), bare);
+    /// let bare = structured::parse_item(b"\"hi\"")?.bare;
+    /// assert_eq!(bare.into_owned().as_view(), bare);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
-    pub fn to_owned(&self) -> OwnedBareItem {
-        let (kind, bytes) = split(self);
+    pub fn into_owned(self) -> OwnedBareItem {
+        let (kind, bytes) = split(&self);
         OwnedBareItem {
             kind,
             buf: bytes.to_vec(),
@@ -109,9 +109,9 @@ impl OwnedBareItem {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let owned = BareItem::Integer(9).to_owned();
+    /// let owned = BareItem::Integer(9).into_owned();
     /// assert_eq!(owned.as_view(), BareItem::Integer(9));
     /// ```
     #[must_use]
@@ -126,11 +126,11 @@ impl OwnedBareItem {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, owned::OwnedItem, BareItem};
+/// use parse_net::structured::{self, owned::OwnedItem, BareItem};
 ///
 /// let owned: OwnedItem = {
 ///     let input = b"tok;v=2".to_vec();
-///     sfv::parse_item(&input)?.to_owned()
+///     structured::parse_item(&input)?.into_owned()
 /// };
 /// assert_eq!(owned.as_view().params.get("v"), Some(BareItem::Integer(2)));
 /// # Ok::<(), parse_net::ParseError>(())
@@ -149,14 +149,14 @@ impl Item<'_> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv;
+    /// use parse_net::structured;
     ///
-    /// let item = sfv::parse_item(b"a;x=1")?;
-    /// assert_eq!(item.to_owned().as_view(), item);
+    /// let item = structured::parse_item(b"a;x=1")?;
+    /// assert_eq!(item.into_owned().as_view(), item);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
-    pub fn to_owned(&self) -> OwnedItem {
+    pub fn into_owned(self) -> OwnedItem {
         let (kind, bytes) = split(&self.bare);
         let mut buf = Vec::with_capacity(bytes.len() + self.params.text.len());
         buf.extend_from_slice(bytes);
@@ -176,9 +176,9 @@ impl OwnedItem {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let owned = sfv::parse_item(b"5;unit=s")?.to_owned();
+    /// let owned = structured::parse_item(b"5;unit=s")?.into_owned();
     /// let view = owned.as_view();
     /// assert_eq!(view.bare, BareItem::Integer(5));
     /// assert_eq!(view.params.get("unit"), Some(BareItem::Token("s")));
@@ -202,11 +202,11 @@ impl OwnedItem {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, owned::OwnedList};
+/// use parse_net::structured::{self, owned::OwnedList};
 ///
 /// let owned: OwnedList = {
 ///     let input = b"a, (b c)".to_vec();
-///     sfv::parse_list(&input)?.to_owned()
+///     structured::parse_list(&input)?.into_owned()
 /// };
 /// assert_eq!(owned.as_view().len(), 2);
 /// # Ok::<(), parse_net::ParseError>(())
@@ -223,14 +223,14 @@ impl List<'_> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv;
+    /// use parse_net::structured;
     ///
-    /// let list = sfv::parse_list(b"a, b")?;
-    /// assert_eq!(list.to_owned().as_view(), list);
+    /// let list = structured::parse_list(b"a, b")?;
+    /// assert_eq!(list.into_owned().as_view(), list);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
-    pub fn to_owned(&self) -> OwnedList {
+    pub fn into_owned(self) -> OwnedList {
         OwnedList {
             text: self.text.to_vec(),
             count: self.count,
@@ -244,9 +244,9 @@ impl OwnedList {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem, Member};
+    /// use parse_net::structured::{self, BareItem, Member};
     ///
-    /// let owned = sfv::parse_list(b"1, 2")?.to_owned();
+    /// let owned = structured::parse_list(b"1, 2")?.into_owned();
     /// assert!(matches!(owned.as_view().iter().next(), Some(Member::Item(i)) if i.bare == BareItem::Integer(1)));
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -264,11 +264,11 @@ impl OwnedList {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, owned::OwnedDictionary};
+/// use parse_net::structured::{self, owned::OwnedDictionary};
 ///
 /// let owned: OwnedDictionary = {
 ///     let input = b"a=1, b".to_vec();
-///     sfv::parse_dictionary(&input)?.to_owned()
+///     structured::parse_dictionary(&input)?.into_owned()
 /// };
 /// assert_eq!(owned.as_view().len(), 2);
 /// # Ok::<(), parse_net::ParseError>(())
@@ -285,14 +285,14 @@ impl Dictionary<'_> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv;
+    /// use parse_net::structured;
     ///
-    /// let d = sfv::parse_dictionary(b"a=1, b")?;
-    /// assert_eq!(d.to_owned().as_view(), d);
+    /// let d = structured::parse_dictionary(b"a=1, b")?;
+    /// assert_eq!(d.into_owned().as_view(), d);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
-    pub fn to_owned(&self) -> OwnedDictionary {
+    pub fn into_owned(self) -> OwnedDictionary {
         OwnedDictionary {
             text: self.text.to_vec(),
             count: self.count,
@@ -306,10 +306,10 @@ impl OwnedDictionary {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem, Member};
+    /// use parse_net::structured::{self, BareItem, Member};
     ///
-    /// let owned = sfv::parse_dictionary(b"q=0.5")?.to_owned();
-    /// assert!(matches!(owned.as_view().get("q"), Some(Member::Item(i)) if i.bare == BareItem::Decimal(sfv::Decimal::from_thousandths(500)?)));
+    /// let owned = structured::parse_dictionary(b"q=0.5")?.into_owned();
+    /// assert!(matches!(owned.as_view().get("q"), Some(Member::Item(i)) if i.bare == BareItem::Decimal(structured::Decimal::from_thousandths(500)?)));
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -338,12 +338,12 @@ mod tests {
             b"-0.5",
         ] {
             let i = parse_item(v).unwrap();
-            assert_eq!(i.to_owned().as_view(), i);
-            assert_eq!(i.bare.to_owned().as_view(), i.bare);
+            assert_eq!(i.into_owned().as_view(), i);
+            assert_eq!(i.bare.into_owned().as_view(), i.bare);
         }
         let l = parse_list(b"a, (b c);d, \"e\"").unwrap();
-        assert_eq!(l.to_owned().as_view(), l);
+        assert_eq!(l.into_owned().as_view(), l);
         let d = parse_dictionary(b"a=1, b, c=(x y);q").unwrap();
-        assert_eq!(d.to_owned().as_view(), d);
+        assert_eq!(d.into_owned().as_view(), d);
     }
 }

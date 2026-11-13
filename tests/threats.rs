@@ -7,7 +7,7 @@
 //! | Threat | Tests elsewhere |
 //! |---|---|
 //! | T1 | `write::tests::test_writers_refuse_crlf_in_every_position` |
-//! | T2 | `ext_value::tests::test_ext_value_percent_crlf_refused` |
+//! | T2 | `extended_value::tests::test_ext_value_percent_crlf_refused` |
 //! | T3 | `list::tests::test_list_comma_in_quotes_is_one_element` |
 //! | T6 | `text::tests::test_trim_ows_never_strips_vt_ff_nbsp` |
 //! | T8 | `properties::test_combined_equals_joined` |
@@ -19,14 +19,15 @@
 //! | T15 | `host::tests::test_host_userinfo_refused`, `test_host_partial_ipv4_refused` |
 //! | T16 | `origin::tests::test_origin_suffix_attack_not_same`, `test_origin_trailing_slash_refused` |
 //! | T17 | `disposition::tests::test_filename_nul_refused`, `test_filename_overlong_utf8_refused` |
-//! | T18 | `ext_value::tests::test_ext_value_charset_matrix` |
+//! | T18 | `extended_value::tests::test_ext_value_charset_matrix` |
 //! | T20 | `date::tests::test_http_date_rejections_table` |
 //! | T21 | `auth::tests::test_credentials_debug_redacted` |
 //! | T23 | `no_alloc.rs` (the counting allocator) |
 //! | T25 | `class::tests::test_tchar_table_exhaustive` |
 
 use parse_net::{
-    self as pn, ErrorKind, Limits, auth, cache, etag, mail, media, range, sfv, sfv::BareItem, text,
+    self as pn, ErrorKind, Limits, auth, cache, etag, mail, media, range, structured,
+    structured::BareItem, text,
 };
 
 fn kind<T>(r: Result<T, pn::ParseError>) -> ErrorKind {
@@ -68,38 +69,31 @@ fn test_encoded_word_crlf_refused() {
         b"=?us-ascii?B?YR9i?=",
     ] {
         assert_eq!(
-            kind(mail::decode_words(word, &Limits::DEFAULT, &mut out)),
+            kind(mail::decode_words(word, &mut out)),
             ErrorKind::ControlInDecoded,
             "{word:?}"
         );
         // The same word as a display name: refused as decoded, or, for the
         // `[` no phrase may hold, before it is decoded.
-        let k = kind(mail::decode_phrase(word, &Limits::DEFAULT, &mut out));
+        let k = kind(mail::decode_phrase(word, &mut out));
         assert!(
             k == ErrorKind::ControlInDecoded
                 || (k == ErrorKind::InvalidByte && word.contains(&b'[')),
             "{word:?}: {k:?}"
         );
     }
-    assert_eq!(
-        mail::decode_words(b"=?UTF-8?Q?a_b?=", &Limits::DEFAULT, &mut out),
-        Ok("a b")
-    );
+    assert_eq!(mail::decode_words(b"=?UTF-8?Q?a_b?=", &mut out), Ok("a b"));
     // The neighbours of C1 are text: U+00A0 and U+00C2 itself.
     assert_eq!(
-        mail::decode_words(b"=?UTF-8?Q?=C2=A0=C3=82?=", &Limits::DEFAULT, &mut out),
+        mail::decode_words(b"=?UTF-8?Q?=C2=A0=C3=82?=", &mut out),
         Ok("\u{a0}\u{c2}")
     );
     assert_eq!(
-        mail::decode_words(
-            b"=?UTF-8?B?wqDDgg==?= =?UTF-8?B?YSBi?=",
-            &Limits::DEFAULT,
-            &mut out
-        ),
+        mail::decode_words(b"=?UTF-8?B?wqDDgg==?= =?UTF-8?B?YSBi?=", &mut out),
         Ok("\u{a0}\u{c2}a b")
     );
     assert_eq!(
-        mail::decode_words(b"=?ISO-8859-1?Q?=A0=C2?=", &Limits::DEFAULT, &mut out),
+        mail::decode_words(b"=?ISO-8859-1?Q?=A0=C2?=", &mut out),
         Ok("\u{a0}\u{c2}")
     );
 }
@@ -122,13 +116,10 @@ fn test_display_name_controls_refused() {
         b"Jane\x7fDoe",
         b"=?UTF-8?Q?Jane=0D=0ABcc:_x?=",
     ] {
-        assert!(
-            mail::decode_phrase(name, &Limits::DEFAULT, &mut out).is_err(),
-            "{name:?}"
-        );
+        assert!(mail::decode_phrase(name, &mut out).is_err(), "{name:?}");
     }
     assert_eq!(
-        mail::decode_phrase(b"\"Jane\tDoe\"", &Limits::DEFAULT, &mut out),
+        mail::decode_phrase(b"\"Jane\tDoe\"", &mut out),
         Ok("Jane\tDoe")
     );
 }
@@ -203,7 +194,9 @@ fn test_case_rules_table() {
     assert_eq!(auth::bearer(b"bEaReR abc"), Ok(Some(&b"abc"[..])));
     assert!(range::parse(b"Bytes=0-1", &Limits::DEFAULT).is_ok_and(|r| r.is_bytes()));
     assert_eq!(
-        pn::response_cache_control(b"MAX-AGE=5").unwrap().max_age,
+        pn::parse_response_cache_control(b"MAX-AGE=5")
+            .unwrap()
+            .max_age,
         Some(5)
     );
     // Case-sensitive: the weak prefix `W/` (RFC 9110 8.8.3) and the opaque
@@ -219,9 +212,12 @@ fn test_case_rules_table() {
     assert!(!upper.strong_eq(&lower));
     // Structured Field tokens and keys: keys must be lowercase (RFC 9651
     // 3.1.2); tokens keep their case.
-    assert_eq!(kind(sfv::parse_dictionary(b"A=1")), ErrorKind::InvalidKey);
     assert_eq!(
-        sfv::parse_item(b"Tok").unwrap().bare,
+        kind(structured::parse_dictionary(b"A=1")),
+        ErrorKind::InvalidKey
+    );
+    assert_eq!(
+        structured::parse_item(b"Tok").unwrap().bare,
         BareItem::Token("Tok")
     );
 }
@@ -235,7 +231,7 @@ fn test_utf8_nbsp_prefix_not_trimmed() {
     assert_eq!(text::skip_ows(nbsp), 0);
     assert!(pn::parse_media_type(nbsp).is_err());
     assert!(pn::parse_media_type(b"text/html\xc2\xa0").is_err());
-    assert!(pn::list(b"a,\xc2\xa0b").is_ok_and(|l| l.iter().any(|e| e == b"\xc2\xa0b")));
+    assert!(pn::parse_list(b"a,\xc2\xa0b").is_ok_and(|l| l.iter().any(|e| e == b"\xc2\xa0b")));
     for ws in [&b"\x0btext/html"[..], b"\x0ctext/html", b"\rtext/html"] {
         assert!(pn::parse_media_type(ws).is_err(), "{ws:?}");
     }
@@ -301,7 +297,7 @@ fn test_range_u64_max_plus_one() {
 #[test]
 fn test_delta_seconds_saturates() {
     // RFC 9111 1.2.2: a delta-seconds too large is read as 2^31.
-    let d = |v: &[u8]| pn::response_cache_control(v).unwrap().max_age;
+    let d = |v: &[u8]| pn::parse_response_cache_control(v).unwrap().max_age;
     assert_eq!(d(b"max-age=2147483647"), Some(2_147_483_647));
     assert_eq!(d(b"max-age=2147483648"), Some(2_147_483_648));
     assert_eq!(
@@ -309,7 +305,7 @@ fn test_delta_seconds_saturates() {
         Some(2_147_483_648)
     );
     assert_eq!(d(b"max-age=\"99999999999\""), Some(2_147_483_648));
-    let r = pn::response_cache_control(b"max-age=-1").unwrap();
+    let r = pn::parse_response_cache_control(b"max-age=-1").unwrap();
     assert!(r.max_age.is_none() && r.invalid_values);
     let _ = cache::RequestDirectives::default();
 }
@@ -317,16 +313,16 @@ fn test_delta_seconds_saturates() {
 #[test]
 fn test_sf_integer_16_digits_refused() {
     assert_eq!(
-        sfv::parse_item(b"999999999999999").unwrap().bare,
+        structured::parse_item(b"999999999999999").unwrap().bare,
         BareItem::Integer(999_999_999_999_999)
     );
     assert_eq!(
-        sfv::parse_item(b"-999999999999999").unwrap().bare,
+        structured::parse_item(b"-999999999999999").unwrap().bare,
         BareItem::Integer(-999_999_999_999_999)
     );
-    assert!(sfv::parse_item(b"1000000000000000").is_err());
-    assert!(sfv::parse_item(b"-1000000000000000").is_err());
-    assert!(sfv::parse_item(b"99999999999999999999999").is_err());
+    assert!(structured::parse_item(b"1000000000000000").is_err());
+    assert!(structured::parse_item(b"-1000000000000000").is_err());
+    assert!(structured::parse_item(b"99999999999999999999999").is_err());
 }
 
 // T17: separators and bidi controls in file names are reported.
@@ -393,9 +389,13 @@ fn test_display_string_surrogate_refused() {
         b"%\"%f4%90%80%80\"",
         b"%\"%c3\"",
     ] {
-        assert_eq!(kind(sfv::parse_item(v)), ErrorKind::InvalidUtf8, "{v:?}");
+        assert_eq!(
+            kind(structured::parse_item(v)),
+            ErrorKind::InvalidUtf8,
+            "{v:?}"
+        );
     }
-    assert!(sfv::parse_item(b"%\"%e2%82%ac\"").is_ok());
+    assert!(structured::parse_item(b"%\"%e2%82%ac\"").is_ok());
 }
 
 // T21: one credential per field, no repeated parameter.
@@ -446,10 +446,10 @@ fn test_error_display_contains_no_input() {
             pn::parse_content_disposition(v).err(),
             auth::basic(v).err(),
             range::parse(v, &Limits::DEFAULT).err(),
-            pn::response_cache_control(v).err(),
-            etag::if_none_match(v, &tag).err(),
-            mail::decode_words(v, &Limits::DEFAULT, &mut out).err(),
-            sfv::parse_dictionary(v).err(),
+            pn::parse_response_cache_control(v).err(),
+            etag::if_none_match(v, pn::Representation::Tagged(tag)).err(),
+            mail::decode_words(v, &mut out).err(),
+            structured::parse_dictionary(v).err(),
             media::parse_range(v, &Limits::DEFAULT).err(),
         ];
         for e in errors.into_iter().flatten() {
@@ -464,7 +464,7 @@ fn test_error_display_contains_no_input() {
 
 #[test]
 fn test_sf_byteseq_padding_rules() {
-    let len = |v: &[u8]| match sfv::parse_item(v).unwrap().bare {
+    let len = |v: &[u8]| match structured::parse_item(v).unwrap().bare {
         BareItem::ByteSeq(b) => b.decoded_len(),
         other => panic!("{other:?}"),
     };
@@ -487,7 +487,11 @@ fn test_sf_byteseq_padding_rules() {
         b":Y-Q=:",
         b":YQ_=:",
     ] {
-        assert_eq!(kind(sfv::parse_item(v)), ErrorKind::InvalidBase64, "{v:?}");
+        assert_eq!(
+            kind(structured::parse_item(v)),
+            ErrorKind::InvalidBase64,
+            "{v:?}"
+        );
     }
 }
 

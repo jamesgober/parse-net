@@ -448,7 +448,7 @@ impl Negotiator {
         I::IntoIter: Clone,
     {
         let lines = lines.into_iter();
-        let members = match list::combined(lines.clone(), &self.limits) {
+        let members = match list::parse_lines(lines.clone(), &self.limits) {
             Ok(l) => l,
             Err(e) => return self.malformed(e, first_media(offers)),
         };
@@ -512,15 +512,21 @@ impl Negotiator {
     /// Selects the best of `offers` (language tags such as `"fr-CA"`) for
     /// `Accept-Language`.
     ///
-    /// With [`LanguageMatching::Lookup`] (the default), a range matches an
-    /// offer equal to it or reached by removing subtags from the range's end,
-    /// and the exact match has precedence over a shortened one; with
-    /// [`LanguageMatching::BasicFilter`], a range matches an offer equal to
-    /// it or starting with it and `-`, the longest range having precedence.
-    /// `*` matches every offer at the lowest precedence. The highest weight
-    /// wins; between equal weights the closer match (as lookup returns the
-    /// longest truncation), then the earlier offer. Tags compare ASCII
-    /// case-insensitively.
+    /// With [`LanguageMatching::Lookup`] (the default), RFC 4647 section
+    /// 3.4: the ranges are taken in priority order (highest `q` first,
+    /// header order between equals), and each is shortened from its end, a
+    /// subtag at a time, until it equals an offer; the first offer found is
+    /// chosen, with the `q` of the range that found it. So `en-US` finds
+    /// `en` before a lower range is tried, and `*` counts only when no range
+    /// follows it in priority. An offer named by a range with `q=0` is never
+    /// chosen.
+    ///
+    /// With [`LanguageMatching::BasicFilter`], a range matches an offer
+    /// equal to it or starting with it and `-`, the longest range having
+    /// precedence, and `*` matches every offer at the lowest precedence; the
+    /// highest weight wins.
+    ///
+    /// Ties go to the earlier offer. Tags compare ASCII case-insensitively.
     ///
     /// # Examples
     ///
@@ -529,15 +535,95 @@ impl Negotiator {
     ///
     /// let n = Negotiator::new();
     /// assert_eq!(n.language(Some(b"fr-CA, en;q=0.8"), &["en", "fr"]), Outcome::Chosen { index: 1, weight: QValue::ONE });
+    /// // `en-US` comes first and shortens to `en` before `fr` is tried.
+    /// assert_eq!(n.language(Some(b"en-US, en;q=0.1, fr;q=0.5"), &["en", "fr"]).index(), Some(0));
+    /// // `*` followed by other ranges is skipped.
+    /// assert_eq!(n.language(Some(b"*, fr;q=0.5"), &["en", "fr"]).index(), Some(1));
     /// ```
     #[must_use]
     pub fn language(&self, value: Option<&[u8]>, offers: &[&str]) -> Outcome {
-        let mode = self.language;
-        self.weighted(value, offers, |range, offer| match mode {
-            LanguageMatching::Lookup => lookup_rank(range, offer),
-            LanguageMatching::BasicFilter => filter_rank(range, offer),
-        })
+        match self.language {
+            LanguageMatching::Lookup => self.lookup(value, offers),
+            LanguageMatching::BasicFilter => self.weighted(value, offers, filter_rank),
+        }
         .unwrap_or_else(|| first(offers))
+    }
+
+    /// RFC 4647 section 3.4 lookup over `offers`; `None` for an absent
+    /// header.
+    ///
+    /// Lookup returns the longest truncation of the highest-priority range
+    /// that equals an offer. That is the offer whose best (range, truncation)
+    /// pair is greatest by: the range's weight, then its earlier position,
+    /// then the longer truncation; so each offer is scored against every
+    /// range in one walk, with no list sorted or stored.
+    fn lookup(&self, value: Option<&[u8]>, offers: &[&str]) -> Option<Outcome> {
+        let v = value?;
+        let members = match strict_weighted(v, &self.limits, true) {
+            Ok(m) => m,
+            Err(e) => return Some(self.malformed(e, first(offers).index())),
+        };
+        let mut chosen: Option<(usize, LookupKey)> = None;
+        for (group_index, group) in offers.chunks(GROUP).enumerate() {
+            let mut best: [Option<LookupKey>; GROUP] = [None; GROUP];
+            let mut refused = [false; GROUP];
+            // The last range in priority order (the lowest weight above
+            // zero, the latest among equals), and the last `*`: a `*` counts
+            // only when it is that range, so it is settled after the walk.
+            let mut last: Option<(u16, usize)> = None;
+            let mut star: Option<(u16, usize)> = None;
+            for (pos, m) in members.iter().enumerate() {
+                let weight = m.weight.0;
+                if weight == 0 {
+                    for (no, offer) in refused.iter_mut().zip(group) {
+                        *no |= m.value.eq_ignore_ascii_case(offer.as_bytes());
+                    }
+                    continue;
+                }
+                if last.is_none_or(|(w, _)| weight <= w) {
+                    last = Some((weight, pos));
+                }
+                if m.value == b"*" {
+                    if star.is_none_or(|(w, _)| weight <= w) {
+                        star = Some((weight, pos));
+                    }
+                    continue;
+                }
+                for (b, offer) in best.iter_mut().zip(group) {
+                    if let Some(reach) = lookup_reach(m.value, offer.as_bytes()) {
+                        let key = LookupKey { weight, pos, reach };
+                        if b.is_none_or(|k| key.beats(&k)) {
+                            *b = Some(key);
+                        }
+                    }
+                }
+            }
+            // Last in priority, `*` reaches every offer no range reached.
+            if let Some((weight, pos)) = star.filter(|s| Some(*s) == last) {
+                for b in best.iter_mut().take(group.len()).filter(|b| b.is_none()) {
+                    *b = Some(LookupKey {
+                        weight,
+                        pos,
+                        reach: 0,
+                    });
+                }
+            }
+            let base = group_index * GROUP;
+            for (i, (b, no)) in best.iter().zip(&refused).take(group.len()).enumerate() {
+                if let (Some(k), false) = (b, no) {
+                    if chosen.is_none_or(|(_, c)| k.beats(&c)) {
+                        chosen = Some((base + i, *k));
+                    }
+                }
+            }
+        }
+        Some(match chosen {
+            Some((index, k)) => Outcome::Chosen {
+                index,
+                weight: QValue(k.weight),
+            },
+            None => Outcome::NoneAcceptable,
+        })
     }
 
     /// Selects the best of `offers` (content codings such as `"br"`) for
@@ -719,10 +805,6 @@ fn first(offers: &[&str]) -> Outcome {
     }
 }
 
-/// RFC 4647 section 3.4: `range` matches `offer` when the offer equals the
-/// range or a truncation of it (removing a subtag from the end, and a
-/// single-character subtag left before it). An exact match ranks highest,
-/// then longer shortened matches; `*` ranks lowest.
 /// The first offer that is a valid media type: what an absent `Accept` chooses.
 fn first_media(offers: &[&str]) -> Option<usize> {
     offers
@@ -807,34 +889,42 @@ fn strict_weighted<'a>(
     Ok(members)
 }
 
-fn lookup_rank(range: &[u8], offer: &[u8]) -> Option<u16> {
-    if range == b"*" {
-        return Some(0);
+/// Where a range stands in lookup, for one offer it reaches: a higher
+/// weight first, then the earlier range, then the longer truncation.
+#[derive(Clone, Copy)]
+struct LookupKey {
+    weight: u16,
+    pos: usize,
+    reach: usize,
+}
+
+impl LookupKey {
+    fn beats(&self, other: &Self) -> bool {
+        (self.weight, core::cmp::Reverse(self.pos), self.reach)
+            > (other.weight, core::cmp::Reverse(other.pos), other.reach)
     }
-    if range.eq_ignore_ascii_case(offer) {
-        // An exact match has precedence over any shortened one.
-        return Some(u16::MAX);
+}
+
+/// RFC 4647 section 3.4: the length of the truncation of `range` that
+/// equals `offer`, or `None` when no truncation does. The range shortens a
+/// subtag at a time from its end, and a single-character subtag (an
+/// extension or private-use singleton) goes with the subtag after it, so no
+/// truncation but the whole range ends in one. One pass over the offer's
+/// length.
+fn lookup_reach(range: &[u8], offer: &[u8]) -> Option<usize> {
+    let n = offer.len();
+    let head = range.get(..n)?;
+    if !head.eq_ignore_ascii_case(offer) {
+        return None;
     }
-    let mut r = range;
-    loop {
-        if r.eq_ignore_ascii_case(offer) {
-            return Some(
-                u16::try_from(r.len())
-                    .unwrap_or(u16::MAX - 1)
-                    .saturating_add(1)
-                    .min(u16::MAX - 1),
-            );
-        }
-        let cut = r.iter().rposition(|&b| b == b'-')?;
-        r = r.get(..cut)?;
-        // A single-character subtag (an extension or private-use singleton)
-        // goes with the subtag after it.
-        if let Some(dash) = r.iter().rposition(|&b| b == b'-') {
-            if r.len() - dash == 2 {
-                r = r.get(..dash)?;
-            }
-        }
+    if n == range.len() {
+        return Some(n);
     }
+    if n == 0 || range.get(n) != Some(&b'-') {
+        return None;
+    }
+    let last = head.iter().rposition(|&b| b == b'-').map_or(0, |d| d + 1);
+    (n - last > 1).then_some(n)
 }
 
 /// RFC 4647 section 3.3.1: `range` matches `offer` when they are equal or
@@ -958,7 +1048,7 @@ fn shift_into(e: ParseError, value: &[u8], element: &[u8]) -> ParseError {
 ///
 /// let a = parse_accept(b"text/html, application/*;q=0.2", &Limits::DEFAULT)?;
 /// assert_eq!(a.len(), 2);
-/// assert!(a.iter().any(|r| r.specificity() == 2));
+/// assert!(a.iter().any(|r| r.subtype() == b"*" && r.weight().thousandths() == 200));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 #[derive(Clone, Copy, Debug)]

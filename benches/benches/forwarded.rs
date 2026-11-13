@@ -17,9 +17,7 @@ fn bench(c: &mut Criterion) {
                 black_box(peer),
                 parse_net::ForwardedSource::XForwardedFor(black_box(&lines)),
                 &trusted,
-                16,
             )
-            .expect("valid")
         })
     });
     g.finish();

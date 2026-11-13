@@ -6,7 +6,7 @@
 use libfuzzer_sys::fuzz_target;
 use parse_net::{
     ParseError,
-    sfv::{self, BareItem, Decimal, Item, Member, Parser, SfParams, Visitor},
+    structured::{self, BareItem, Decimal, Item, Member, Parser, SfParams, Visitor},
 };
 
 #[path = "common.rs"]
@@ -106,7 +106,7 @@ fuzz_target!(|data: &[u8]| {
     common::no_alloc(|| {
         let mut visited = Count::default();
         let v = Parser::default().visit_dictionary(data, &mut visited);
-        match sfv::parse_dictionary(data) {
+        match structured::parse_dictionary(data) {
             Ok(d) => {
                 assert!(v.is_ok());
                 assert_eq!(d.iter().count(), d.len());
@@ -136,6 +136,6 @@ fuzz_target!(|data: &[u8]| {
             }
         }
         let (ls, n) = lines(data);
-        let _ = sfv::parse_dictionary_lines(&ls[..n]);
+        let _ = structured::parse_dictionary_lines(&ls[..n]);
     });
 });

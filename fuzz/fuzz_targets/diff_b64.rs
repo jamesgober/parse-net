@@ -9,7 +9,7 @@
 
 use base64::Engine;
 use libfuzzer_sys::fuzz_target;
-use parse_net::{ErrorKind, Limits, mail};
+use parse_net::{ErrorKind, mail};
 
 /// The alphabet, padding, and near misses (URL-safe letters, `.`, `*`).
 const SYMBOLS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=-_.*";
@@ -23,7 +23,7 @@ fuzz_target!(|data: &[u8]| {
     word.extend_from_slice(&text);
     word.extend_from_slice(b"?=");
     let mut out = [0u8; 256];
-    let ours = mail::decode_words(&word, &Limits::DEFAULT, &mut out).map(String::from);
+    let ours = mail::decode_words(&word, &mut out).map(String::from);
     let theirs = base64::engine::general_purpose::STANDARD.decode(&text);
     if word.len() > 75 {
         assert_eq!(ours.map_err(|e| e.kind()), Err(ErrorKind::InvalidEncodedWord));

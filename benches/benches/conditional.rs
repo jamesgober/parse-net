@@ -7,12 +7,12 @@ const INM: &[u8] = include_bytes!("../data/if_none_match.txt");
 const RANGE: &[u8] = include_bytes!("../data/range.txt");
 
 fn bench(c: &mut Criterion) {
-    let current = parse_net::EntityTag::strong(b"v2-b").expect("tag");
+    let current = parse_net::Representation::Tagged(parse_net::EntityTag::strong(b"v2-b").expect("tag"));
     let h_current: headers::ETag = "\"v2-b\"".parse().expect("tag");
     let inm_value = http::HeaderValue::from_bytes(INM).expect("value");
     let mut g = c.benchmark_group("if_none_match/3 tags");
     g.bench_function("parse-net", |b| {
-        b.iter(|| parse_net::if_none_match(black_box(INM), black_box(&current)).expect("valid"))
+        b.iter(|| parse_net::if_none_match(black_box(INM), black_box(current)).expect("valid"))
     });
     g.bench_function("headers", |b| {
         b.iter(|| {

@@ -9,7 +9,7 @@ fn bench(c: &mut Criterion) {
     let mut g = c.benchmark_group("sfv/list of 10 tokens with a parameter");
     g.bench_function("parse-net", |b| {
         b.iter(|| {
-            let l = parse_net::sfv::parse_list(black_box(LIST)).expect("valid");
+            let l = parse_net::structured::parse_list(black_box(LIST)).expect("valid");
             l.iter().count()
         })
     });
@@ -26,7 +26,7 @@ fn bench(c: &mut Criterion) {
     let mut g = c.benchmark_group("sfv/dictionary of 5 members");
     g.bench_function("parse-net", |b| {
         b.iter(|| {
-            let d = parse_net::sfv::parse_dictionary(black_box(DICT)).expect("valid");
+            let d = parse_net::structured::parse_dictionary(black_box(DICT)).expect("valid");
             d.get("u").is_some()
         })
     });

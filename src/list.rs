@@ -11,12 +11,12 @@
 //! ```
 //! use parse_net::{self as pn, Limits};
 //!
-//! let l = pn::list(b"a, \"b,c\" , , (d, e) f,")?;
+//! let l = pn::parse_list(b"a, \"b,c\" , , (d, e) f,")?;
 //! let all: Vec<&[u8]> = l.iter().collect();
 //! assert_eq!(all, [&b"a"[..], b"\"b,c\"", b"(d, e) f"]);
 //!
 //! let lines: [&[u8]; 3] = [b"gzip", b"", b"br, zstd"];
-//! let c = pn::list::combined(lines, &Limits::DEFAULT)?;
+//! let c = pn::list::parse_lines(lines, &Limits::DEFAULT)?;
 //! assert_eq!(c.iter().collect::<Vec<_>>(), [&b"gzip"[..], b"br", b"zstd"]);
 //! # Ok::<(), pn::ParseError>(())
 //! ```
@@ -129,11 +129,11 @@ fn walk<'a>(
 /// # Examples
 ///
 /// ```
-/// let codings: Vec<&[u8]> = parse_net::list(b"gzip, deflate;q=0.5")?.iter().collect();
+/// let codings: Vec<&[u8]> = parse_net::parse_list(b"gzip, deflate;q=0.5")?.iter().collect();
 /// assert_eq!(codings, [&b"gzip"[..], b"deflate;q=0.5"]);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn list(value: &[u8]) -> Result<List<'_>> {
+pub fn parse_list(value: &[u8]) -> Result<List<'_>> {
     parse(value, &Limits::DEFAULT)
 }
 
@@ -217,9 +217,9 @@ pub fn for_each<'a>(value: &'a [u8], limits: &Limits, f: impl FnMut(&'a [u8])) -
 /// use parse_net::{list, Limits};
 ///
 /// let lines: [&[u8]; 2] = [b"a, \"x", b"y\""];
-/// assert!(list::combined(lines, &Limits::DEFAULT).is_err());
+/// assert!(list::parse_lines(lines, &Limits::DEFAULT).is_err());
 /// ```
-pub fn combined<'a, I>(lines: I, limits: &Limits) -> Result<CombinedList<'a, I::IntoIter>>
+pub fn parse_lines<'a, I>(lines: I, limits: &Limits) -> Result<CombinedList<'a, I::IntoIter>>
 where
     I: IntoIterator<Item = &'a [u8]>,
     I::IntoIter: Clone,
@@ -263,7 +263,7 @@ where
 /// # Examples
 ///
 /// ```
-/// let l = parse_net::list(b"gzip, , br")?;
+/// let l = parse_net::parse_list(b"gzip, , br")?;
 /// assert_eq!(l.len(), 2);
 /// assert_eq!(l.iter().collect::<Vec<_>>(), [&b"gzip"[..], b"br"]);
 /// # Ok::<(), parse_net::ParseError>(())
@@ -281,7 +281,7 @@ impl<'a> List<'a> {
     /// # Examples
     ///
     /// ```
-    /// let l = parse_net::list(b"a, \"b, c\"")?;
+    /// let l = parse_net::parse_list(b"a, \"b, c\"")?;
     /// let mut it = l.iter();
     /// assert_eq!(it.next(), Some(&b"a"[..]));
     /// assert_eq!(it.next(), Some(&b"\"b, c\""[..]));
@@ -302,7 +302,7 @@ impl<'a> List<'a> {
     /// # Examples
     ///
     /// ```
-    /// assert_eq!(parse_net::list(b"a, , b,")?.len(), 2);
+    /// assert_eq!(parse_net::parse_list(b"a, , b,")?.len(), 2);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -315,8 +315,8 @@ impl<'a> List<'a> {
     /// # Examples
     ///
     /// ```
-    /// assert!(parse_net::list(b" , ")?.is_empty());
-    /// assert!(!parse_net::list(b"a")?.is_empty());
+    /// assert!(parse_net::parse_list(b" , ")?.is_empty());
+    /// assert!(!parse_net::parse_list(b"a")?.is_empty());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -359,7 +359,7 @@ fn top_level_comma(s: &[u8]) -> Option<usize> {
 /// # Examples
 ///
 /// ```
-/// let mut e = parse_net::list(b"gzip, br")?.iter();
+/// let mut e = parse_net::parse_list(b"gzip, br")?.iter();
 /// assert_eq!(e.len(), 2);
 /// assert_eq!(e.next(), Some(&b"gzip"[..]));
 /// assert_eq!(e.len(), 1);
@@ -408,7 +408,7 @@ impl ExactSizeIterator for Elements<'_> {}
 /// use parse_net::{list, Limits};
 ///
 /// let lines: [&[u8]; 2] = [b"gzip", b"br, zstd"];
-/// let c = list::combined(lines, &Limits::DEFAULT)?;
+/// let c = list::parse_lines(lines, &Limits::DEFAULT)?;
 /// assert_eq!(c.len(), 3);
 /// assert!(c.iter().any(|e| e == b"zstd"));
 /// # Ok::<(), parse_net::ParseError>(())
@@ -429,7 +429,7 @@ impl<'a, I: Iterator<Item = &'a [u8]> + Clone> CombinedList<'a, I> {
     /// use parse_net::{list, Limits};
     ///
     /// let lines: [&[u8]; 2] = [b"gzip", b"br, zstd"];
-    /// let c = list::combined(lines, &Limits::DEFAULT)?;
+    /// let c = list::parse_lines(lines, &Limits::DEFAULT)?;
     /// assert_eq!(c.iter().collect::<Vec<_>>(), [&b"gzip"[..], b"br", b"zstd"]);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -454,7 +454,7 @@ impl<'a, I: Iterator<Item = &'a [u8]> + Clone> CombinedList<'a, I> {
     /// use parse_net::{list, Limits};
     ///
     /// let lines: [&[u8]; 3] = [b"a, b", b"", b"c"];
-    /// assert_eq!(list::combined(lines, &Limits::DEFAULT)?.len(), 3);
+    /// assert_eq!(list::parse_lines(lines, &Limits::DEFAULT)?.len(), 3);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -470,7 +470,7 @@ impl<'a, I: Iterator<Item = &'a [u8]> + Clone> CombinedList<'a, I> {
     /// use parse_net::{list, Limits};
     ///
     /// let lines: [&[u8]; 2] = [b"", b" , "];
-    /// assert!(list::combined(lines, &Limits::DEFAULT)?.is_empty());
+    /// assert!(list::parse_lines(lines, &Limits::DEFAULT)?.is_empty());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -487,7 +487,7 @@ impl<'a, I: Iterator<Item = &'a [u8]> + Clone> CombinedList<'a, I> {
 /// use parse_net::{list, Limits};
 ///
 /// let lines: [&[u8]; 2] = [b"gzip", b"br"];
-/// let mut it = list::combined(lines, &Limits::DEFAULT)?.iter();
+/// let mut it = list::parse_lines(lines, &Limits::DEFAULT)?.iter();
 /// assert_eq!(it.next(), Some(&b"gzip"[..]));
 /// assert_eq!(it.next(), Some(&b"br"[..]));
 /// assert_eq!(it.next(), None);
@@ -535,7 +535,7 @@ mod tests {
     use super::*;
 
     fn all(v: &[u8]) -> Vec<&[u8]> {
-        list(v).unwrap().iter().collect()
+        parse_list(v).unwrap().iter().collect()
     }
 
     #[test]
@@ -569,7 +569,7 @@ mod tests {
         let mut seventeen = vec![b'a'];
         seventeen.extend([b','; 18]);
         seventeen.push(b'b');
-        let e = list(&seventeen).unwrap_err();
+        let e = parse_list(&seventeen).unwrap_err();
         assert_eq!(
             (e.kind(), e.offset()),
             (ErrorKind::TooManyEmptyElements, 18)
@@ -585,50 +585,53 @@ mod tests {
             }
             v.push(b'a');
         }
-        assert_eq!(list(&v[..v.len() - 3]).unwrap().len(), 1024);
-        assert_eq!(list(&v).unwrap_err().kind(), ErrorKind::TooManyMembers);
+        assert_eq!(parse_list(&v[..v.len() - 3]).unwrap().len(), 1024);
+        assert_eq!(
+            parse_list(&v).unwrap_err().kind(),
+            ErrorKind::TooManyMembers
+        );
         let e = parse(b"a, b, c", &Limits::DEFAULT.max_list_members(2)).unwrap_err();
         assert_eq!(e.offset(), 6);
     }
 
     #[test]
     fn test_list_refuses_bad_bytes_and_structure() {
-        assert_eq!(list(b"a\rb").unwrap_err().kind(), ErrorKind::BareCr);
+        assert_eq!(parse_list(b"a\rb").unwrap_err().kind(), ErrorKind::BareCr);
         assert_eq!(
-            list(b"a, \"b").unwrap_err().kind(),
+            parse_list(b"a, \"b").unwrap_err().kind(),
             ErrorKind::UnterminatedQuote
         );
         assert_eq!(
-            list(b"a)").unwrap_err().kind(),
+            parse_list(b"a)").unwrap_err().kind(),
             ErrorKind::UnbalancedComment
         );
         assert_eq!(
-            list(b"(a").unwrap_err().kind(),
+            parse_list(b"(a").unwrap_err().kind(),
             ErrorKind::UnbalancedComment
         );
-        let e = list(b"ab, \"c\x01\"").unwrap_err();
+        let e = parse_list(b"ab, \"c\x01\"").unwrap_err();
         assert_eq!((e.kind(), e.offset()), (ErrorKind::Control, 6));
     }
 
     #[test]
     fn test_combined_lines() {
         let lines: [&[u8]; 3] = [b"a, b", b"", b"c"];
-        let c = combined(lines, &Limits::DEFAULT).unwrap();
+        let c = parse_lines(lines, &Limits::DEFAULT).unwrap();
         assert_eq!(c.len(), 3);
         assert_eq!(c.iter().collect::<Vec<_>>(), [&b"a"[..], b"b", b"c"]);
         assert_eq!(c.iter().len(), 3);
         let bad: [&[u8]; 2] = [b"a", b"\"open"];
-        let e = combined(bad, &Limits::DEFAULT).unwrap_err();
+        let e = parse_lines(bad, &Limits::DEFAULT).unwrap_err();
         assert_eq!((e.kind(), e.line()), (ErrorKind::UnterminatedQuote, 1));
         let empty: [&[u8]; 0] = [];
-        assert!(combined(empty, &Limits::DEFAULT).unwrap().is_empty());
+        assert!(parse_lines(empty, &Limits::DEFAULT).unwrap().is_empty());
     }
 
     #[test]
     fn test_combined_budgets_count_across_lines() {
         let l = Limits::DEFAULT.max_list_members(2);
         let lines: [&[u8]; 2] = [b"a", b"b, c"];
-        let e = combined(lines, &l).unwrap_err();
+        let e = parse_lines(lines, &l).unwrap_err();
         assert_eq!(
             (e.kind(), e.line(), e.offset()),
             (ErrorKind::TooManyMembers, 1, 3)
@@ -648,7 +651,7 @@ mod tests {
         assert_eq!(commas.len(), 4);
         for &split in &commas {
             let lines: [&[u8]; 2] = [&value[..split], &value[split + 1..]];
-            let c = combined(lines, &Limits::DEFAULT).unwrap();
+            let c = parse_lines(lines, &Limits::DEFAULT).unwrap();
             assert_eq!(c.iter().collect::<Vec<_>>(), whole, "split at {split}");
         }
     }

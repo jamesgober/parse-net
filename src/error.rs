@@ -69,6 +69,10 @@ pub enum ErrorKind {
     TrailingData,
     /// A parameter name repeated where repetition is refused.
     DuplicateParameter,
+    /// A parameter this context forbids, or one that conflicts with another:
+    /// `filename*` in `form-data` (RFC 7578 section 4.2), RFC 2231
+    /// continuations in `Content-Disposition`, `name*` beside `name*0`.
+    ForbiddenParameter,
     /// A name without `=value` where a value is required.
     MissingValue,
     /// Digits were expected; a sign, space, or other byte was found.
@@ -176,6 +180,7 @@ impl ErrorKind {
             Self::ExpectedSeparator => "expected a separator",
             Self::TrailingData => "trailing data",
             Self::DuplicateParameter => "duplicate parameter",
+            Self::ForbiddenParameter => "forbidden parameter",
             Self::MissingValue => "missing value",
             Self::InvalidNumber => "invalid number",
             Self::NumberOverflow => "number overflow",
@@ -273,7 +278,7 @@ impl ParseError {
     /// ```
     /// use parse_net::ErrorKind;
     ///
-    /// let e = parse_net::list(b"a, \"b").unwrap_err();
+    /// let e = parse_net::parse_list(b"a, \"b").unwrap_err();
     /// assert_eq!(e.kind(), ErrorKind::UnterminatedQuote);
     /// ```
     #[must_use]
@@ -290,7 +295,7 @@ impl ParseError {
     /// ```
     /// use parse_net::ErrorKind;
     ///
-    /// let e = parse_net::list(b"gzip, b\x01r").unwrap_err();
+    /// let e = parse_net::parse_list(b"gzip, b\x01r").unwrap_err();
     /// assert_eq!((e.kind(), e.offset()), (ErrorKind::Control, 7));
     /// ```
     #[must_use]
@@ -307,7 +312,7 @@ impl ParseError {
     /// use parse_net::{list, ErrorKind, Limits};
     ///
     /// let lines: [&[u8]; 3] = [b"gzip", b"br", b"x\x00"];
-    /// let e = list::combined(lines, &Limits::DEFAULT).unwrap_err();
+    /// let e = list::parse_lines(lines, &Limits::DEFAULT).unwrap_err();
     /// assert_eq!((e.kind(), e.line(), e.offset()), (ErrorKind::Nul, 2, 1));
     /// ```
     #[must_use]
@@ -513,6 +518,7 @@ mod tests {
             ExpectedSeparator,
             TrailingData,
             DuplicateParameter,
+            ForbiddenParameter,
             MissingValue,
             InvalidNumber,
             NumberOverflow,

@@ -14,10 +14,10 @@ static GLOBAL: common::Counting = common::Counting;
 fuzz_target!(|data: &[u8]| {
     common::no_alloc(|| {
         for obsolete in [false, true] {
-            match MailDate::parse(data, obsolete) {
+            match if obsolete { MailDate::parse_obsolete(data) } else { MailDate::parse(data) } {
                 Ok(d) => {
                     let (b, n) = d.format();
-                    let back = MailDate::parse(&b[..n], false).expect("formatted date parses");
+                    let back = MailDate::parse(&b[..n]).expect("formatted date parses");
                     assert_eq!((back.utc(), back.offset_minutes()), (d.utc(), d.offset_minutes()));
                     assert_eq!(back.offset_unknown(), d.offset_unknown());
                 }

@@ -10,9 +10,9 @@
 //! assert_eq!(&d.format(), b"Sun, 06 Nov 1994 08:49:37 GMT");
 //!
 //! let now = 1_792_540_800; // 2026-10-21
-//! assert_eq!(pn::http_date_at(b"Sun Nov  6 08:49:37 1994", now)?, d);
-//! assert_eq!(pn::http_date_at(b"Wednesday, 01-Jan-76 00:00:00 GMT", now)?.civil().year, 2076);
-//! assert_eq!(pn::http_date_at(b"Saturday, 01-Jan-77 00:00:00 GMT", now)?.civil().year, 1977);
+//! assert_eq!(pn::parse_http_date_at(b"Sun Nov  6 08:49:37 1994", now)?, d);
+//! assert_eq!(pn::parse_http_date_at(b"Wednesday, 01-Jan-76 00:00:00 GMT", now)?.civil().year, 2076);
+//! assert_eq!(pn::parse_http_date_at(b"Saturday, 01-Jan-77 00:00:00 GMT", now)?.civil().year, 1977);
 //! # Ok::<(), pn::ParseError>(())
 //! ```
 
@@ -395,41 +395,12 @@ impl HttpDate {
         imf_fixdate(v, &Limits::DEFAULT).map_err(|e| e.shifted(lead))
     }
 
-    /// Parses an HTTP-date in any of its three formats.
-    ///
-    /// The RFC 850 two-digit year is resolved against `now` (Unix seconds):
-    /// a date more than 50 years after `now` is taken as the most recent past
-    /// year with the same last two digits, and a date 50 years or more before
-    /// `now` moves forward a century, so the year lands in the hundred years
-    /// around `now`. Names are case-sensitive, only `GMT` is accepted, and
-    /// the weekday must agree with the date.
+    /// As [`parse_http_date_at`], with
+    /// [`Limits::allow_leap_second`] taken from `limits`.
     ///
     /// # Errors
     ///
-    /// [`ErrorKind::InvalidDate`], [`ErrorKind::WeekdayMismatch`],
-    /// [`ErrorKind::OutOfRange`], [`ErrorKind::TrailingData`].
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use parse_net::HttpDate;
-    ///
-    /// let now = 1_792_540_800; // 2026-10-21
-    /// let d = HttpDate::parse_at(b"Sunday, 06-Nov-94 08:49:37 GMT", now)?;
-    /// assert_eq!(d.civil().year, 1994);
-    /// assert_eq!(d, HttpDate::parse_at(b"Sun Nov  6 08:49:37 1994", now)?);
-    /// # Ok::<(), parse_net::ParseError>(())
-    /// ```
-    pub fn parse_at(value: &[u8], now: i64) -> Result<Self> {
-        Self::parse_detailed_with(value, now, &Limits::DEFAULT).map(|(d, _)| d)
-    }
-
-    /// As [`parse_at`](Self::parse_at), with [`Limits::allow_leap_second`]
-    /// taken from `limits`.
-    ///
-    /// # Errors
-    ///
-    /// As [`parse_at`](Self::parse_at).
+    /// As [`parse_http_date_at`].
     ///
     /// # Examples
     ///
@@ -437,18 +408,19 @@ impl HttpDate {
     /// use parse_net::{HttpDate, Limits};
     ///
     /// let leap = b"Sat, 31 Dec 2016 23:59:60 GMT";
-    /// assert!(HttpDate::parse_at(leap, 0).is_err());
-    /// assert!(HttpDate::parse_at_with(leap, 0, &Limits::DEFAULT.allow_leap_second(true)).is_ok());
+    /// assert!(parse_net::parse_http_date_at(leap, 0).is_err());
+    /// assert!(HttpDate::parse_with_limits(leap, 0, &Limits::DEFAULT.allow_leap_second(true)).is_ok());
     /// ```
-    pub fn parse_at_with(value: &[u8], now: i64, limits: &Limits) -> Result<Self> {
+    pub fn parse_with_limits(value: &[u8], now: i64, limits: &Limits) -> Result<Self> {
         Self::parse_detailed_with(value, now, limits).map(|(d, _)| d)
     }
 
-    /// As [`parse_at`](Self::parse_at), also reporting the format seen.
+    /// As [`parse_http_date_at`], also
+    /// reporting the format seen.
     ///
     /// # Errors
     ///
-    /// As [`parse_at`](Self::parse_at).
+    /// As [`parse_http_date_at`].
     ///
     /// # Examples
     ///
@@ -551,23 +523,34 @@ impl HttpDate {
     }
 }
 
-/// Parses an HTTP-date in any format, resolving RFC 850 years against `now`.
+/// Parses an HTTP-date in any of its three formats, resolving RFC 850
+/// years against `now`: the Tier 1 form for `no_std` callers, who pass the
+/// clock in.
 ///
-/// The Tier 1 form for `no_std` callers, who pass the clock in.
+/// The RFC 850 two-digit year is resolved against `now` (Unix seconds):
+/// a date more than 50 years after `now` is taken as the most recent past
+/// year with the same last two digits, and a date 50 years or more before
+/// `now` moves forward a century, so the year lands in the hundred years
+/// around `now`. Names are case-sensitive, only `GMT` is accepted, and
+/// the weekday must agree with the date.
 ///
 /// # Errors
 ///
-/// As [`HttpDate::parse_at`].
+/// [`ErrorKind::InvalidDate`], [`ErrorKind::WeekdayMismatch`],
+/// [`ErrorKind::OutOfRange`], [`ErrorKind::TrailingData`].
 ///
 /// # Examples
 ///
 /// ```
-/// let d = parse_net::http_date_at(b"Sun, 06 Nov 1994 08:49:37 GMT", 1_792_540_800)?;
-/// assert_eq!(d.unix(), 784_111_777);
+/// let now = 1_792_540_800; // 2026-10-21
+/// let d = parse_net::parse_http_date_at(b"Sunday, 06-Nov-94 08:49:37 GMT", now)?;
+/// assert_eq!(d.civil().year, 1994);
+/// assert_eq!(d, parse_net::parse_http_date_at(b"Sun Nov  6 08:49:37 1994", now)?);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
-pub fn http_date_at(value: &[u8], now: i64) -> Result<HttpDate> {
-    HttpDate::parse_at(value, now)
+#[inline]
+pub fn parse_http_date_at(value: &[u8], now: i64) -> Result<HttpDate> {
+    HttpDate::parse_with_limits(value, now, &Limits::DEFAULT)
 }
 
 /// Parses an HTTP-date in any format, resolving RFC 850 years against the
@@ -575,19 +558,19 @@ pub fn http_date_at(value: &[u8], now: i64) -> Result<HttpDate> {
 ///
 /// # Errors
 ///
-/// As [`HttpDate::parse_at`].
+/// As [`parse_http_date_at`].
 ///
 /// # Examples
 ///
 /// ```
-/// let d = parse_net::http_date(b"Sun, 06 Nov 1994 08:49:37 GMT")?;
+/// let d = parse_net::parse_http_date(b"Sun, 06 Nov 1994 08:49:37 GMT")?;
 /// assert_eq!(d.unix(), 784_111_777);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-pub fn http_date(value: &[u8]) -> Result<HttpDate> {
-    HttpDate::parse_at(value, HttpDate::now().unix())
+pub fn parse_http_date(value: &[u8]) -> Result<HttpDate> {
+    parse_http_date_at(value, HttpDate::now().unix())
 }
 
 fn trimmed(value: &[u8]) -> (usize, &[u8]) {
@@ -790,7 +773,7 @@ mod tests {
     const NOW_2026: i64 = 1_792_540_800; // 2026-10-21T00:00:00Z
 
     fn at(v: &[u8]) -> Result<HttpDate> {
-        HttpDate::parse_at(v, NOW_2026)
+        parse_http_date_at(v, NOW_2026)
     }
 
     #[test]
@@ -865,7 +848,7 @@ mod tests {
         let v = b"Sun, 06 Nov 1994 08:49:60 GMT";
         assert!(at(v).is_err());
         let l = Limits::DEFAULT.allow_leap_second(true);
-        let d = HttpDate::parse_at_with(v, NOW_2026, &l).unwrap();
+        let d = HttpDate::parse_with_limits(v, NOW_2026, &l).unwrap();
         assert_eq!(d.civil().second, 59);
     }
 
@@ -893,9 +876,9 @@ mod tests {
         let now_2099 = HttpDate::parse_imf_fixdate(b"Thu, 01 Jan 2099 00:00:00 GMT")
             .unwrap()
             .unix();
-        let d = HttpDate::parse_at(b"Friday, 01-Jan-00 00:00:00 GMT", now_2099).unwrap();
+        let d = parse_http_date_at(b"Friday, 01-Jan-00 00:00:00 GMT", now_2099).unwrap();
         assert_eq!(d.civil().year, 2100);
-        let d = HttpDate::parse_at(b"Saturday, 01-Jan-50 00:00:00 GMT", now_2099).unwrap();
+        let d = parse_http_date_at(b"Saturday, 01-Jan-50 00:00:00 GMT", now_2099).unwrap();
         assert_eq!(d.civil().year, 2050);
     }
 
@@ -936,6 +919,9 @@ mod tests {
             d
         );
         assert!(HttpDate::now() > d);
-        assert_eq!(http_date(b"Sun, 06 Nov 1994 08:49:37 GMT").unwrap(), d);
+        assert_eq!(
+            parse_http_date(b"Sun, 06 Nov 1994 08:49:37 GMT").unwrap(),
+            d
+        );
     }
 }

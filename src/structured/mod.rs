@@ -10,16 +10,16 @@
 //! # Examples
 //!
 //! ```
-//! use parse_net::sfv::{self, BareItem, Member};
+//! use parse_net::structured::{self, BareItem, Member};
 //!
-//! let site = sfv::parse_item(b"same-origin")?;
+//! let site = structured::parse_item(b"same-origin")?;
 //! assert_eq!(site.bare, BareItem::Token("same-origin"));
 //!
-//! let prio = sfv::parse_dictionary(b"u=1, i")?;
+//! let prio = structured::parse_dictionary(b"u=1, i")?;
 //! assert!(matches!(prio.get("u"), Some(Member::Item(i)) if i.bare == BareItem::Integer(1)));
 //! assert!(matches!(prio.get("i"), Some(Member::Item(i)) if i.bare == BareItem::Boolean(true)));
 //!
-//! let list = sfv::parse_list(b"(\"foo\" \"bar\");lvl=5, abc;a=?0")?;
+//! let list = structured::parse_list(b"(\"foo\" \"bar\");lvl=5, abc;a=?0")?;
 //! assert_eq!(list.len(), 2);
 //! let Some(Member::InnerList(inner)) = list.iter().next() else { unreachable!() };
 //! assert_eq!(inner.len(), 2);
@@ -58,11 +58,11 @@ const RELAXED: Limits = Limits::DEFAULT
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem};
+/// use parse_net::structured::{self, BareItem};
 ///
-/// assert_eq!(sfv::parse_item(b"42")?.bare, BareItem::Integer(42));
-/// assert_eq!(sfv::parse_item(b"abc")?.bare, BareItem::Token("abc"));
-/// assert!(matches!(sfv::parse_item(b"\"hi\"")?.bare, BareItem::String(s) if s.eq_str("hi")));
+/// assert_eq!(structured::parse_item(b"42")?.bare, BareItem::Integer(42));
+/// assert_eq!(structured::parse_item(b"abc")?.bare, BareItem::Token("abc"));
+/// assert!(matches!(structured::parse_item(b"\"hi\"")?.bare, BareItem::String(s) if s.eq_str("hi")));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -90,9 +90,9 @@ pub enum BareItem<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem, Decimal};
+/// use parse_net::structured::{self, BareItem, Decimal};
 ///
-/// assert_eq!(sfv::parse_item(b"-1.5")?.bare, BareItem::Decimal(Decimal::from_thousandths(-1500)?));
+/// assert_eq!(structured::parse_item(b"-1.5")?.bare, BareItem::Decimal(Decimal::from_thousandths(-1500)?));
 /// assert!(Decimal::from_thousandths(1_000_000_000_000_000).is_err());
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
@@ -109,7 +109,7 @@ impl Decimal {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::Decimal;
+    /// use parse_net::structured::Decimal;
     ///
     /// assert_eq!(Decimal::from_thousandths(1500)?.thousandths(), 1500);
     /// assert!(Decimal::from_thousandths(1_000_000_000_000_000).is_err());
@@ -127,9 +127,9 @@ impl Decimal {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let BareItem::Decimal(d) = sfv::parse_item(b"2.25")?.bare else { unreachable!() };
+    /// let BareItem::Decimal(d) = structured::parse_item(b"2.25")?.bare else { unreachable!() };
     /// assert_eq!(d.thousandths(), 2250);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -144,9 +144,9 @@ impl Decimal {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem};
+/// use parse_net::structured::{self, BareItem};
 ///
-/// let BareItem::String(s) = sfv::parse_item(b"\"hello\"")?.bare else { unreachable!() };
+/// let BareItem::String(s) = structured::parse_item(b"\"hello\"")?.bare else { unreachable!() };
 /// assert!(s.eq_str("hello"));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
@@ -162,9 +162,9 @@ impl<'a> SfString<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let BareItem::String(s) = sfv::parse_item(br#""a\"b""#)?.bare else { unreachable!() };
+    /// let BareItem::String(s) = structured::parse_item(br#""a\"b""#)?.bare else { unreachable!() };
     /// assert_eq!(s.raw(), r#"a\"b"#);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -178,11 +178,11 @@ impl<'a> SfString<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let BareItem::String(s) = sfv::parse_item(b"\"plain\"")?.bare else { unreachable!() };
+    /// let BareItem::String(s) = structured::parse_item(b"\"plain\"")?.bare else { unreachable!() };
     /// assert_eq!(s.as_plain(), Some("plain"));
-    /// let BareItem::String(e) = sfv::parse_item(br#""a\"b""#)?.bare else { unreachable!() };
+    /// let BareItem::String(e) = structured::parse_item(br#""a\"b""#)?.bare else { unreachable!() };
     /// assert_eq!(e.as_plain(), None);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -200,9 +200,9 @@ impl<'a> SfString<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let BareItem::String(s) = sfv::parse_item(br#""a\"b""#)?.bare else { unreachable!() };
+    /// let BareItem::String(s) = structured::parse_item(br#""a\"b""#)?.bare else { unreachable!() };
     /// assert_eq!(s.raw().len(), 4);
     /// assert_eq!(s.unescaped_len(), 3);
     /// # Ok::<(), parse_net::ParseError>(())
@@ -225,9 +225,9 @@ impl<'a> SfString<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let BareItem::String(s) = sfv::parse_item(b"\"a \\\"b\\\"\"")?.bare else { unreachable!() };
+    /// let BareItem::String(s) = structured::parse_item(b"\"a \\\"b\\\"\"")?.bare else { unreachable!() };
     /// let mut buf = [0u8; 8];
     /// assert_eq!(s.unescape_into(&mut buf)?, "a \"b\"");
     /// assert!(s.eq_str("a \"b\""));
@@ -250,9 +250,9 @@ impl<'a> SfString<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let BareItem::String(s) = sfv::parse_item(br#""a\"b""#)?.bare else { unreachable!() };
+    /// let BareItem::String(s) = structured::parse_item(br#""a\"b""#)?.bare else { unreachable!() };
     /// assert!(s.eq_str("a\"b"));
     /// assert!(!s.eq_str(r#"a\"b"#));
     /// # Ok::<(), parse_net::ParseError>(())
@@ -268,9 +268,9 @@ impl<'a> SfString<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem};
+/// use parse_net::structured::{self, BareItem};
 ///
-/// let BareItem::ByteSeq(b) = sfv::parse_item(b":aGVsbG8=:")?.bare else { unreachable!() };
+/// let BareItem::ByteSeq(b) = structured::parse_item(b":aGVsbG8=:")?.bare else { unreachable!() };
 /// assert_eq!(b.decoded_len(), 5);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
@@ -285,9 +285,9 @@ impl<'a> ByteSeq<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let BareItem::ByteSeq(b) = sfv::parse_item(b":aGVsbG8=:")?.bare else { unreachable!() };
+    /// let BareItem::ByteSeq(b) = structured::parse_item(b":aGVsbG8=:")?.bare else { unreachable!() };
     /// assert_eq!(b.raw(), b"aGVsbG8=");
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -301,9 +301,9 @@ impl<'a> ByteSeq<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let BareItem::ByteSeq(b) = sfv::parse_item(b":cHJldGVuZCB0aGlzIGlzIGJpbmFyeSBjb250ZW50Lg==:")?.bare else { unreachable!() };
+    /// let BareItem::ByteSeq(b) = structured::parse_item(b":cHJldGVuZCB0aGlzIGlzIGJpbmFyeSBjb250ZW50Lg==:")?.bare else { unreachable!() };
     /// assert_eq!(b.decoded_len(), 31);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -320,9 +320,9 @@ impl<'a> ByteSeq<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem};
+/// use parse_net::structured::{self, BareItem};
 ///
-/// let BareItem::DisplayString(d) = sfv::parse_item(b"%\"caf%c3%a9\"")?.bare else { unreachable!() };
+/// let BareItem::DisplayString(d) = structured::parse_item(b"%\"caf%c3%a9\"")?.bare else { unreachable!() };
 /// assert_eq!(d.raw(), b"caf%c3%a9");
 /// assert_eq!(d.decoded_len(), 5);
 /// # Ok::<(), parse_net::ParseError>(())
@@ -338,9 +338,9 @@ impl<'a> DisplayString<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let BareItem::DisplayString(d) = sfv::parse_item(b"%\"50%25\"")?.bare else { unreachable!() };
+    /// let BareItem::DisplayString(d) = structured::parse_item(b"%\"50%25\"")?.bare else { unreachable!() };
     /// assert_eq!(d.raw(), b"50%25");
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -354,15 +354,15 @@ impl<'a> DisplayString<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let BareItem::DisplayString(d) = sfv::parse_item(b"%\"caf%c3%a9\"")?.bare else { unreachable!() };
+    /// let BareItem::DisplayString(d) = structured::parse_item(b"%\"caf%c3%a9\"")?.bare else { unreachable!() };
     /// assert_eq!(d.decoded_len(), 5);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
     pub fn decoded_len(&self) -> usize {
-        crate::pct::decoded_len(self.raw).unwrap_or(0)
+        crate::percent::decoded_len(self.raw).unwrap_or(0)
     }
 
     /// Writes the decoded text into `out` and returns it.
@@ -374,15 +374,15 @@ impl<'a> DisplayString<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let BareItem::DisplayString(d) = sfv::parse_item(b"%\"caf%c3%a9\"")?.bare else { unreachable!() };
+    /// let BareItem::DisplayString(d) = structured::parse_item(b"%\"caf%c3%a9\"")?.bare else { unreachable!() };
     /// let mut buf = [0u8; 8];
     /// assert_eq!(d.decode_into(&mut buf)?, "caf\u{e9}");
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     pub fn decode_into<'b>(&self, out: &'b mut [u8]) -> Result<&'b str> {
-        crate::pct::decode_utf8_into(self.raw, out)
+        crate::percent::decode_utf8_into(self.raw, out)
     }
 }
 
@@ -392,9 +392,9 @@ impl<'a> DisplayString<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem};
+/// use parse_net::structured::{self, BareItem};
 ///
-/// let params = sfv::parse_item(b"abc;a=1;b")?.params;
+/// let params = structured::parse_item(b"abc;a=1;b")?.params;
 /// assert_eq!(params.len(), 2);
 /// assert_eq!(params.get("a"), Some(BareItem::Integer(1)));
 /// assert_eq!(params.get("b"), Some(BareItem::Boolean(true)));
@@ -417,9 +417,9 @@ impl<'a> SfParams<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let params = sfv::parse_item(b"abc;a=1;b")?.params;
+    /// let params = structured::parse_item(b"abc;a=1;b")?.params;
     /// let mut it = params.iter();
     /// assert_eq!(it.next(), Some(("a", BareItem::Integer(1))));
     /// assert_eq!(it.next(), Some(("b", BareItem::Boolean(true))));
@@ -438,9 +438,9 @@ impl<'a> SfParams<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem};
+    /// use parse_net::structured::{self, BareItem};
     ///
-    /// let params = sfv::parse_item(b"x;a=1;a=2")?.params;
+    /// let params = structured::parse_item(b"x;a=1;a=2")?.params;
     /// assert_eq!(params.get("a"), Some(BareItem::Integer(2)));
     /// assert_eq!(params.get("z"), None);
     /// # Ok::<(), parse_net::ParseError>(())
@@ -458,7 +458,7 @@ impl<'a> SfParams<'a> {
     /// # Examples
     ///
     /// ```
-    /// let params = parse_net::sfv::parse_item(b"x;a=1;a=2")?.params;
+    /// let params = parse_net::structured::parse_item(b"x;a=1;a=2")?.params;
     /// assert_eq!(params.len(), 2);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -472,10 +472,10 @@ impl<'a> SfParams<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv;
+    /// use parse_net::structured;
     ///
-    /// assert!(sfv::parse_item(b"x")?.params.is_empty());
-    /// assert!(!sfv::parse_item(b"x;a")?.params.is_empty());
+    /// assert!(structured::parse_item(b"x")?.params.is_empty());
+    /// assert!(!structured::parse_item(b"x;a")?.params.is_empty());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -489,9 +489,9 @@ impl<'a> SfParams<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem};
+/// use parse_net::structured::{self, BareItem};
 ///
-/// let params = sfv::parse_item(b"x;q=0.5")?.params;
+/// let params = structured::parse_item(b"x;q=0.5")?.params;
 /// let mut it = params.iter();
 /// assert!(matches!(it.next(), Some(("q", BareItem::Decimal(d))) if d.thousandths() == 500));
 /// assert!(it.next().is_none());
@@ -527,9 +527,9 @@ impl<'a> Iterator for ParamIter<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem};
+/// use parse_net::structured::{self, BareItem};
 ///
-/// let item = sfv::parse_item(b"abc;v=2")?;
+/// let item = structured::parse_item(b"abc;v=2")?;
 /// assert_eq!(item.bare, BareItem::Token("abc"));
 /// assert_eq!(item.params.get("v"), Some(BareItem::Integer(2)));
 /// # Ok::<(), parse_net::ParseError>(())
@@ -547,9 +547,9 @@ pub struct Item<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem, Member};
+/// use parse_net::structured::{self, BareItem, Member};
 ///
-/// let list = sfv::parse_list(b"(a b);q=1")?;
+/// let list = structured::parse_list(b"(a b);q=1")?;
 /// let Some(Member::InnerList(inner)) = list.iter().next() else { unreachable!() };
 /// assert_eq!(inner.len(), 2);
 /// assert_eq!(inner.params().get("q"), Some(BareItem::Integer(1)));
@@ -568,9 +568,9 @@ impl<'a> InnerList<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem, Member};
+    /// use parse_net::structured::{self, BareItem, Member};
     ///
-    /// let list = sfv::parse_list(b"(a b)")?;
+    /// let list = structured::parse_list(b"(a b)")?;
     /// let Some(Member::InnerList(inner)) = list.iter().next() else { unreachable!() };
     /// assert!(inner.iter().map(|i| i.bare).eq([BareItem::Token("a"), BareItem::Token("b")]));
     /// # Ok::<(), parse_net::ParseError>(())
@@ -587,9 +587,9 @@ impl<'a> InnerList<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, Member};
+    /// use parse_net::structured::{self, Member};
     ///
-    /// let list = sfv::parse_list(b"(1 2 3)")?;
+    /// let list = structured::parse_list(b"(1 2 3)")?;
     /// let Some(Member::InnerList(inner)) = list.iter().next() else { unreachable!() };
     /// assert_eq!(inner.len(), 3);
     /// # Ok::<(), parse_net::ParseError>(())
@@ -604,9 +604,9 @@ impl<'a> InnerList<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, Member};
+    /// use parse_net::structured::{self, Member};
     ///
-    /// let list = sfv::parse_list(b"()")?;
+    /// let list = structured::parse_list(b"()")?;
     /// let Some(Member::InnerList(inner)) = list.iter().next() else { unreachable!() };
     /// assert!(inner.is_empty());
     /// # Ok::<(), parse_net::ParseError>(())
@@ -621,9 +621,9 @@ impl<'a> InnerList<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem, Member};
+    /// use parse_net::structured::{self, BareItem, Member};
     ///
-    /// let list = sfv::parse_list(b"(a);lvl=5")?;
+    /// let list = structured::parse_list(b"(a);lvl=5")?;
     /// let Some(Member::InnerList(inner)) = list.iter().next() else { unreachable!() };
     /// assert_eq!(inner.params().get("lvl"), Some(BareItem::Integer(5)));
     /// # Ok::<(), parse_net::ParseError>(())
@@ -639,9 +639,9 @@ impl<'a> InnerList<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem, Member};
+/// use parse_net::structured::{self, BareItem, Member};
 ///
-/// let list = sfv::parse_list(b"(a;x b)")?;
+/// let list = structured::parse_list(b"(a;x b)")?;
 /// let Some(Member::InnerList(inner)) = list.iter().next() else { unreachable!() };
 /// let mut items = inner.iter();
 /// assert_eq!(items.next().map(|i| i.params.len()), Some(1));
@@ -671,9 +671,9 @@ impl<'a> Iterator for InnerIter<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem, Member};
+/// use parse_net::structured::{self, BareItem, Member};
 ///
-/// let list = sfv::parse_list(b"a, (b c)")?;
+/// let list = structured::parse_list(b"a, (b c)")?;
 /// let mut it = list.iter();
 /// assert!(matches!(it.next(), Some(Member::Item(i)) if i.bare == BareItem::Token("a")));
 /// assert!(matches!(it.next(), Some(Member::InnerList(l)) if l.len() == 2));
@@ -759,7 +759,7 @@ fn next_member(c: &mut Cursor<'_>) -> bool {
 /// # Examples
 ///
 /// ```
-/// let list = parse_net::sfv::parse_list(b"a, b;x, (c d)")?;
+/// let list = parse_net::structured::parse_list(b"a, b;x, (c d)")?;
 /// assert_eq!(list.len(), 3);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
@@ -775,9 +775,9 @@ impl<'a> List<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem, Member};
+    /// use parse_net::structured::{self, BareItem, Member};
     ///
-    /// let list = sfv::parse_list(b"a, 2")?;
+    /// let list = structured::parse_list(b"a, 2")?;
     /// let mut it = list.iter();
     /// assert!(matches!(it.next(), Some(Member::Item(i)) if i.bare == BareItem::Token("a")));
     /// assert!(matches!(it.next(), Some(Member::Item(i)) if i.bare == BareItem::Integer(2)));
@@ -797,7 +797,7 @@ impl<'a> List<'a> {
     /// # Examples
     ///
     /// ```
-    /// assert_eq!(parse_net::sfv::parse_list(b"a, b, c")?.len(), 3);
+    /// assert_eq!(parse_net::structured::parse_list(b"a, b, c")?.len(), 3);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -810,7 +810,7 @@ impl<'a> List<'a> {
     /// # Examples
     ///
     /// ```
-    /// assert!(!parse_net::sfv::parse_list(b"a")?.is_empty());
+    /// assert!(!parse_net::structured::parse_list(b"a")?.is_empty());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -824,9 +824,9 @@ impl<'a> List<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, Member};
+/// use parse_net::structured::{self, Member};
 ///
-/// let list = sfv::parse_list(b"a, (b c), d")?;
+/// let list = structured::parse_list(b"a, (b c), d")?;
 /// let inner = list.iter().filter(|m| matches!(m, Member::InnerList(_))).count();
 /// assert_eq!(inner, 1);
 /// # Ok::<(), parse_net::ParseError>(())
@@ -858,9 +858,9 @@ impl<'a> Iterator for ListIter<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem, Member};
+/// use parse_net::structured::{self, BareItem, Member};
 ///
-/// let d = sfv::parse_dictionary(b"a=1, b")?;
+/// let d = structured::parse_dictionary(b"a=1, b")?;
 /// assert_eq!(d.len(), 2);
 /// assert!(matches!(d.get("b"), Some(Member::Item(i)) if i.bare == BareItem::Boolean(true)));
 /// # Ok::<(), parse_net::ParseError>(())
@@ -872,14 +872,16 @@ pub struct Dictionary<'a> {
 }
 
 impl<'a> Dictionary<'a> {
-    /// The members with their keys, in order (repeats included).
+    /// The members with their keys, in order (repeats included). To look a
+    /// key up, use [`get`](Self::get), which returns the last occurrence as
+    /// RFC 9651 requires: `iter().find(..)` returns the first.
     ///
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv;
+    /// use parse_net::structured;
     ///
-    /// let d = sfv::parse_dictionary(b"a=1, b=2, a=3")?;
+    /// let d = structured::parse_dictionary(b"a=1, b=2, a=3")?;
     /// assert!(d.iter().map(|(k, _)| k).eq(["a", "b", "a"]));
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -896,9 +898,9 @@ impl<'a> Dictionary<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem, Member};
+    /// use parse_net::structured::{self, BareItem, Member};
     ///
-    /// let d = sfv::parse_dictionary(b"a=1, b=(x y)")?;
+    /// let d = structured::parse_dictionary(b"a=1, b=(x y)")?;
     /// assert!(matches!(d.get("b"), Some(Member::InnerList(l)) if l.len() == 2));
     /// assert!(d.get("c").is_none());
     /// # Ok::<(), parse_net::ParseError>(())
@@ -923,9 +925,9 @@ impl<'a> Dictionary<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem, Item, Member};
+    /// use parse_net::structured::{self, BareItem, Item, Member};
     ///
-    /// let d = sfv::parse_dictionary(b"a=1, b=2, a=3")?;
+    /// let d = structured::parse_dictionary(b"a=1, b=2, a=3")?;
     /// let mut slots = [("", Member::Item(Item::new(BareItem::Boolean(false)))); 4];
     /// let index = d.index_into(&mut slots)?;
     /// assert_eq!(index.len(), 2);
@@ -960,7 +962,7 @@ impl<'a> Dictionary<'a> {
     /// # Examples
     ///
     /// ```
-    /// assert_eq!(parse_net::sfv::parse_dictionary(b"a=1, a=2")?.len(), 2);
+    /// assert_eq!(parse_net::structured::parse_dictionary(b"a=1, a=2")?.len(), 2);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -973,7 +975,7 @@ impl<'a> Dictionary<'a> {
     /// # Examples
     ///
     /// ```
-    /// assert!(!parse_net::sfv::parse_dictionary(b"a")?.is_empty());
+    /// assert!(!parse_net::structured::parse_dictionary(b"a")?.is_empty());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -987,9 +989,9 @@ impl<'a> Dictionary<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem, Member};
+/// use parse_net::structured::{self, BareItem, Member};
 ///
-/// let d = sfv::parse_dictionary(b"u=1, i")?;
+/// let d = structured::parse_dictionary(b"u=1, i")?;
 /// let mut it = d.iter();
 /// assert!(matches!(it.next(), Some(("u", Member::Item(i))) if i.bare == BareItem::Integer(1)));
 /// assert!(matches!(it.next(), Some(("i", Member::Item(i))) if i.bare == BareItem::Boolean(true)));
@@ -1033,7 +1035,7 @@ impl<'a> Iterator for DictIter<'a> {
 ///
 /// ```
 /// let lines: [&[u8]; 2] = [b"a", b"b, c"];
-/// let list = parse_net::sfv::parse_list_lines(&lines)?;
+/// let list = parse_net::structured::parse_list_lines(&lines)?;
 /// assert_eq!(list.len(), 3);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
@@ -1049,10 +1051,10 @@ impl<'a> ListLines<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem, Member};
+    /// use parse_net::structured::{self, BareItem, Member};
     ///
     /// let lines: [&[u8]; 2] = [b"a", b"b"];
-    /// let list = sfv::parse_list_lines(&lines)?;
+    /// let list = structured::parse_list_lines(&lines)?;
     /// let mut it = list.iter();
     /// assert!(matches!(it.next(), Some(Member::Item(i)) if i.bare == BareItem::Token("a")));
     /// assert!(matches!(it.next(), Some(Member::Item(i)) if i.bare == BareItem::Token("b")));
@@ -1072,7 +1074,7 @@ impl<'a> ListLines<'a> {
     ///
     /// ```
     /// let lines: [&[u8]; 3] = [b"a, b", b"c", b"d, e"];
-    /// assert_eq!(parse_net::sfv::parse_list_lines(&lines)?.len(), 5);
+    /// assert_eq!(parse_net::structured::parse_list_lines(&lines)?.len(), 5);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -1086,7 +1088,7 @@ impl<'a> ListLines<'a> {
     ///
     /// ```
     /// let lines: [&[u8]; 1] = [b"a"];
-    /// assert!(!parse_net::sfv::parse_list_lines(&lines)?.is_empty());
+    /// assert!(!parse_net::structured::parse_list_lines(&lines)?.is_empty());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -1100,10 +1102,10 @@ impl<'a> ListLines<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem, Member};
+/// use parse_net::structured::{self, BareItem, Member};
 ///
 /// let lines: [&[u8]; 2] = [b"a=1", b"b=2, a=3"];
-/// let d = sfv::parse_dictionary_lines(&lines)?;
+/// let d = structured::parse_dictionary_lines(&lines)?;
 /// assert_eq!(d.len(), 3);
 /// assert!(matches!(d.get("a"), Some(Member::Item(i)) if i.bare == BareItem::Integer(3)));
 /// # Ok::<(), parse_net::ParseError>(())
@@ -1121,7 +1123,7 @@ impl<'a> DictionaryLines<'a> {
     ///
     /// ```
     /// let lines: [&[u8]; 2] = [b"a=1", b"b=2, a=3"];
-    /// let d = parse_net::sfv::parse_dictionary_lines(&lines)?;
+    /// let d = parse_net::structured::parse_dictionary_lines(&lines)?;
     /// assert!(d.iter().map(|(k, _)| k).eq(["a", "b", "a"]));
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -1137,10 +1139,10 @@ impl<'a> DictionaryLines<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{self, BareItem, Member};
+    /// use parse_net::structured::{self, BareItem, Member};
     ///
     /// let lines: [&[u8]; 2] = [b"a=1, b", b"a=2"];
-    /// let d = sfv::parse_dictionary_lines(&lines)?;
+    /// let d = structured::parse_dictionary_lines(&lines)?;
     /// assert!(matches!(d.get("a"), Some(Member::Item(i)) if i.bare == BareItem::Integer(2)));
     /// assert!(d.get("c").is_none());
     /// # Ok::<(), parse_net::ParseError>(())
@@ -1159,7 +1161,7 @@ impl<'a> DictionaryLines<'a> {
     ///
     /// ```
     /// let lines: [&[u8]; 2] = [b"a=1, b", b"a=2"];
-    /// assert_eq!(parse_net::sfv::parse_dictionary_lines(&lines)?.len(), 3);
+    /// assert_eq!(parse_net::structured::parse_dictionary_lines(&lines)?.len(), 3);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -1173,7 +1175,7 @@ impl<'a> DictionaryLines<'a> {
     ///
     /// ```
     /// let lines: [&[u8]; 1] = [b"a"];
-    /// assert!(!parse_net::sfv::parse_dictionary_lines(&lines)?.is_empty());
+    /// assert!(!parse_net::structured::parse_dictionary_lines(&lines)?.is_empty());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -1188,7 +1190,7 @@ impl<'a> DictionaryLines<'a> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::{sfv::{BareItem, Parser, Visitor}, Limits, ParseError};
+/// use parse_net::{structured::{BareItem, Parser, Visitor}, Limits, ParseError};
 ///
 /// struct Urgency(Option<i64>, bool);
 /// impl<'a> Visitor<'a> for Urgency {
@@ -1274,7 +1276,7 @@ impl<'a, V: Visitor<'a>> Events<'a> for VisitorEvents<'_, V> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::{sfv::Parser, ErrorKind, Limits};
+/// use parse_net::{structured::Parser, ErrorKind, Limits};
 ///
 /// let strict = Parser::new(Limits::DEFAULT.max_list_members(2));
 /// assert_eq!(strict.list(b"a, b, c").unwrap_err().kind(), ErrorKind::TooManyMembers);
@@ -1298,7 +1300,7 @@ impl Parser {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Parser, Limits};
+    /// use parse_net::{structured::Parser, Limits};
     ///
     /// let p = Parser::new(Limits::DEFAULT.max_dictionary_members(1));
     /// assert!(p.dictionary(b"a").is_ok());
@@ -1319,7 +1321,7 @@ impl Parser {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{BareItem, Parser};
+    /// use parse_net::structured::{BareItem, Parser};
     ///
     /// let item = Parser::default().item(b"?0;x")?;
     /// assert_eq!(item.bare, BareItem::Boolean(false));
@@ -1352,7 +1354,7 @@ impl Parser {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::Parser;
+    /// use parse_net::structured::Parser;
     ///
     /// assert_eq!(Parser::default().list(b"a, (b c);q=1")?.len(), 2);
     /// assert!(Parser::default().list(b"a,,b").is_err());
@@ -1376,7 +1378,7 @@ impl Parser {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{BareItem, Member, Parser};
+    /// use parse_net::structured::{BareItem, Member, Parser};
     ///
     /// let d = Parser::default().dictionary(b"a=1, b")?;
     /// assert!(matches!(d.get("a"), Some(Member::Item(i)) if i.bare == BareItem::Integer(1)));
@@ -1403,7 +1405,7 @@ impl Parser {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Parser, ErrorKind};
+    /// use parse_net::{structured::Parser, ErrorKind};
     ///
     /// let good: [&[u8]; 2] = [b"a", b"b, c"];
     /// assert_eq!(Parser::default().list_lines(&good)?.len(), 3);
@@ -1436,7 +1438,7 @@ impl Parser {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{BareItem, Member, Parser};
+    /// use parse_net::structured::{BareItem, Member, Parser};
     ///
     /// let lines: [&[u8]; 2] = [b"a=1", b"a=2"];
     /// let d = Parser::default().dictionary_lines(&lines)?;
@@ -1466,7 +1468,7 @@ impl Parser {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::{BareItem, Parser, Visitor}, Limits, ParseError};
+    /// use parse_net::{structured::{BareItem, Parser, Visitor}, Limits, ParseError};
     ///
     /// struct Count(usize);
     /// impl<'a> Visitor<'a> for Count {
@@ -1499,7 +1501,7 @@ impl Parser {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::{BareItem, Parser, Visitor}, Limits, ParseError};
+    /// use parse_net::{structured::{BareItem, Parser, Visitor}, Limits, ParseError};
     ///
     /// struct Count(usize);
     /// impl<'a> Visitor<'a> for Count {
@@ -1526,7 +1528,7 @@ impl Parser {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::{BareItem, Parser, Visitor}, Limits, ParseError};
+    /// use parse_net::{structured::{BareItem, Parser, Visitor}, Limits, ParseError};
     ///
     /// struct Count(usize);
     /// impl<'a> Visitor<'a> for Count {
@@ -1564,11 +1566,11 @@ impl Parser {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem};
+/// use parse_net::structured::{self, BareItem};
 ///
-/// assert_eq!(sfv::parse_item(b"?1")?.bare, BareItem::Boolean(true));
-/// assert_eq!(sfv::parse_item(b"@1659578233")?.bare, BareItem::Date(1_659_578_233));
-/// assert!(sfv::parse_item(b"%\"%C3%A9\"").is_err());
+/// assert_eq!(structured::parse_item(b"?1")?.bare, BareItem::Boolean(true));
+/// assert_eq!(structured::parse_item(b"@1659578233")?.bare, BareItem::Date(1_659_578_233));
+/// assert!(structured::parse_item(b"%\"%C3%A9\"").is_err());
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn parse_item(value: &[u8]) -> Result<Item<'_>> {
@@ -1585,7 +1587,7 @@ pub fn parse_item(value: &[u8]) -> Result<Item<'_>> {
 /// # Examples
 ///
 /// ```
-/// assert_eq!(parse_net::sfv::parse_list(b"a, b,").unwrap_err().kind(), parse_net::ErrorKind::TrailingSeparator);
+/// assert_eq!(parse_net::structured::parse_list(b"a, b,").unwrap_err().kind(), parse_net::ErrorKind::TrailingSeparator);
 /// ```
 pub fn parse_list(value: &[u8]) -> Result<List<'_>> {
     Parser::default().list(value)
@@ -1600,9 +1602,9 @@ pub fn parse_list(value: &[u8]) -> Result<List<'_>> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem, Member};
+/// use parse_net::structured::{self, BareItem, Member};
 ///
-/// let d = sfv::parse_dictionary(b"a=1, a=2")?;
+/// let d = structured::parse_dictionary(b"a=1, a=2")?;
 /// assert!(matches!(d.get("a"), Some(Member::Item(i)) if i.bare == BareItem::Integer(2)));
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
@@ -1620,7 +1622,7 @@ pub fn parse_dictionary(value: &[u8]) -> Result<Dictionary<'_>> {
 ///
 /// ```
 /// let lines: [&[u8]; 2] = [b"a, b", b"c"];
-/// assert_eq!(parse_net::sfv::parse_list_lines(&lines)?.len(), 3);
+/// assert_eq!(parse_net::structured::parse_list_lines(&lines)?.len(), 3);
 /// # Ok::<(), parse_net::ParseError>(())
 /// ```
 pub fn parse_list_lines<'a>(lines: &'a [&'a [u8]]) -> Result<ListLines<'a>> {
@@ -1636,10 +1638,10 @@ pub fn parse_list_lines<'a>(lines: &'a [&'a [u8]]) -> Result<ListLines<'a>> {
 /// # Examples
 ///
 /// ```
-/// use parse_net::sfv::{self, BareItem, Member};
+/// use parse_net::structured::{self, BareItem, Member};
 ///
 /// let lines: [&[u8]; 2] = [b"u=1", b"i"];
-/// let d = sfv::parse_dictionary_lines(&lines)?;
+/// let d = structured::parse_dictionary_lines(&lines)?;
 /// assert_eq!(d.len(), 2);
 /// assert!(matches!(d.get("i"), Some(Member::Item(i)) if i.bare == BareItem::Boolean(true)));
 /// # Ok::<(), parse_net::ParseError>(())
@@ -1655,7 +1657,7 @@ impl<'a> Item<'a> {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::sfv::{BareItem, Item};
+    /// use parse_net::structured::{BareItem, Item};
     ///
     /// let item = Item::new(BareItem::Integer(7));
     /// assert_eq!(item.bare, BareItem::Integer(7));

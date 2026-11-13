@@ -25,12 +25,12 @@
 //! assert!(mt.charset().is_some_and(|c| c.eq_ignore_ascii_case(b"utf-8")));
 //!
 //! // Lists: commas inside quoted strings and comments do not split.
-//! let codings: Vec<&[u8]> = pn::list(b"gzip, deflate;q=0.5, x=\"a,b\"")?.iter().collect();
+//! let codings: Vec<&[u8]> = pn::parse_list(b"gzip, deflate;q=0.5, x=\"a,b\"")?.iter().collect();
 //! assert_eq!(codings, [&b"gzip"[..], b"deflate;q=0.5", b"x=\"a,b\""]);
 //!
 //! // HTTP-date: all three formats in, IMF-fixdate out.
 //! let now = 1_792_540_800; // the caller's clock, Unix seconds
-//! let d = pn::http_date_at(b"Sunday, 06-Nov-94 08:49:37 GMT", now)?;
+//! let d = pn::parse_http_date_at(b"Sunday, 06-Nov-94 08:49:37 GMT", now)?;
 //! assert_eq!(&d.format(), b"Sun, 06 Nov 1994 08:49:37 GMT");
 //!
 //! // Host: real IPv4 and IPv6 validation, ports up to 65535.
@@ -57,24 +57,59 @@
 //! assert_eq!(err.to_string(), "invalid media type at offset 5");
 //! ```
 //!
-//! The rest of Tier 1 arrives with `0.4.0` and `0.5.0` (see the
-//! [roadmap](https://github.com/jamesgober/parse-net/blob/main/dev/ROADMAP.md)):
+//! The rest of Tier 1, one call per question a server or a mail client asks:
 //!
-//! ```text
-//! pn::best_media(accept, &["text/html", "application/json"])    // Option<usize>
-//! pn::if_none_match(if_none_match, &current_etag)?              // bool: answer 304
-//! pn::byte_ranges(range, file_len, &mut buf)?                   // RangeOutcome
-//! pn::parse_content_disposition(value)?.filename()              // prefers filename*
-//! pn::response_cache_control(value)?                            // ResponseDirectives
-//! pn::client_address(peer, pn::ForwardedSource::XForwardedFor(&lines), &trusted, 16)?
-//! pn::sfv::parse_item(b"same-origin")?                          // Sec-Fetch-Site
-//! pn::bearer(authorization)?                                    // Option<&[u8]>
+//! ```rust
+//! use parse_net as pn;
+//! use core::net::IpAddr;
+//!
+//! // Content negotiation: the index of the best offer.
+//! let accept = Some(&b"text/html;q=0.9, application/json"[..]);
+//! assert_eq!(pn::best_media(accept, &["text/html", "application/json"]), Some(1));
+//!
+//! // Conditional requests: answer 304 when the tag matches.
+//! let current = pn::Representation::Tagged(pn::EntityTag::strong(b"v2")?);
+//! assert!(pn::if_none_match(b"\"v1\", W/\"v2\"", current)?);
+//!
+//! // Ranges: resolved against the length, written into the caller's array.
+//! let mut ranges = [pn::ByteRange { start: 0, end: 0 }; 4];
+//! assert_eq!(pn::byte_ranges(b"bytes=0-499", 10_000, &mut ranges)?, pn::RangeOutcome::Ranges(1));
+//!
+//! // Downloads and caching.
+//! let cd = pn::parse_content_disposition(b"attachment; filename=\"report.pdf\"")?;
+//! assert!(cd.filename().is_some());
+//! let cc = pn::parse_response_cache_control(b"public, max-age=31536000, immutable")?;
+//! assert_eq!(cc.max_age, Some(31_536_000));
+//!
+//! // Proxies: the client address behind the trusted ones.
+//! let peer: IpAddr = "10.0.0.2".parse()?;
+//! let lines: [&[u8]; 1] = [b"203.0.113.7, 10.0.0.2"];
+//! let client = pn::client_address(peer, pn::ForwardedSource::XForwardedFor(&lines), &|a: IpAddr| a == peer);
+//! assert_eq!(client, pn::ClientAddress::Forwarded { addr: "203.0.113.7".parse()?, hops: 2 });
+//!
+//! // Authorization and Structured Fields.
+//! assert_eq!(pn::bearer(b"Bearer mF_9.B5f-4.1JqM")?, Some(&b"mF_9.B5f-4.1JqM"[..]));
+//! let site = pn::structured::parse_item(b"same-origin")?;
+//!
+//! // Email: an address, a display name, and a subject as text.
+//! let m = pn::mail::parse_mailbox(b"=?UTF-8?Q?Ren=C3=A9e?= <renee@example.com>")?;
+//! let mut name = [0u8; 64];
+//! assert_eq!(pn::mail::decode_phrase(m.display_name.unwrap_or_default(), &mut name)?, "Ren\u{e9}e");
+//! let mut subject = [0u8; 64];
+//! assert_eq!(pn::mail::decode_words(b"=?UTF-8?Q?Caf=C3=A9?= menu", &mut subject)?, "Caf\u{e9} menu");
+//! # let _ = site;
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! Every Tier 1 call uses [`Limits::DEFAULT`]. The same parser with other
+//! limits is the module's `parse(value, &limits)` (`media::parse`,
+//! `link::parse`), or the call's `_with_limits` form where a module has several
+//! (`mail::parse_mailbox_with_limits`).
 //!
 //! ## Status
 //!
-//! Beta, `0.9.3`: every planned field, measured against the Rust crates that
-//! do the same work (`docs/PERFORMANCE.md`), reviewed and hardened
+//! Beta, `0.10.0`: every planned field, measured against the Rust crates that
+//! do the same work (`docs/PERFORMANCE.md`), hardened
 //! (`docs/SECURITY.md`), and in use by published consumers (http-net,
 //! cookie-net, form-net). The public API is written down in `docs/API.md`,
 //! each field's grammar in `docs/GRAMMAR.md`, the design in `dev/PLAN.md`,
@@ -116,7 +151,7 @@ pub mod date;
 pub mod disposition;
 mod error;
 pub mod etag;
-pub mod ext_value;
+pub mod extended_value;
 pub mod forwarded;
 pub mod host;
 mod limits;
@@ -130,32 +165,33 @@ pub mod origin;
 #[cfg(feature = "alloc")]
 mod owned;
 pub mod param;
-pub mod pct;
+pub mod percent;
 pub mod range;
 pub mod scan;
-pub mod sfv;
+pub mod structured;
 pub mod text;
 mod utf8;
 pub mod write;
 
 pub use auth::{AuthPayload, Challenge, Credentials, basic, bearer};
 pub use cache::{
-    Directive, RequestDirectives, ResponseDirectives, request_cache_control, response_cache_control,
+    Directive, RequestDirectives, ResponseDirectives, parse_request_cache_control,
+    parse_response_cache_control,
 };
 #[cfg(feature = "std")]
-pub use date::http_date;
-pub use date::{Civil, DateFormat, HttpDate, MailDate, http_date_at};
+pub use date::parse_http_date;
+pub use date::{Civil, DateFormat, HttpDate, MailDate, parse_http_date_at};
 pub use disposition::{
     ContentDisposition, DispositionType, Filename, parse_content_disposition, write_attachment,
 };
 pub use error::{ErrorKind, Full, ParseError, WriteError};
-pub use etag::{Condition, EntityTag, TagList, if_match, if_none_match, parse_condition};
-pub use ext_value::{Charset, ExtValue, write_ext_value};
+pub use etag::{Condition, EntityTag, Representation, TagList, if_match, if_none_match};
+pub use extended_value::{Charset, ExtendedValue, write_extended_value};
 pub use forwarded::{ClientAddress, ForwardedSource, Trust, client_address};
 pub use host::{Host, HostPort, parse_host_port};
 pub use limits::{DuplicatePolicy, Limits};
 pub use link::{LinkValue, Links, parse_link};
-pub use list::{List, list};
+pub use list::{List, parse_list};
 pub use media::{Boundary, MediaRange, MediaType, parse_media_type};
 pub use negotiate::{QValue, best_charset, best_encoding, best_language, best_media};
 pub use origin::{Origin, OriginValue, parse_origin};

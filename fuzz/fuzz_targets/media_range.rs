@@ -15,7 +15,7 @@ fuzz_target!(|data: &[u8]| {
     let r = common::no_alloc(|| {
         let r = media::parse_range(data, &Limits::DEFAULT)?;
         let _ = r.weight();
-        assert!((1..=4).contains(&r.specificity()));
+        assert!((64..=255).contains(&r.specificity()));
         if r.type_() != b"*" && r.subtype() != b"*" && r.params().is_empty() {
             let mut buf = [0u8; 4096];
             let mut out = parse_net::SliceSink::new(&mut buf);

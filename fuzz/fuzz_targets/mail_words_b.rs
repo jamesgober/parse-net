@@ -1,6 +1,6 @@
 #![no_main]
 //! RFC 2047 `B` words: no panic, no allocation. Any text encoded with
-//! `encode_words_b`, unfolded, and decoded comes back unchanged, in words of
+//! `encode_words_base64`, unfolded, and decoded comes back unchanged, in words of
 //! at most 75 bytes, and reads back as `encode_words` does; the decoder, fed
 //! arbitrary text as a `B` word, never writes more than three bytes for four.
 
@@ -13,8 +13,7 @@ mod common;
 #[global_allocator]
 static GLOBAL: common::Counting = common::Counting;
 
-/// Encodes `text`, unfolds it into `flat`, and decodes it into `out`, without
-/// the space of a fold before the first word.
+/// Unfolds `written` into `flat` and decodes it into `out`.
 fn round_trip<'b>(
     written: &[u8],
     flat: &mut [u8],
@@ -27,12 +26,7 @@ fn round_trip<'b>(
         n += p.len();
     }
     let limits = Limits::DEFAULT.max_encoded_words(u16::MAX);
-    let back = mail::decode_words(&flat[..n], &limits, out).expect("encoded words decode");
-    if written.starts_with(b"\r\n ") {
-        back.strip_prefix(' ').expect("the fold's space")
-    } else {
-        back
-    }
+    mail::decode_words_with_limits(&flat[..n], &limits, out).expect("encoded words decode")
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -46,7 +40,7 @@ fuzz_target!(|data: &[u8]| {
         word[..10].copy_from_slice(b"=?UTF-8?B?");
         word[10..10 + n].copy_from_slice(&data[..n]);
         word[10 + n..12 + n].copy_from_slice(b"?=");
-        match mail::decode_words(&word[..12 + n], &Limits::DEFAULT, &mut out) {
+        match mail::decode_words(&word[..12 + n], &mut out) {
             Ok(s) => {
                 let shaped = !data[..n].iter().any(|b| matches!(b, b'?' | b' ' | b'\t' | b'\r' | b'\n'));
                 assert!(!shaped || s.len() <= n / 4 * 3, "{} bytes from {n}", s.len());
@@ -57,17 +51,21 @@ fuzz_target!(|data: &[u8]| {
         let Ok(text) = core::str::from_utf8(data) else { return };
         let room = data.first().map_or(70, |&b| usize::from(b % 80));
         let mut sink = SliceSink::new(&mut enc);
-        if mail::encode_words_b(text, room, &mut sink).is_err() {
+        if mail::encode_words_base64(text, room, &mut sink).is_err() {
             assert!(text.chars().any(char::is_control));
             return;
         }
         let written = sink.written();
+        // Never a fold first: it would read back as a leading space.
+        assert!(!written.starts_with(b"\r\n"));
         for (i, line) in written.split(|&b| b == b'\n').enumerate() {
             let w = line.strip_suffix(b"\r").unwrap_or(line);
             let w = w.strip_prefix(b" ").unwrap_or(w);
             if w.starts_with(b"=?") {
                 assert!(w.starts_with(b"=?UTF-8?B?"));
-                assert!(w.len() <= if i == 0 { room.min(75) } else { 75 });
+                // The first word fits the room, or holds one character
+                // (at most 20 bytes) and runs past it.
+                assert!(w.len() <= if i == 0 { room.clamp(20, 75) } else { 75 });
             }
         }
         let back = round_trip(written, &mut flat, &mut out);

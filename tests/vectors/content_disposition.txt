@@ -153,25 +153,25 @@ attachment;filename=A-%41.html	attachment; filename*=UTF-8''A-%2541.html
 # attwithfn2231abspathdisguised: agree
 attachment;filename=\x5cfoo.html	attachment; filename*=UTF-8''%5cfoo.html
 # attfncont: C-3
-attachment	attachment; filename*0="foo."; filename*1="html"
+err:ForbiddenParameter	attachment; filename*0="foo."; filename*1="html"
 # attfncontqs: C-3
-attachment	attachment; filename*0="foo"; filename*1="\x5cb\x5ca\x5cr.html"
+err:ForbiddenParameter	attachment; filename*0="foo"; filename*1="\x5cb\x5ca\x5cr.html"
 # attfncontenc: C-3
-attachment	attachment; filename*0*=UTF-8''foo-%c3%a4; filename*1=".html"
+err:ForbiddenParameter	attachment; filename*0*=UTF-8''foo-%c3%a4; filename*1=".html"
 # attfncontlz: C-3
-attachment	attachment; filename*0="foo"; filename*01="bar"
+err:ForbiddenParameter	attachment; filename*0="foo"; filename*01="bar"
 # attfncontnc: C-3
-attachment	attachment; filename*0="foo"; filename*2="bar"
+err:ForbiddenParameter	attachment; filename*0="foo"; filename*2="bar"
 # attfnconts1: C-3
-attachment	attachment; filename*1="foo."; filename*2="html"
+err:ForbiddenParameter	attachment; filename*1="foo."; filename*2="html"
 # attfncontord: C-3
-attachment	attachment; filename*1="bar"; filename*0="foo"
+err:ForbiddenParameter	attachment; filename*1="bar"; filename*0="foo"
 # attfnboth: agree
 attachment;filename=foo-\xc3\xa4.html	attachment; filename="foo-ae.html"; filename*=UTF-8''foo-%c3%a4.html
 # attfnboth2: agree
 attachment;filename=foo-\xc3\xa4.html	attachment; filename*=UTF-8''foo-%c3%a4.html; filename="foo-ae.html"
-# attfnboth3: agree
-attachment;filename=currency-sign=\xc2\xa4	attachment; filename*0*=ISO-8859-15''euro-sign%3d%a4; filename*=ISO-8859-1''currency-sign%3d%a4
+# attfnboth3: C-3
+err:ForbiddenParameter	attachment; filename*0*=ISO-8859-15''euro-sign%3d%a4; filename*=ISO-8859-1''currency-sign%3d%a4
 # attnewandfn: agree
 attachment;filename=foo.html	attachment; foobar=x; filename="foo.html"
 # attrfc2047token: agree

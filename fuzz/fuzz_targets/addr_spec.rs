@@ -4,7 +4,7 @@
 //! itself.
 
 use libfuzzer_sys::fuzz_target;
-use parse_net::{Limits, SliceSink, mail};
+use parse_net::{SliceSink, mail};
 
 #[path = "common.rs"]
 mod common;
@@ -18,12 +18,12 @@ fuzz_target!(|data: &[u8]| {
         match mail::parse_addr_spec(data) {
             Ok(a) => {
                 let _ = a.is_ascii();
-                let m = mail::parse_mailbox(data, &Limits::DEFAULT).expect("an addr-spec is a mailbox");
+                let m = mail::parse_mailbox(data).expect("an addr-spec is a mailbox");
                 assert!(m.display_name.is_none());
             }
             Err(e) => common::check_error(&e),
         }
-        if let Err(e) = mail::parse_mailbox(data, &Limits::DEFAULT) {
+        if let Err(e) = mail::parse_mailbox(data) {
             common::check_error(&e);
         }
         match mail::parse_msg_id(data) {

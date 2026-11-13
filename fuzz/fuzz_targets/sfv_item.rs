@@ -5,7 +5,7 @@
 use libfuzzer_sys::fuzz_target;
 use parse_net::{
     ParseError,
-    sfv::{self, BareItem, Decimal, Item, Member, Parser, SfParams, Visitor},
+    structured::{self, BareItem, Decimal, Item, Member, Parser, SfParams, Visitor},
 };
 
 #[path = "common.rs"]
@@ -104,7 +104,7 @@ fuzz_target!(|data: &[u8]| {
     common::no_alloc(|| {
         let mut visited = Count::default();
         let v = Parser::default().visit_item(data, &mut visited);
-        match sfv::parse_item(data) {
+        match structured::parse_item(data) {
             Ok(i) => {
                 assert!(v.is_ok());
                 walk_item(i, &mut buf);

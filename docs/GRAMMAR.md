@@ -77,8 +77,8 @@ RFC 9110 section 5.6.1.
   denial-of-service mechanism." (section 5.6.1.2).
 - Commas inside quoted strings and comments do not split.
 - Several field lines are read as one list joined by commas (section 5.3);
-  `list::combined` does this without copying.
-- Functions: `list`, `list::combined`, `list::contains_token`,
+  `list::parse_lines` does this without copying.
+- Functions: `list`, `list::parse_lines`, `list::contains_token`,
   `list::for_each`.
 
 ## Parameters
@@ -167,7 +167,12 @@ language-range  = (1*8ALPHA *("-" 1*8alphanum)) / "*"
   that does not parse, and says so. `MalformedPolicy::Refuse` reports
   `Outcome::Refused` for callers that answer 400.
 - Language tags are compared case-insensitively; matching is RFC 4647 lookup
-  (section 3.4) by default, basic filtering (section 3.3.1) on request.
+  (section 3.4) by default, basic filtering (section 3.3.1) on request. Lookup
+  tries the ranges in priority order, each truncated until it matches, and
+  skips a `*` followed by other ranges.
+- `q` in `Accept` is the weight wherever it stands (section 12.5.1:
+  "Recipients SHOULD process any parameter named "q" as weight, regardless
+  of parameter ordering"); the `accept-ext` of RFC 7231 is gone.
 - `x-gzip` and `x-compress` match `gzip` and `compress` (section 8.4.1.1,
   8.4.1.3).
 - Functions: `best_media`, `best_language`, `best_encoding`, `best_charset`,
@@ -205,7 +210,7 @@ GMT          = %s"GMT"
   generates one (senders write `Date` from a Unix clock), and Unix time has
   no 60th second to hold it (D-053).
 - Years 1 to 9999; dates before 1970 are valid (verdict V-2).
-- Functions: `http_date` (`std`), `http_date_at`, `HttpDate::parse_at`,
+- Functions: `parse_http_date` (`std`), `parse_http_date_at`, `HttpDate::parse_at`,
   `parse_imf_fixdate`, `HttpDate::format`, `write_to`.
 
 ## Host
@@ -247,12 +252,12 @@ pct-encoded = "%" HEXDIG HEXDIG
 
 - Either hex case decodes: "The uppercase hexadecimal digits 'A' through
   'F' are equivalent to the lowercase digits 'a' through 'f', respectively."
-  `pct::decode_lower_only_into` accepts lowercase only, for RFC 9651 Display
+  `percent::decode_lowercase_into` accepts lowercase only, for RFC 9651 Display
   Strings.
 - `decode_utf8_into` refuses decoded bytes that are not UTF-8, overlong forms
   and surrogates included.
-- Functions: `pct::validate`, `validate_with`, `decoded_len`, `decode_into`,
-  `decode_utf8_into`, `decode_lower_only_into`, `encode`.
+- Functions: `percent::validate`, `validate_with`, `decoded_len`, `decode_into`,
+  `decode_utf8_into`, `decode_lowercase_into`, `encode`.
 
 ## Entity tags and conditions
 
@@ -329,8 +334,8 @@ attr-char     = ALPHA / DIGIT
   of producers.
 - Decoded C0 controls, DEL, and C1 controls are refused (`ControlInDecoded`):
   a file name is shown to people and handed to file systems.
-- Functions: `ExtValue::parse`, `decode_into`, `max_decoded_len`,
-  `write_ext_value`.
+- Functions: `ExtendedValue::parse`, `decode_into`, `max_decoded_len`,
+  `write_extended_value`.
 
 ## Content-Disposition
 
@@ -389,8 +394,8 @@ delta-seconds   = 1*DIGIT
   `None` and sets `invalid_values`. Conflicting directives are all reported;
   the same section says "the most restrictive directive should be honored",
   which is the cache's decision.
-- Functions: `response_cache_control`, `request_cache_control`,
-  `cache::parse`, `response_lines`, `request_lines`, `cache::Writer`.
+- Functions: `parse_response_cache_control`, `parse_request_cache_control`,
+  `cache::parse`, `parse_response_lines`, `parse_request_lines`, `cache::Writer`.
 
 ## Forwarded
 
@@ -416,11 +421,12 @@ obfport           = "_" 1*(ALPHA / DIGIT / "." / "_" / "-")
   any nodename with node-port specified MUST be quoted"); unquoted, it is
   refused.
 - `client_address` walks the chain from the right through trusted proxies
-  only, and stops at `unknown`, an obfuscated node, or an element without
-  `for` (`ClientAddress::Unknown`). A malformed chain is an error: use the
-  peer address.
+  only, never reads what lies left of the first untrusted address, and stops
+  at `unknown`, an obfuscated node, an element without `for`, or one that
+  does not parse (`ClientAddress::Unknown`: no reliable address; never use
+  the peer, a trusted proxy, instead).
 - Functions: `forwarded::parse`, `client_address`,
-  `client_address_detailed`.
+  `client_address_with_limits`, `client_address_detailed`.
 
 ## X-Forwarded-*
 
@@ -540,10 +546,10 @@ pct-encoded      = "%" lc-hexdig lc-hexdig
   list and dictionary again split into one line per member
   (`tests/sfv_conformance.rs`); the 4 optional cases parse-net refuses are
   listed in `tests/sfv/README.md`.
-- Functions: `sfv::parse_item`, `parse_list`, `parse_dictionary`,
-  `parse_list_lines`, `parse_dictionary_lines`, `sfv::Parser` (limits and
+- Functions: `structured::parse_item`, `parse_list`, `parse_dictionary`,
+  `parse_list_lines`, `parse_dictionary_lines`, `structured::Parser` (limits and
   `visit_*`), `Dictionary::get`, `index_into`.
-- The writer (`sfv::Writer`) produces the canonical form of section 4.1;
+- The writer (`structured::Writer`) produces the canonical form of section 4.1;
   every accepted parse case is serialized again and compared with the
   suite's `canonical`, and the four serialisation-only files run whole.
 
@@ -650,7 +656,7 @@ encoding     = token
   whitespace on both sides (section 5): next to a special, a comment, or a
   quoted string it is text.
 - Functions: `mail::decode_words`, `mail::decode_phrase`,
-  `mail::encode_words`, `mail::encode_words_b`.
+  `mail::encode_words`, `mail::encode_words_base64`.
 
 ## MIME parameters
 

@@ -22,7 +22,7 @@ use std::{
 
 use parse_net::{
     self as pn, ErrorKind, Limits, auth, cache, etag, forwarded, link, list, mail, media,
-    negotiate, param, pct, range, sfv, text,
+    negotiate, param, percent, range, structured, text,
 };
 
 const SIZES: [usize; 3] = [1 << 10, 1 << 16, 1 << 20];
@@ -62,11 +62,11 @@ std::thread_local! {
 }
 
 fn decode(v: &[u8], limits: &Limits) -> Outcome {
-    OUT.with_borrow_mut(|out| outcome(mail::decode_words(v, limits, out)))
+    OUT.with_borrow_mut(|out| outcome(mail::decode_words_with_limits(v, limits, out)))
 }
 
 fn phrase(v: &[u8], limits: &Limits) -> Outcome {
-    OUT.with_borrow_mut(|out| outcome(mail::decode_phrase(v, limits, out)))
+    OUT.with_borrow_mut(|out| outcome(mail::decode_phrase_with_limits(v, limits, out)))
 }
 
 fn fold_text(v: &[u8]) -> Outcome {
@@ -280,9 +280,9 @@ fn cases() -> Vec<Case> {
         Case {
             name: "If-None-Match, many tags",
             input: |n| build("", |i| format!("W/\"{}\",", name(i)), "\"z\"", n),
-            default: |v| outcome(etag::parse_condition(v, &Limits::DEFAULT)),
+            default: |v| outcome(etag::parse(v, &Limits::DEFAULT)),
             expect: Err(ErrorKind::TooManyMembers),
-            full: |v| outcome(etag::parse_condition(v, &FULL)),
+            full: |v| outcome(etag::parse(v, &FULL)),
         },
         Case {
             name: "Range, many ranges",
@@ -294,9 +294,9 @@ fn cases() -> Vec<Case> {
         Case {
             name: "ext-value, long percent-encoded",
             input: |n| build("UTF-8''", |_| "%E2%82%AC".into(), "", n),
-            default: |v| outcome(pn::ExtValue::parse(v)),
+            default: |v| outcome(pn::ExtendedValue::parse(v)),
             expect: Ok(()),
-            full: |v| outcome(pn::ExtValue::parse(v)),
+            full: |v| outcome(pn::ExtendedValue::parse(v)),
         },
         Case {
             name: "Content-Disposition, long filename*",
@@ -322,23 +322,23 @@ fn cases() -> Vec<Case> {
         Case {
             name: "Cache-Control, repeated known directives",
             input: |n| build("", |_| "max-age=1, no-cache=\"a,b\",".into(), "public", n),
-            default: |v| outcome(pn::response_cache_control(v)),
+            default: |v| outcome(pn::parse_response_cache_control(v)),
             expect: Err(ErrorKind::TooManyMembers),
             full: |v| outcome(cache::parse(v, &FULL)),
         },
         Case {
             name: "Link, many links",
             input: |n| build("", |i| format!("<https://a/{i}>; rel=next,"), "<b>", n),
-            default: |v| outcome(link::parse_link(v, &Limits::DEFAULT)),
+            default: |v| outcome(link::parse_link(v)),
             expect: Err(ErrorKind::TooManyMembers),
-            full: |v| outcome(link::parse_link(v, &FULL)),
+            full: |v| outcome(link::parse(v, &FULL)),
         },
         Case {
             name: "Link, many parameters",
             input: |n| build("<a>", |i| format!("; {}=x", name(i)), "", n),
-            default: |v| outcome(link::parse_link(v, &Limits::DEFAULT)),
+            default: |v| outcome(link::parse_link(v)),
             expect: Err(ErrorKind::TooManyMembers),
-            full: |v| outcome(link::parse_link(v, &FULL)),
+            full: |v| outcome(link::parse(v, &FULL)),
         },
         Case {
             name: "Forwarded, many hops",
@@ -439,76 +439,70 @@ fn cases() -> Vec<Case> {
         Case {
             name: "percent-encoding, long",
             input: |n| build("", |_| "%41a".into(), "", n),
-            default: |v| outcome(pct::validate(v)),
+            default: |v| outcome(percent::validate(v)),
             expect: Ok(()),
-            full: |v| outcome(pct::validate(v)),
+            full: |v| outcome(percent::validate(v)),
         },
         Case {
             name: "Structured Field string, long with escapes",
             input: |n| build("\"", |_| "a\\\"".into(), "\"", n),
-            default: |v| outcome(sfv::parse_item(v)),
+            default: |v| outcome(structured::parse_item(v)),
             expect: Err(ErrorKind::TooLong),
-            full: |v| outcome(sfv::Parser::new(FULL).item(v)),
+            full: |v| outcome(structured::Parser::new(FULL).item(v)),
         },
         Case {
             name: "Structured Field byte sequence, long",
             input: |n| build(":", |_| "YWJj".into(), ":", n),
-            default: |v| outcome(sfv::parse_item(v)),
+            default: |v| outcome(structured::parse_item(v)),
             expect: Err(ErrorKind::TooLong),
-            full: |v| outcome(sfv::Parser::new(FULL).item(v)),
+            full: |v| outcome(structured::Parser::new(FULL).item(v)),
         },
         Case {
             name: "Structured Field list, many members with parameters",
             input: |n| build("", |i| format!("a;{}=1, ", name(i)), "a", n),
-            default: |v| outcome(sfv::parse_list(v)),
+            default: |v| outcome(structured::parse_list(v)),
             expect: Err(ErrorKind::TooManyMembers),
-            full: |v| outcome(sfv::Parser::new(FULL).list(v)),
+            full: |v| outcome(structured::Parser::new(FULL).list(v)),
         },
         Case {
             name: "Structured Field inner list, many items",
             input: |n| build("(", |_| "a ".into(), "a)", n),
-            default: |v| outcome(sfv::parse_list(v)),
+            default: |v| outcome(structured::parse_list(v)),
             expect: Err(ErrorKind::TooManyMembers),
-            full: |v| outcome(sfv::Parser::new(FULL).list(v)),
+            full: |v| outcome(structured::Parser::new(FULL).list(v)),
         },
         Case {
             name: "Structured Field item, many parameters no filter separates",
             input: |n| build("a", |i| format!(";{}=1", colliding_name(i)), "", n),
-            default: |v| outcome(sfv::parse_item(v)),
+            default: |v| outcome(structured::parse_item(v)),
             expect: Err(ErrorKind::TooManyMembers),
-            full: |v| outcome(sfv::Parser::new(FULL).item(v)),
+            full: |v| outcome(structured::Parser::new(FULL).item(v)),
         },
         Case {
             name: "Structured Field dictionary, distinct keys",
             input: |n| build("", |i| format!("{}=1, ", name(i)), "z", n),
-            default: |v| outcome(sfv::parse_dictionary(v)),
+            default: |v| outcome(structured::parse_dictionary(v)),
             expect: Err(ErrorKind::TooManyMembers),
-            full: |v| outcome(sfv::Parser::new(FULL).dictionary(v)),
+            full: |v| outcome(structured::Parser::new(FULL).dictionary(v)),
         },
         Case {
             name: "Structured Field dictionary, one key repeated",
             input: |n| build("", |_| "a=1, ".into(), "a", n),
-            default: |v| outcome(sfv::parse_dictionary(v)),
+            default: |v| outcome(structured::parse_dictionary(v)),
             expect: Err(ErrorKind::TooManyMembers),
-            full: |v| outcome(sfv::Parser::new(FULL).dictionary(v)),
+            full: |v| outcome(structured::Parser::new(FULL).dictionary(v)),
         },
         Case {
             name: "Structured Field dictionary, keys no filter separates",
             input: |n| build("", |i| format!("{}=1, ", colliding_name(i)), "z", n),
-            default: |v| outcome(sfv::parse_dictionary(v)),
+            default: |v| outcome(structured::parse_dictionary(v)),
             expect: Err(ErrorKind::TooManyMembers),
-            full: |v| outcome(sfv::Parser::new(FULL).dictionary(v)),
+            full: |v| outcome(structured::Parser::new(FULL).dictionary(v)),
         },
         Case {
             name: "encoded words, many",
             input: |n| build("", |_| "=?UTF-8?Q?a=C3=A9?= ".into(), "z", n),
-            default: |v| {
-                outcome(mail::decode_words(
-                    v,
-                    &Limits::DEFAULT,
-                    &mut vec![0; v.len()],
-                ))
-            },
+            default: |v| outcome(mail::decode_words(v, &mut vec![0; v.len()])),
             expect: Err(ErrorKind::TooManyMembers),
             full: |v| decode(v, &FULL),
         },
@@ -522,26 +516,14 @@ fn cases() -> Vec<Case> {
                     n,
                 )
             },
-            default: |v| {
-                outcome(mail::decode_words(
-                    v,
-                    &Limits::DEFAULT,
-                    &mut vec![0; v.len()],
-                ))
-            },
+            default: |v| outcome(mail::decode_words(v, &mut vec![0; v.len()])),
             expect: Err(ErrorKind::TooManyMembers),
             full: |v| decode(v, &FULL),
         },
         Case {
             name: "encoded words, B candidates that never close",
             input: |n| build("", |_| "=?UTF-8?B?QUFB ".into(), "", n),
-            default: |v| {
-                outcome(mail::decode_words(
-                    v,
-                    &Limits::DEFAULT,
-                    &mut vec![0; v.len()],
-                ))
-            },
+            default: |v| outcome(mail::decode_words(v, &mut vec![0; v.len()])),
             expect: Ok(()),
             full: |v| decode(v, &FULL),
         },
@@ -550,52 +532,28 @@ fn cases() -> Vec<Case> {
         Case {
             name: "encoded words, candidates that never close",
             input: |n| build("", |_| "=?a?Q?b ".into(), "", n),
-            default: |v| {
-                outcome(mail::decode_words(
-                    v,
-                    &Limits::DEFAULT,
-                    &mut vec![0; v.len()],
-                ))
-            },
+            default: |v| outcome(mail::decode_words(v, &mut vec![0; v.len()])),
             expect: Ok(()),
             full: |v| decode(v, &FULL),
         },
         Case {
             name: "encoded words, candidates and one final close",
             input: |n| build("", |_| "=?UTF-8?Q?a ".into(), "?=", n),
-            default: |v| {
-                outcome(mail::decode_words(
-                    v,
-                    &Limits::DEFAULT,
-                    &mut vec![0; v.len()],
-                ))
-            },
+            default: |v| outcome(mail::decode_words(v, &mut vec![0; v.len()])),
             expect: Ok(()),
             full: |v| decode(v, &FULL),
         },
         Case {
             name: "encoded words, quotes that never close",
             input: |n| build("", |_| "\" a ".into(), "", n),
-            default: |v| {
-                outcome(mail::decode_words(
-                    v,
-                    &Limits::DEFAULT,
-                    &mut vec![0; v.len()],
-                ))
-            },
+            default: |v| outcome(mail::decode_words(v, &mut vec![0; v.len()])),
             expect: Ok(()),
             full: |v| decode(v, &FULL),
         },
         Case {
             name: "encoded words, opening quotes with one final close",
             input: |n| build("", |_| " \"a".into(), " \"", n),
-            default: |v| {
-                outcome(mail::decode_words(
-                    v,
-                    &Limits::DEFAULT,
-                    &mut vec![0; v.len()],
-                ))
-            },
+            default: |v| outcome(mail::decode_words(v, &mut vec![0; v.len()])),
             expect: Ok(()),
             full: |v| decode(v, &FULL),
         },
@@ -661,9 +619,9 @@ fn cases() -> Vec<Case> {
             // The display name: the addr-spec takes no comments (MAIL-10).
             name: "mailbox, display name of words and comments",
             input: |n| build("", |_| "a (b) ".into(), "<a@b>", n),
-            default: |v| outcome(mail::parse_mailbox(v, &Limits::DEFAULT)),
+            default: |v| outcome(mail::parse_mailbox(v)),
             expect: Ok(()),
-            full: |v| outcome(mail::parse_mailbox(v, &FULL)),
+            full: |v| outcome(mail::parse_mailbox_with_limits(v, &FULL)),
         },
         Case {
             name: "unfold, many folds",
@@ -691,9 +649,9 @@ fn cases() -> Vec<Case> {
         Case {
             name: "RFC 5322 date, long comments",
             input: |n| build("Wed, 21 Oct 2026 17:38:00 +0200 ", |_| "(a) ".into(), "", n),
-            default: |v| outcome(pn::MailDate::parse(v, false)),
+            default: |v| outcome(pn::MailDate::parse(v)),
             expect: Ok(()),
-            full: |v| outcome(pn::MailDate::parse(v, true)),
+            full: |v| outcome(pn::MailDate::parse_obsolete(v)),
         },
     ]
 }

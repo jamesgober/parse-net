@@ -3,7 +3,7 @@
 # =============================================================================
 [package]
 name    = "parse-net"
-version = "0.9.3"
+version = "0.10.0"
 
 # Minimum Supported Rust Version (MSRV)
 # 1.85: edition 2024. `core::net` addresses need 1.77, `core::error::Error`
@@ -55,7 +55,7 @@ default = []
 # Owned forms (`to_owned`), `Sink for Vec<u8>`, functions returning `String`.
 alloc = []
 
-# `HttpDate` to and from `SystemTime`, and the Tier 1 `http_date` that reads
+# `HttpDate` to and from `SystemTime`, and the Tier 1 `parse_http_date` that reads
 # the system clock for RFC 850 years. Implies `alloc`.
 std = ["alloc"]
 

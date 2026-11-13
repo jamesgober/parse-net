@@ -3,7 +3,7 @@
 //! back to the same bytes, and every listed tag compares equal to itself.
 
 use libfuzzer_sys::fuzz_target;
-use parse_net::{EntityTag, Limits, SliceSink, etag};
+use parse_net::{EntityTag, Limits, Representation, SliceSink, etag};
 
 #[path = "common.rs"]
 mod common;
@@ -22,21 +22,31 @@ fuzz_target!(|data: &[u8]| {
             assert!(t.weak_eq(&back));
             assert_eq!(t.strong_eq(&back), !t.is_weak());
         }
-        match etag::parse_condition(data, &Limits::DEFAULT) {
+        match etag::parse(data, &Limits::DEFAULT) {
             Ok(etag::Condition::Tags(list)) => {
                 assert_eq!(list.iter().count(), list.len());
                 for t in list.iter() {
                     assert!(t.weak_eq(&t));
                     // `true`: a listed tag matches, so the condition fails.
-                    assert_eq!(etag::if_none_match(data, &t), Ok(true));
+                    assert_eq!(
+                        etag::if_none_match(data, Representation::Tagged(t)),
+                        Ok(true)
+                    );
                 }
             }
             Ok(etag::Condition::Any) => {}
             Err(e) => {
                 common::check_error(&e);
-                assert!(etag::if_none_match(data, &EntityTag::strong(b"x").expect("tag")).is_err());
+                assert!(
+                    etag::if_none_match(
+                        data,
+                        Representation::Tagged(EntityTag::strong(b"x").expect("tag"))
+                    )
+                    .is_err()
+                );
             }
         }
-        let _ = etag::if_match(data, None);
+        let _ = etag::if_match(data, Representation::Absent);
+        let _ = etag::if_match(data, Representation::Untagged);
     });
 });

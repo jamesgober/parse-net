@@ -9,7 +9,7 @@ v6:::1	[::1]
 v6:2001:db8::1|443	[2001:DB8:0:0:0:0:0:1]:443
 v6:::ffff:192.0.2.1	[::ffff:192.0.2.1]
 future:v1.fe80::a	[v1.fe80::a]
-name:%41.example	%41.example
+err:InvalidHost	%41.example
 err:InvalidHost	user@example.com
 err:InvalidHost	::1
 err:InvalidAddress	[::1

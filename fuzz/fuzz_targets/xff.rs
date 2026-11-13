@@ -1,10 +1,14 @@
 #![no_main]
 //! `X-Forwarded-*`: no panic, no allocation; the chain counts what it
-//! iterates, and resolution through an untrusted peer ignores the header.
+//! iterates, resolution through an untrusted peer ignores the header, and
+//! no text left of the address a trusted proxy appended changes the answer.
 
-use libfuzzer_sys::fuzz_target;
 use core::net::IpAddr;
-use parse_net::{ClientAddress, ForwardedSource, Limits, client_address, forwarded};
+use libfuzzer_sys::fuzz_target;
+use parse_net::{
+    ClientAddress, ForwardedSource, Limits, client_address, forwarded,
+    forwarded::client_address_with_limits,
+};
 
 #[path = "common.rs"]
 mod common;
@@ -24,14 +28,25 @@ fuzz_target!(|data: &[u8]| {
         let _ = forwarded::parse_x_forwarded_host(data);
         let none = |_: IpAddr| false;
         assert_eq!(
-            client_address(peer, ForwardedSource::XForwardedFor(&lines), &none, 16),
-            Ok(ClientAddress::Peer(peer))
+            client_address(peer, ForwardedSource::XForwardedFor(&lines), &none),
+            ClientAddress::Peer(peer)
         );
         let all = |_: IpAddr| true;
-        if let Ok(ClientAddress::Forwarded { hops, .. } | ClientAddress::Unknown { hops }) =
-            client_address(peer, ForwardedSource::XForwardedFor(&lines), &all, 8)
+        let eight = Limits::DEFAULT.max_hops(8);
+        match client_address_with_limits(peer, ForwardedSource::XForwardedFor(&lines), &all, &eight)
         {
-            assert!(hops >= 1 && hops <= 8);
+            ClientAddress::Forwarded { hops, .. } => assert!((1..=8).contains(&hops)),
+            ClientAddress::Unknown { hops } => assert!((1..=8).contains(&hops)),
+            _ => {}
         }
+        let appended: [&[u8]; 2] = [data, b"198.51.100.7"];
+        let only_peer = |a: IpAddr| a == peer;
+        assert_eq!(
+            client_address(peer, ForwardedSource::XForwardedFor(&appended), &only_peer),
+            ClientAddress::Forwarded {
+                addr: IpAddr::from([198, 51, 100, 7]),
+                hops: 1
+            }
+        );
     });
 });

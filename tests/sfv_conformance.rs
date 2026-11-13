@@ -5,7 +5,7 @@
 
 use parse_net::{
     SliceSink, WriteError,
-    sfv::{self, BareItem, Item, Member, SfParams, Writer},
+    structured::{self, BareItem, Item, Member, SfParams, Writer},
 };
 use serde_json::Value;
 
@@ -447,7 +447,7 @@ fn run(
     let cmp = |r: Result<(), String>| r.map_err(Some);
     match ty {
         "item" => {
-            let i = sfv::parse_item(&joined).map_err(|_| None)?;
+            let i = structured::parse_item(&joined).map_err(|_| None)?;
             cmp(canonical_eq(
                 serialize(ty, false, |w| ser_item(w, i)),
                 canonical,
@@ -455,7 +455,7 @@ fn run(
             expected.map_or(Ok(()), |w| cmp(item_eq(i, w)))
         }
         "list" => {
-            let l = sfv::parse_list(&joined).map_err(|_| None)?;
+            let l = structured::parse_list(&joined).map_err(|_| None)?;
             cmp(canonical_eq(
                 serialize(ty, l.is_empty(), |w| {
                     l.iter().try_for_each(|m| ser_member(w, m))
@@ -466,7 +466,7 @@ fn run(
             // The multi-line API agrees with the joined value, except that
             // it refuses an empty line, which joining hides only when the
             // field has a single line.
-            match sfv::parse_list_lines(&lines) {
+            match structured::parse_list_lines(&lines) {
                 Ok(ll) => {
                     expected.map_or(Ok(()), |w| cmp(members_eq(ll.iter(), w)))?;
                     assert_eq!(ll.len(), l.len());
@@ -477,13 +477,14 @@ fn run(
             let parts = member_lines(&joined);
             if !parts.is_empty() {
                 let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
-                let ll = sfv::parse_list_lines(&refs).map_err(|e| Some(format!("split: {e}")))?;
+                let ll =
+                    structured::parse_list_lines(&refs).map_err(|e| Some(format!("split: {e}")))?;
                 expected.map_or(Ok(()), |w| cmp(members_eq(ll.iter(), w)))?;
             }
             ok
         }
         "dictionary" => {
-            let d = sfv::parse_dictionary(&joined).map_err(|_| None)?;
+            let d = structured::parse_dictionary(&joined).map_err(|_| None)?;
             cmp(canonical_eq(
                 serialize(ty, d.is_empty(), |w| {
                     ordered(d.iter()).into_iter().try_for_each(|(k, m)| {
@@ -494,7 +495,7 @@ fn run(
                 canonical,
             ))?;
             let ok = expected.map_or(Ok(()), |w| cmp(dict_eq(d.iter(), w)));
-            match sfv::parse_dictionary_lines(&lines) {
+            match structured::parse_dictionary_lines(&lines) {
                 Ok(dl) => {
                     expected.map_or(Ok(()), |w| cmp(dict_eq(dl.iter(), w)))?;
                     assert_eq!(dl.len(), d.len());
@@ -504,8 +505,8 @@ fn run(
             let parts = member_lines(&joined);
             if !parts.is_empty() {
                 let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
-                let dl =
-                    sfv::parse_dictionary_lines(&refs).map_err(|e| Some(format!("split: {e}")))?;
+                let dl = structured::parse_dictionary_lines(&refs)
+                    .map_err(|e| Some(format!("split: {e}")))?;
                 expected.map_or(Ok(()), |w| cmp(dict_eq(dl.iter(), w)))?;
             }
             ok

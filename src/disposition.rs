@@ -17,7 +17,7 @@
 use crate::{
     class,
     error::{ErrorKind, ParseError, Result, WriteError, err},
-    ext_value::{Charset, ExtValue, decode_checked, write_ext_value},
+    extended_value::{Charset, ExtendedValue, decode_checked, write_extended_value},
     limits::{DuplicatePolicy, Limits},
     param::{self, Params},
     scan::control_kind,
@@ -92,11 +92,19 @@ pub fn parse_content_disposition(value: &[u8]) -> Result<ContentDisposition<'_>>
 /// control character); an invalid one refuses the whole field instead of
 /// falling back to `filename` silently.
 ///
+/// Two forms that conforming readers resolve differently are refused:
+/// `filename*` in `form-data` (RFC 7578 section 4.2 forbids it and browsers
+/// never send it, so a backend that reads only `filename` would store
+/// another name), and RFC 2231 continuations (`filename*0`, `filename*1*`)
+/// in any type (HTTP never uses them, and a mail reader joins them into a
+/// name this parser would not see).
+///
 /// # Errors
 ///
 /// [`ErrorKind::NotToken`] for the type; the parameter errors, with
-/// [`ErrorKind::DuplicateParameter`]; the [`ExtValue::parse`] errors for
-/// `filename*`; [`ErrorKind::TrailingData`].
+/// [`ErrorKind::DuplicateParameter`]; [`ErrorKind::ForbiddenParameter`] for
+/// the two forms above; the [`ExtendedValue::parse`] errors for `filename*`;
+/// [`ErrorKind::TrailingData`].
 ///
 /// # Examples
 ///
@@ -107,6 +115,10 @@ pub fn parse_content_disposition(value: &[u8]) -> Result<ContentDisposition<'_>>
 /// assert_eq!(dup.unwrap_err().kind(), ErrorKind::DuplicateParameter);
 /// let bad = disposition::parse(b"attachment; filename=a.txt; filename*=UTF-8''%ZZ", &Limits::DEFAULT);
 /// assert_eq!(bad.unwrap_err().kind(), ErrorKind::InvalidPercentEncoding);
+/// let part = disposition::parse(b"form-data; name=f; filename=a.php; filename*=UTF-8''a.png", &Limits::DEFAULT);
+/// assert_eq!(part.unwrap_err().kind(), ErrorKind::ForbiddenParameter);
+/// let joined = disposition::parse(b"attachment; filename*0=evil; filename*1=.exe", &Limits::DEFAULT);
+/// assert_eq!(joined.unwrap_err().kind(), ErrorKind::ForbiddenParameter);
 /// ```
 pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<ContentDisposition<'a>> {
     let lead = skip_ows(value);
@@ -130,22 +142,6 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<ContentDisposition<
             _ => ParseError::new(ErrorKind::TrailingData, lead + at),
         });
     }
-    if let Some(word) = params.get("filename*") {
-        // Repeats are refused, so this is the only one.
-        let offset = |s: &[u8]| (s.as_ptr() as usize).saturating_sub(v.as_ptr() as usize);
-        let t = match word {
-            Word::Token(t) => t,
-            Word::Quoted(q) => {
-                return err(ErrorKind::InvalidCharset, lead + offset(q.raw()) - 1);
-            }
-        };
-        let at = lead + offset(t);
-        let ext = ExtValue::parse(t).map_err(|e| e.shifted(at))?;
-        // An undecodable `filename*` refuses the field, so no component
-        // falls back to `filename` where another would not (T7).
-        ext.check_text()
-            .map_err(|e| ParseError::new(e.kind(), at))?;
-    }
     let kind = if type_.eq_ignore_ascii_case(b"inline") {
         DispositionType::Inline
     } else if type_.eq_ignore_ascii_case(b"attachment") {
@@ -155,7 +151,59 @@ pub fn parse<'a>(value: &'a [u8], limits: &Limits) -> Result<ContentDisposition<
     } else {
         DispositionType::Other(type_)
     };
+    let offset = |s: &[u8]| (s.as_ptr() as usize).saturating_sub(v.as_ptr() as usize);
+    // Repeats are refused, so this is the only one.
+    let ext = params.get("filename*");
+    // A continuation name holds a `*`, and so does `filename*`; only a field
+    // with another `*` is walked again to look for one.
+    let first = crate::scan::find_byte(b'*', params.text);
+    let second = first.and_then(|i| {
+        params
+            .text
+            .get(i + 1..)
+            .and_then(|t| crate::scan::find_byte(b'*', t))
+    });
+    if second.is_some() || (first.is_some() && ext.is_none()) {
+        for p in params.iter() {
+            let continued = p
+                .name
+                .get(..9)
+                .is_some_and(|head| head.eq_ignore_ascii_case(b"filename*"))
+                && p.name.get(9..).is_some_and(is_section);
+            if continued {
+                return err(ErrorKind::ForbiddenParameter, lead + offset(p.name));
+            }
+        }
+    }
+    if let Some(word) = ext {
+        if kind == DispositionType::FormData {
+            // The name is the 10 bytes `filename*=` before the value.
+            let value = match word {
+                Word::Token(t) => offset(t),
+                Word::Quoted(q) => offset(q.raw()) - 1,
+            };
+            return err(ErrorKind::ForbiddenParameter, lead + value - 10);
+        }
+        let t = match word {
+            Word::Token(t) => t,
+            Word::Quoted(q) => {
+                return err(ErrorKind::InvalidCharset, lead + offset(q.raw()) - 1);
+            }
+        };
+        let at = lead + offset(t);
+        let ext = ExtendedValue::parse(t).map_err(|e| e.shifted(at))?;
+        // An undecodable `filename*` refuses the field, so no component
+        // falls back to `filename` where another would not (T7).
+        ext.check_text()
+            .map_err(|e| ParseError::new(e.kind(), at))?;
+    }
     Ok(ContentDisposition { kind, params })
+}
+
+/// Whether `s` is an RFC 2231 section suffix: digits, then an optional `*`.
+fn is_section(s: &[u8]) -> bool {
+    let digits = s.iter().take_while(|b| b.is_ascii_digit()).count();
+    digits > 0 && matches!(s.get(digits..), Some([] | [b'*']))
 }
 
 impl<'a> ContentDisposition<'a> {
@@ -250,9 +298,9 @@ impl<'a> ContentDisposition<'a> {
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
-    pub fn filename_ext(&self) -> Option<ExtValue<'a>> {
+    pub fn filename_ext(&self) -> Option<ExtendedValue<'a>> {
         match self.params.get("filename*")? {
-            Word::Token(t) => ExtValue::from_validated(t),
+            Word::Token(t) => ExtendedValue::from_validated(t),
             Word::Quoted(_) => None,
         }
     }
@@ -276,7 +324,7 @@ pub enum Filename<'a> {
     /// The `filename` (or `title`) parameter.
     Plain(Word<'a>),
     /// The `filename*` (or `title*`) parameter.
-    Ext(ExtValue<'a>),
+    Ext(ExtendedValue<'a>),
 }
 
 /// The bytes of a word with quoted pairs replaced.
@@ -432,9 +480,12 @@ impl Filename<'_> {
         }
     }
 
-    /// Whether the decoded name contains `/` or `\` (in a plain name, also
-    /// after percent-decoding). The file-name policy belongs to the caller
-    /// (path-lib, customs-sec).
+    /// Whether the name contains `/` or `\`: after decoding, in a plain name
+    /// also after percent-decoding, and in a quoted name also before
+    /// unescaping. Browsers do not escape with `\` in multipart names, so to
+    /// them `"..\..\web.config"` is a path, although the quoted string
+    /// decodes to `....web.config`. The file-name policy belongs to the
+    /// caller (path-lib, customs-sec).
     ///
     /// # Examples
     ///
@@ -445,6 +496,8 @@ impl Filename<'_> {
     /// assert!(cd.filename().expect("present").has_path_separator());
     /// let ok = parse_content_disposition(b"attachment; filename=notes.txt")?;
     /// assert!(!ok.filename().expect("present").has_path_separator());
+    /// let pair = parse_content_disposition(b"form-data; name=f; filename=\"..\\..\\web.config\"")?;
+    /// assert!(pair.filename().expect("present").has_path_separator());
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
     #[must_use]
@@ -452,7 +505,8 @@ impl Filename<'_> {
         let sep = |b: u8| b == b'/' || b == b'\\';
         match self {
             Filename::Plain(w) => {
-                word_bytes(w).any(sep)
+                matches!(w, Word::Quoted(q) if q.raw().iter().any(|&b| sep(b)))
+                    || word_bytes(w).any(sep)
                     || PctDecode {
                         inner: word_bytes(w),
                     }
@@ -464,7 +518,10 @@ impl Filename<'_> {
 
     /// Whether the decoded name contains a bidirectional control character
     /// (U+202A to U+202E, U+2066 to U+2069), used to disguise an extension
-    /// (`exe.txt` shown for `txt.exe`). Reported, not refused.
+    /// (`exe.txt` shown for `txt.exe`). Reported, not refused. The marks
+    /// U+200E, U+200F, and U+061C are not reported (the set rustc warns
+    /// about), and Windows names (`CON`, `a.txt:stream`, trailing dots, `..`)
+    /// are the caller's file-name policy.
     ///
     /// # Examples
     ///
@@ -520,7 +577,7 @@ fn put_attachment(filename: &str, out: &mut impl Sink) -> core::result::Result<(
     out.put(b"\"")?;
     if filename.chars().any(needs_fallback) {
         out.put(b"; filename*=")?;
-        write_ext_value(filename, out)?;
+        write_extended_value(filename, out)?;
     }
     Ok(())
 }
@@ -642,6 +699,49 @@ mod tests {
                 .kind(),
             ErrorKind::DuplicateParameter
         );
+    }
+
+    /// Forms two conforming readers resolve to different
+    /// names are refused.
+    #[test]
+    fn test_filename_forms_readers_disagree_on_refused() {
+        let k = |v: &[u8]| cd(v).map(|_| ()).map_err(|e| (e.kind(), e.offset()));
+        let forbidden = ErrorKind::ForbiddenParameter;
+        // RFC 7578 section 4.2: no filename* in form-data.
+        assert_eq!(
+            k(b"form-data; name=\"upload\"; filename=\"shell.php\"; filename*=UTF-8''avatar.png"),
+            Err((forbidden, 48))
+        );
+        assert_eq!(
+            k(b"Form-Data; FILENAME*=UTF-8''a.png"),
+            Err((forbidden, 11))
+        );
+        assert_eq!(name(b"form-data; name=f; filename=\"a.png\""), "a.png");
+        // RFC 2231 continuations, in any type.
+        assert_eq!(
+            k(b"attachment; filename=\"report.pdf\"; filename*0*=UTF-8''evil; filename*1=\".exe\""),
+            Err((forbidden, 35))
+        );
+        assert_eq!(k(b"inline; Filename*12=x"), Err((forbidden, 8)));
+        // Other names with a star are ordinary extension parameters.
+        assert!(k(b"attachment; filename*x=1; filename*=UTF-8''a.txt").is_ok());
+        assert!(k(b"attachment; filename*0x=1").is_ok());
+        assert!(k(b"attachment; name*0=1").is_ok());
+    }
+
+    /// A quoted pair hides a backslash browsers mean literally.
+    #[test]
+    fn test_filename_quoted_pair_separator_reported() {
+        let f = |v: &'static [u8]| cd(v).unwrap().filename().unwrap();
+        let name = f(b"form-data; name=\"f\"; filename=\"..\\..\\web.config\"");
+        let mut buf = [0u8; 32];
+        assert_eq!(name.decode_into(&mut buf).unwrap(), "....web.config");
+        assert!(name.has_path_separator());
+        assert!(
+            f(b"form-data; name=f; filename=\"C:\\Users\\a\\shell.aspx\"").has_path_separator()
+        );
+        assert!(f(b"attachment; filename=\"a\\\"b.txt\"").has_path_separator());
+        assert!(!f(b"attachment; filename=\"a b.txt\"").has_path_separator());
     }
 
     #[test]

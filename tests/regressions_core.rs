@@ -1,5 +1,4 @@
-//! Regressions from the 0.9 security and edge-case review of the core grammar
-//! (`F` numbers from that review). Each test states what the contract or the
+//! Regressions in the core grammar. Each test states what the contract or the
 //! RFC requires, for an input that once got it wrong.
 
 use parse_net::negotiate::{MalformedPolicy, Negotiator, Outcome, parse_accept, parse_weighted};
@@ -16,15 +15,13 @@ fn strict() -> Negotiator {
     Negotiator::new().on_malformed(MalformedPolicy::Refuse)
 }
 
-// F1, cache.rs:516
 #[test]
 fn f01_bad_max_stale_is_not_any_staleness() {
-    let r = request_cache_control(b"max-stale=abc").unwrap();
+    let r = parse_request_cache_control(b"max-stale=abc").unwrap();
     assert!(r.invalid_values);
     assert_eq!(r.max_stale, None);
 }
 
-// F2, range.rs:274-284, 646
 #[test]
 fn f02_large_range_numerals_do_not_fail_to_parse() {
     let mut o = [ByteRange { start: 0, end: 0 }; 1];
@@ -51,7 +48,6 @@ fn f02c_large_suffix_is_the_whole_representation() {
     );
 }
 
-// F3, range.rs:480
 #[test]
 fn f03_nonzero_suffix_on_empty_representation_is_satisfiable() {
     let mut o = [ByteRange { start: 0, end: 0 }; 1];
@@ -61,12 +57,11 @@ fn f03_nonzero_suffix_on_empty_representation_is_satisfiable() {
     );
 }
 
-// F4, etag.rs:386-389, 416
 #[test]
 fn f04_star_with_a_comma_is_refused() {
     for v in [&b"*,"[..], b",*", b"*, ", b", *", b"*,,"] {
         assert!(
-            parse_condition(v, &L).is_err(),
+            etag::parse(v, &L).is_err(),
             "{:?}",
             String::from_utf8_lossy(v)
         );
@@ -74,10 +69,15 @@ fn f04_star_with_a_comma_is_refused() {
 }
 #[test]
 fn f04b_if_none_match_star_comma_is_refused() {
-    assert!(if_none_match(b"*,", &EntityTag::strong(b"v").unwrap()).is_err());
+    assert!(
+        if_none_match(
+            b"*,",
+            Representation::Tagged(EntityTag::strong(b"v").unwrap())
+        )
+        .is_err()
+    );
 }
 
-// F5, negotiate.rs:458
 #[test]
 fn f05_refused_offset_is_relative_to_the_value() {
     let v = b"text/html, image/png;q=2";
@@ -97,7 +97,6 @@ fn f05b_refused_names_the_line() {
     assert_eq!((e.line(), e.offset()), (1, 24));
 }
 
-// F6, negotiate.rs:417, 392
 #[test]
 fn f06_absent_header_never_chooses_an_invalid_offer() {
     assert_eq!(best_media(None, &["not a type", "text/html"]), Some(1));
@@ -112,7 +111,6 @@ fn f06b_ignored_header_never_chooses_an_invalid_offer() {
     );
 }
 
-// F7, negotiate.rs:520, 975
 #[test]
 fn f07_language_range_grammar_is_enforced() {
     for v in [
@@ -147,7 +145,6 @@ fn f07c_charset_members_take_a_weight_only() {
     ));
 }
 
-// F8, range.rs:265-286, 315-320, 619-647 and etag.rs:232-234, 81-82, 392-400
 #[test]
 fn f08_range_reports_control_kinds() {
     let mut o = [ByteRange { start: 0, end: 0 }; 1];
@@ -198,13 +195,12 @@ fn f08c_entity_tag_reports_control_kinds() {
         (ErrorKind::BareCr, 2)
     );
     assert_eq!(
-        kind_at(parse_condition(b"\"a\",\r\"b\"", &L)),
+        kind_at(etag::parse(b"\"a\",\r\"b\"", &L)),
         (ErrorKind::BareCr, 4)
     );
-    assert_eq!(kind_at(parse_condition(b"\x00", &L)), (ErrorKind::Nul, 0));
+    assert_eq!(kind_at(etag::parse(b"\x00", &L)), (ErrorKind::Nul, 0));
 }
 
-// F9, text.rs:215, 313
 #[test]
 fn f09_control_after_backslash_keeps_its_kind() {
     assert_eq!(
@@ -215,23 +211,21 @@ fn f09_control_after_backslash_keeps_its_kind() {
         kind_at(text::parse_comment(b"(\\\n)", &L)),
         (ErrorKind::LineFeed, 2)
     );
-    assert_eq!(kind_at(list(b"a, \"\\\x00\"")), (ErrorKind::Nul, 5));
+    assert_eq!(kind_at(parse_list(b"a, \"\\\x00\"")), (ErrorKind::Nul, 5));
 }
 
-// F10, cache.rs:596, 625
 #[test]
 fn f10_response_lines_budget_counts_across_lines() {
     let many: Vec<u8> = (0..1024).flat_map(|_| b"a,".iter().copied()).collect();
     let many = &many[..many.len() - 1];
     let two: [&[u8]; 2] = [many, many];
-    assert!(list::combined(two, &L).is_err());
+    assert!(list::parse_lines(two, &L).is_err());
     assert_eq!(
-        cache::response_lines(two).unwrap_err().kind(),
+        cache::parse_response_lines(two).unwrap_err().kind(),
         ErrorKind::TooManyMembers
     );
 }
 
-// F11, cache.rs:88-114, etag.rs:372-420, range.rs:332-360 against list.rs:61
 #[test]
 fn f11_trailing_empty_element_counts_everywhere() {
     let a: Vec<u8> = core::iter::once(b'a').chain([b','; 17]).collect();
@@ -249,7 +243,7 @@ fn f11b_etag() {
     let mut t = b"\"a\"".to_vec();
     t.extend([b','; 17]);
     assert_eq!(
-        parse_condition(&t, &L).unwrap_err().kind(),
+        etag::parse(&t, &L).unwrap_err().kind(),
         ErrorKind::TooManyEmptyElements
     );
 }
@@ -263,16 +257,14 @@ fn f11c_range() {
     );
 }
 
-// F12, etag.rs:386-391
 #[test]
 fn f12_star_after_tags_is_malformed() {
     assert_eq!(
-        parse_condition(b"\"a\", *", &L).unwrap_err().kind(),
+        etag::parse(b"\"a\", *", &L).unwrap_err().kind(),
         ErrorKind::Malformed
     );
 }
 
-// F13, range.rs:645-647, 634, 640
 #[test]
 fn f13_content_range_shape_errors_are_invalid_range() {
     for v in [
@@ -291,16 +283,15 @@ fn f13_content_range_shape_errors_are_invalid_range() {
     }
 }
 
-// F14, etag.rs:394-395
 #[test]
 fn f14_unterminated_weak_tag_kind_matches_strong() {
     assert_eq!(
-        parse_condition(b"W/\"a", &L).unwrap_err().kind(),
-        parse_condition(b"\"a", &L).unwrap_err().kind()
+        etag::parse(b"W/\"a", &L).unwrap_err().kind(),
+        etag::parse(b"\"a", &L).unwrap_err().kind()
     );
 }
 
-// F15: offsets. negotiate.rs:125-139, media.rs:178-181, negotiate.rs:981, 987-991
+// Offsets.
 #[test]
 fn f15a_qvalue_offset_is_the_bad_byte() {
     assert_eq!(QValue::parse(b"1.5").unwrap_err().offset(), 2);
@@ -325,14 +316,16 @@ fn f15d_weighted_quoted_q_offset_matches_accept() {
     );
 }
 
-// F16, param.rs:414-416
 #[test]
 fn f16_raw_ends_at_the_last_parameter() {
     let r = media::parse_range(b"text/html;a=1 ;q=0.5", &L).unwrap();
-    assert_eq!(r.params().raw(), b";a=1");
+    let names: Vec<&[u8]> = r.params().iter().map(|p| p.name).collect();
+    assert_eq!(names, [&b"a"[..]]);
+    assert!(r.params().get("a").is_some_and(|w| w.eq_bytes(b"1")));
+    let (p, _) = parse_net::param::parse(b";a=1 ;q=0.5", &L).unwrap();
+    assert_eq!(p.raw(), b";a=1 ;q=0.5");
 }
 
-// F17, range.rs:811
 #[test]
 fn f17_if_range_reads_all_three_date_forms() {
     // An RFC 850 date needs a clock to place its year.

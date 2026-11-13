@@ -19,7 +19,7 @@ a target. The short version: any target with `core`, on Rust 1.85 or later.
 |---|---|---|---|
 | (none) | yes | every parser, validator, and writer into a `Sink` (`SliceSink`, `CountSink`) | `core` only |
 | `alloc` | no | owned forms (`OwnedMediaType`, `OwnedEntityTag`, `OwnedHostPort`, Structured Field owned values), `Sink for Vec<u8>`, functions returning `String` | an allocator |
-| `std` | no | `HttpDate` to and from `SystemTime`, and `http_date`, which reads the system clock for the RFC 850 two-digit year rule; implies `alloc` | `std` |
+| `std` | no | `HttpDate` to and from `SystemTime`, and `parse_http_date`, which reads the system clock for the RFC 850 two-digit year rule; implies `alloc` | `std` |
 | `encode-lib` | no | declared and empty until encode-lib is published; then base64 decoding of `Basic` credentials and Structured Field byte sequences (D-002) | encode-lib |
 
 The default build has no dependencies at all; CI checks that `cargo tree`
@@ -38,7 +38,7 @@ Nothing in the crate needs:
 - **an allocator** (without `alloc`): every parse returns a view over the
   input; every writer writes into a caller's `Sink`;
 - **a clock**: functions that need the current time take it as an argument
-  (`HttpDate::parse_at(value, now)`); only the `std` convenience reads the
+  (`parse_http_date_at(value, now)`); only the `std` convenience reads the
   system clock;
 - **floating point**: q-values are integer thousandths (`QValue`), Structured
   Field decimals are fixed point (`Decimal`);

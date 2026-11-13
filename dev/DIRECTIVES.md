@@ -19,7 +19,7 @@ parse-net reads what is inside an Internet message field value (HTTP, Structured
 ## 2. Engineering law (non-negotiable)
 
 - **Depends on nothing.** Zero runtime dependencies in the default build, first party included. One optional, non-default first-party dependency (`encode-lib`) is allowed for base64 only, by published version, never a `path` dependency. Dev-only tooling (`criterion`, `proptest`, competitor crates as oracles) is allowed.
-- **no_std, no allocator, sans-IO.** The base build is `no_std` without `alloc`, checked in CI on a bare-metal target. No parse, compare, or write-into-slice path allocates; a counting allocator proves it. No I/O, no clock reads (except the `std` Tier 1 `http_date`), no global state.
+- **no_std, no allocator, sans-IO.** The base build is `no_std` without `alloc`, checked in CI on a bare-metal target. No parse, compare, or write-into-slice path allocates; a counting allocator proves it. No I/O, no clock reads (except the `std` Tier 1 `parse_http_date`), no global state.
 - **Validate, then view.** A parse checks the whole value in one forward pass and returns a `Copy` view over the caller's bytes. Iterators over a view cannot fail. Decoded forms go into caller buffers.
 - **Unsafe.** `#![forbid(unsafe_code)]`, no exception. SWAR scanning needs none.
 - **Hostile-input hardening.** Every input may be adversarial: every budget (counts, depth, lengths) checked before the work it governs; no recursion; linear time; checked or saturating arithmetic on every value derived from input; no reachable panics (`indexing_slicing`, `unwrap_used`, `expect_used`, `panic` denied).

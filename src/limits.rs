@@ -133,7 +133,7 @@ impl Limits {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Parser, ErrorKind, Limits};
+    /// use parse_net::{structured::Parser, ErrorKind, Limits};
     ///
     /// let p = Parser::new(Limits::DEFAULT.max_inner_list_members(2));
     /// assert!(p.list(b"(a b), c").is_ok());
@@ -173,7 +173,7 @@ impl Limits {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Parser, ErrorKind, Limits};
+    /// use parse_net::{structured::Parser, ErrorKind, Limits};
     ///
     /// let p = Parser::new(Limits::DEFAULT.max_dictionary_members(1));
     /// assert!(p.dictionary(b"a=1").is_ok());
@@ -192,7 +192,7 @@ impl Limits {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Parser, ErrorKind, Limits};
+    /// use parse_net::{structured::Parser, ErrorKind, Limits};
     ///
     /// let p = Parser::new(Limits::DEFAULT.max_key_len(3));
     /// assert!(p.dictionary(b"abc=1").is_ok());
@@ -208,7 +208,7 @@ impl Limits {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Parser, ErrorKind, Limits};
+    /// use parse_net::{structured::Parser, ErrorKind, Limits};
     ///
     /// let p = Parser::new(Limits::DEFAULT.max_string_len(3));
     /// assert!(p.item(b"\"a\\\"b\"").is_ok());
@@ -227,7 +227,7 @@ impl Limits {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Parser, ErrorKind, Limits};
+    /// use parse_net::{structured::Parser, ErrorKind, Limits};
     ///
     /// let p = Parser::new(Limits::DEFAULT.max_token_len(4));
     /// assert!(p.item(b"gzip").is_ok());
@@ -246,7 +246,7 @@ impl Limits {
     /// # Examples
     ///
     /// ```
-    /// use parse_net::{sfv::Parser, ErrorKind, Limits};
+    /// use parse_net::{structured::Parser, ErrorKind, Limits};
     ///
     /// let p = Parser::new(Limits::DEFAULT.max_byte_seq_len(3));
     /// assert!(p.item(b":AQID:").is_ok());
@@ -352,8 +352,8 @@ impl Limits {
     ///
     /// let one = Limits::DEFAULT.max_encoded_words(1);
     /// let mut buf = [0u8; 16];
-    /// assert_eq!(mail::decode_words(b"=?utf-8?q?a?=", &one, &mut buf)?, "a");
-    /// let err = mail::decode_words(b"=?utf-8?q?a?= =?utf-8?q?b?=", &one, &mut buf).unwrap_err();
+    /// assert_eq!(mail::decode_words_with_limits(b"=?utf-8?q?a?=", &one, &mut buf)?, "a");
+    /// let err = mail::decode_words_with_limits(b"=?utf-8?q?a?= =?utf-8?q?b?=", &one, &mut buf).unwrap_err();
     /// assert_eq!(err.kind(), ErrorKind::TooManyMembers);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```
@@ -390,8 +390,8 @@ impl Limits {
     /// use parse_net::{HttpDate, Limits};
     ///
     /// let leap = b"Sun, 06 Nov 1994 08:49:60 GMT";
-    /// assert!(HttpDate::parse_at_with(leap, 0, &Limits::DEFAULT).is_err());
-    /// let d = HttpDate::parse_at_with(leap, 0, &Limits::DEFAULT.allow_leap_second(true))?;
+    /// assert!(HttpDate::parse_with_limits(leap, 0, &Limits::DEFAULT).is_err());
+    /// let d = HttpDate::parse_with_limits(leap, 0, &Limits::DEFAULT.allow_leap_second(true))?;
     /// assert_eq!(d, HttpDate::parse_imf_fixdate(b"Sun, 06 Nov 1994 08:49:59 GMT")?);
     /// # Ok::<(), parse_net::ParseError>(())
     /// ```

@@ -9,7 +9,7 @@ use core::net::IpAddr;
 use parse_net::{
     self as pn, ByteRange, ContentRange, EntityTag, ForwardedSource, Limits, OriginValue,
     SliceSink, auth, cache, etag, forwarded, media, negotiate, range,
-    sfv::{self, Member},
+    structured::{self, Member},
 };
 use proptest::prelude::*;
 
@@ -118,11 +118,13 @@ proptest! {
         };
         let Ok(hp) = pn::parse_host_port(text.as_bytes()) else { return Ok(()) };
         let addr: IpAddr = "198.51.100.7".parse().unwrap();
-        let e = forwarded::Element {
-            for_: Some(forwarded::Node::Addr(addr, None)),
-            by: None,
-            host: Some(hp),
-            proto: None,
+        let e = {
+            let mut e = forwarded::Element::new();
+            e.for_ = Some(forwarded::Node::Addr(addr, None));
+            e.by = None;
+            e.host = Some(hp);
+            e.proto = None;
+            e
         };
         let mut buf = [0u8; 128];
         let mut out = SliceSink::new(&mut buf);
@@ -177,7 +179,7 @@ proptest! {
             }
             v.extend_from_slice(e.as_bytes());
         }
-        let ours = etag::parse_condition(&v, &Limits::DEFAULT).ok().map(|c| match c {
+        let ours = etag::parse(&v, &Limits::DEFAULT).ok().map(|c| match c {
             etag::Condition::Any => vec![b"*".to_vec()],
             etag::Condition::Tags(t) => t.iter().map(|t| t.opaque().to_vec()).collect(),
         });
@@ -202,11 +204,11 @@ proptest! {
                 prop_assert_eq!(w.iter().count(), w.len());
             }
             let _ = EntityTag::parse(input);
-            let _ = etag::parse_condition(input, &l);
+            let _ = etag::parse(input, &l);
             let _ = range::byte_ranges(input, 10_000, &mut ranges);
             let _ = range::parse_content_range(input);
             let _ = range::parse_if_range(input);
-            if let Ok(e) = pn::ExtValue::parse(input) {
+            if let Ok(e) = pn::ExtendedValue::parse(input) {
                 let _ = e.decode_into(&mut out);
             }
             if let Ok(d) = pn::parse_content_disposition(input) {
@@ -215,8 +217,8 @@ proptest! {
                     let _ = f.has_path_separator();
                 }
             }
-            let _ = pn::response_cache_control(input);
-            let _ = pn::request_cache_control(input);
+            let _ = pn::parse_response_cache_control(input);
+            let _ = pn::parse_request_cache_control(input);
             let _ = pn::parse_origin(input);
             let lines = [input];
             let _ = forwarded::parse(&lines, &l);
@@ -224,21 +226,21 @@ proptest! {
             let _ = forwarded::parse_x_forwarded_host(input);
             let trust = |_: IpAddr| true;
             let peer = IpAddr::from([10, 0, 0, 1]);
-            let _ = pn::client_address(peer, ForwardedSource::Forwarded(&lines), &trust, 8);
-            let _ = pn::client_address(peer, ForwardedSource::XForwardedFor(&lines), &trust, 8);
+            let _ = pn::client_address(peer, ForwardedSource::Forwarded(&lines), &trust);
+            let _ = pn::client_address(peer, ForwardedSource::XForwardedFor(&lines), &trust);
             let _ = auth::parse_credentials(input, &l);
             let _ = pn::basic(input);
             let _ = pn::bearer(input);
             if let Ok(c) = auth::parse_challenges(input, &l) {
                 prop_assert_eq!(c.iter().count(), c.len());
             }
-            if let Ok(i) = sfv::parse_item(input) {
+            if let Ok(i) = structured::parse_item(input) {
                 prop_assert_eq!(i.params.iter().count(), i.params.len());
             }
-            if let Ok(s) = sfv::parse_list(input) {
+            if let Ok(s) = structured::parse_list(input) {
                 prop_assert_eq!(s.iter().count(), s.len());
             }
-            if let Ok(d) = sfv::parse_dictionary(input) {
+            if let Ok(d) = structured::parse_dictionary(input) {
                 prop_assert_eq!(d.iter().count(), d.len());
             }
         }
@@ -295,8 +297,8 @@ proptest! {
     fn test_ext_value_write_round_trip(text in "\\PC{0,24}") {
         let mut buf = [0u8; 512];
         let mut out = SliceSink::new(&mut buf);
-        pn::write_ext_value(&text, &mut out).expect("room");
-        let v = pn::ExtValue::parse(out.written()).expect("writer output parses");
+        pn::write_extended_value(&text, &mut out).expect("room");
+        let v = pn::ExtendedValue::parse(out.written()).expect("writer output parses");
         let mut back = [0u8; 128];
         prop_assert_eq!(v.decode_into(&mut back).expect("decodes"), text.as_str());
     }
@@ -398,11 +400,11 @@ proptest! {
     #[test]
     fn test_sfv_lines_equal_joined(members in prop::collection::vec(sf_member(), 1..10), cuts in prop::collection::vec(any::<bool>(), 10)) {
         let joined = members.join(", ");
-        let whole = sfv::parse_list(joined.as_bytes()).expect("generated list parses");
+        let whole = structured::parse_list(joined.as_bytes()).expect("generated list parses");
         prop_assert_eq!(whole.len(), members.len());
         let lines = split_lines(&members, &cuts);
         let refs: Vec<&[u8]> = lines.iter().map(String::as_bytes).collect();
-        let ll = sfv::parse_list_lines(&refs).expect("lines parse");
+        let ll = structured::parse_list_lines(&refs).expect("lines parse");
         let a: Vec<Member<'_>> = whole.iter().collect();
         let b: Vec<Member<'_>> = ll.iter().collect();
         prop_assert_eq!(a.len(), b.len());
@@ -418,10 +420,10 @@ proptest! {
     ) {
         let parts: Vec<String> = members.iter().map(|(k, m)| format!("{k}={m}")).collect();
         let joined = parts.join(", ");
-        let whole = sfv::parse_dictionary(joined.as_bytes()).expect("generated dictionary parses");
+        let whole = structured::parse_dictionary(joined.as_bytes()).expect("generated dictionary parses");
         let lines = split_lines(&parts, &cuts);
         let refs: Vec<&[u8]> = lines.iter().map(String::as_bytes).collect();
-        let dl = sfv::parse_dictionary_lines(&refs).expect("lines parse");
+        let dl = structured::parse_dictionary_lines(&refs).expect("lines parse");
         prop_assert_eq!(whole.len(), dl.len());
         for (k, _) in &members {
             let a = whole.get(k).map(|m| member_items(&m));

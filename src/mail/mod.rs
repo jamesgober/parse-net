@@ -31,15 +31,15 @@ mod phrase;
 mod words;
 
 pub use addr::{
-    AddrSpec, Domain, LocalPart, Mailbox, MsgId, parse_addr_spec, parse_mailbox, parse_msg_id,
-    write_msg_id,
+    AddrSpec, Domain, LocalPart, Mailbox, MsgId, parse_addr_spec, parse_mailbox,
+    parse_mailbox_with_limits, parse_msg_id, write_msg_id,
 };
 pub use params::{
     Continuation, MimeParamIter, MimeParams, MimeValue, parse_mime_params, write_mime_param,
     write_mime_param_at,
 };
-pub use phrase::decode_phrase;
-pub use words::{decode_words, encode_words, encode_words_b};
+pub use phrase::{decode_phrase, decode_phrase_with_limits};
+pub use words::{decode_words, decode_words_with_limits, encode_words, encode_words_base64};
 
 pub use crate::MailDate;
 

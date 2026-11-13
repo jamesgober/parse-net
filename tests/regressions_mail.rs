@@ -1,5 +1,4 @@
-//! Regressions from the 0.9 review of the mail, Structured Field, and date
-//! code. Each test states what the contract or the RFC requires, for an input
+//! Regressions in the mail, Structured Field, and date code. Each test states what the contract or the RFC requires, for an input
 //! that once got it wrong.
 
 #![cfg(feature = "alloc")]
@@ -8,14 +7,14 @@ use parse_net::{
     ErrorKind as K, Limits, MailDate, SliceSink, WriteError,
     date::{civil_from_days, days_from_civil},
     mail::{self, MimeValue},
-    sfv::{self, Parser},
+    structured::{self, Parser},
 };
 
 const L: Limits = Limits::DEFAULT;
 
 fn dec(v: &[u8]) -> Result<String, (K, usize)> {
     let mut buf = vec![0u8; v.len() * 2 + 16];
-    mail::decode_words(v, &L, &mut buf)
+    mail::decode_words(v, &mut buf)
         .map(String::from)
         .map_err(|e| (e.kind(), e.offset()))
 }
@@ -102,7 +101,7 @@ fn test_rfc2231_section_given_twice_refused() {
 fn test_display_string_triples_count_toward_the_limit() {
     let long = format!("%\"{}\"", "%41".repeat(2000));
     assert_eq!(
-        sfv::parse_item(long.as_bytes()).unwrap_err().kind(),
+        structured::parse_item(long.as_bytes()).unwrap_err().kind(),
         K::TooLong
     );
     let p = Parser::new(L.max_string_len(4));
@@ -213,7 +212,8 @@ fn test_decode_words_ordinary_text_is_not_refused() {
 fn test_decode_words_reads_folded_output() {
     let text = "\u{e9}".repeat(30);
     assert_eq!(dec(&enc(&text, 70)).unwrap(), text);
-    assert_eq!(dec(&enc("\u{e9}", 5)).unwrap(), " \u{e9}");
+    // No leading fold, so no leading space.
+    assert_eq!(dec(&enc("\u{e9}", 5)).unwrap(), "\u{e9}");
     assert_eq!(dec(b"a\r\n b").unwrap(), "a b");
 }
 
@@ -252,7 +252,7 @@ fn test_rfc2231_attribute_chars() {
     assert_eq!(param(b"; t*=UTF-8''a{b}", "t").unwrap(), "a{b}");
     assert_eq!(param(b"; t*0*=UTF-8''a{; t*1*=b}", "t").unwrap(), "a{b}");
     // RFC 8187 for HTTP does not.
-    assert!(parse_net::ExtValue::parse(b"UTF-8''a{b}").is_err());
+    assert!(parse_net::ExtendedValue::parse(b"UTF-8''a{b}").is_err());
 }
 
 // Finding 14: the calendar's clamp.
@@ -272,11 +272,11 @@ fn test_civil_from_days_clamps_to_real_dates() {
 // Finding 15: folds inside comments.
 #[test]
 fn test_mail_comments_may_fold() {
-    assert!(MailDate::parse(b"21 Oct 2026 17:38 +0000 (a\r\n b)", false).is_ok());
+    assert!(MailDate::parse(b"21 Oct 2026 17:38 +0000 (a\r\n b)").is_ok());
     assert_eq!(param(b"; a=1 (x\r\n y)", "a").unwrap(), "1");
-    assert!(mail::parse_mailbox(b"Jane (a\r\n b) <j@x.y>", &L).is_ok());
+    assert!(mail::parse_mailbox(b"Jane (a\r\n b) <j@x.y>").is_ok());
     assert_eq!(
-        MailDate::parse(b"21 Oct 2026 17:38 +0000 (a\rb)", false)
+        MailDate::parse(b"21 Oct 2026 17:38 +0000 (a\rb)")
             .unwrap_err()
             .kind(),
         K::BareCr
@@ -286,16 +286,16 @@ fn test_mail_comments_may_fold() {
 // Finding 16: comments around an angle address.
 #[test]
 fn test_mailbox_comments_around_the_address() {
-    let m = mail::parse_mailbox(b"Jane <j@x.y> (work)", &L).unwrap();
+    let m = mail::parse_mailbox(b"Jane <j@x.y> (work)").unwrap();
     assert_eq!(m.display_name, Some(&b"Jane"[..]));
-    let m = mail::parse_mailbox(b"<a@b.c> (comment)", &L).unwrap();
+    let m = mail::parse_mailbox(b"<a@b.c> (comment)").unwrap();
     assert_eq!(m.display_name, None);
-    let m = mail::parse_mailbox(b"(comment) <a@b.c>", &L).unwrap();
+    let m = mail::parse_mailbox(b"(comment) <a@b.c>").unwrap();
     assert_eq!(m.display_name, None);
-    assert!(mail::parse_mailbox(b"<a@b.c> trailing", &L).is_err());
-    assert!(mail::parse_mailbox(b"<\"a>b\"@c.d>", &L).is_ok());
-    assert!(mail::parse_mailbox(b"\"a<b\"@c.d", &L).is_ok());
-    assert!(mail::parse_mailbox(b"a@b.c", &L).is_ok());
+    assert!(mail::parse_mailbox(b"<a@b.c> trailing").is_err());
+    assert!(mail::parse_mailbox(b"<\"a>b\"@c.d>").is_ok());
+    assert!(mail::parse_mailbox(b"\"a<b\"@c.d").is_ok());
+    assert!(mail::parse_mailbox(b"a@b.c").is_ok());
 }
 
 // Finding 17: every control but HTAB.
@@ -334,16 +334,16 @@ fn test_mail_offsets_point_at_the_failure() {
         (K::InvalidUtf8, 25)
     );
 
-    let e = MailDate::parse(b"Mon, 30 Feb 2026 00:00 +0000", false).unwrap_err();
+    let e = MailDate::parse(b"Mon, 30 Feb 2026 00:00 +0000").unwrap_err();
     assert_eq!((e.kind(), e.offset()), (K::InvalidDate, 5));
-    let e = MailDate::parse(b"(c) Mon, 21 Oct 2026 00:00 +0000", false).unwrap_err();
+    let e = MailDate::parse(b"(c) Mon, 21 Oct 2026 00:00 +0000").unwrap_err();
     assert_eq!((e.kind(), e.offset()), (K::WeekdayMismatch, 4));
 
-    let e = sfv::parse_item(b"1.x").unwrap_err();
+    let e = structured::parse_item(b"1.x").unwrap_err();
     assert_eq!((e.kind(), e.offset()), (K::InvalidNumber, 2));
 
     let mut buf = [7u8; 16];
-    assert!(mail::decode_words(b"ok \xff", &L, &mut buf).is_err());
+    assert!(mail::decode_words(b"ok \xff", &mut buf).is_err());
     assert_eq!(buf, [7u8; 16], "nothing written");
     let (p, _) = mail::parse_mime_params(b"; t=\"\xff\"", &L).unwrap();
     assert_eq!(
@@ -366,12 +366,12 @@ fn test_continuation_decodes_after_the_checks() {
     assert!(mail::encode_words("a", 60, &mut sink).is_ok());
 }
 
-// From the 0.9.3 review of the code added since 0.9.0 (`decode_phrase`,
+// From the code added after 0.9.0 (`decode_phrase`,
 // `write_mime_param_at`, `B` words, `param::parse_optional`).
 
 fn phrase(v: &[u8]) -> Result<String, (K, usize)> {
     let mut buf = vec![0u8; v.len() * 2 + 16];
-    mail::decode_phrase(v, &L, &mut buf)
+    mail::decode_phrase(v, &mut buf)
         .map(String::from)
         .map_err(|e| (e.kind(), e.offset()))
 }

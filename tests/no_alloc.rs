@@ -13,8 +13,8 @@ use core::net::IpAddr;
 
 use parse_net::{
     self as pn, ByteRange, EntityTag, ForwardedSource, HttpDate, Limits, SliceSink, auth, cache,
-    class::Class, etag, forwarded, list, mail, media, negotiate, param, pct, range, scan, sfv,
-    text, write,
+    class::Class, etag, forwarded, list, mail, media, negotiate, param, percent, range, scan,
+    structured, text, write,
 };
 
 struct Counting;
@@ -91,13 +91,13 @@ fn test_parsing_never_allocates() {
                 let _ = q.eq_bytes(b"x");
             }
             let _ = text::parse_comment(v, &Limits::DEFAULT);
-            if let Ok(l) = pn::list(v) {
+            if let Ok(l) = pn::parse_list(v) {
                 for e in l.iter() {
                     let _ = e.len();
                 }
             }
             let lines = [v, v];
-            if let Ok(c) = list::combined(lines, &Limits::DEFAULT) {
+            if let Ok(c) = list::parse_lines(lines, &Limits::DEFAULT) {
                 for e in c.iter() {
                     let _ = e.len();
                 }
@@ -120,12 +120,12 @@ fn test_parsing_never_allocates() {
                 let _ = m.charset();
                 let _ = m.is_json();
             }
-            let _ = HttpDate::parse_at(v, 1_792_540_800).map(HttpDate::format);
+            let _ = parse_net::parse_http_date_at(v, 1_792_540_800).map(HttpDate::format);
             let _ = HttpDate::parse_imf_fixdate(v).map(HttpDate::civil);
             let _ = pn::parse_host_port(v);
-            let _ = pct::decode_utf8_into(v, &mut out);
-            let _ = pct::decode_lower_only_into(v, &mut out);
-            let _ = pct::validate_with(v, Class::URI_TARGET);
+            let _ = percent::decode_utf8_into(v, &mut out);
+            let _ = percent::decode_lowercase_into(v, &mut out);
+            let _ = percent::validate_with(v, Class::URI_TARGET);
             let _ = pn::num::parse_u64(v);
         }
     });
@@ -153,10 +153,10 @@ fn test_writing_into_slice_sink_never_allocates() {
         if let Ok(hp) = pn::parse_host_port(b"[::1]:80") {
             let _ = hp.write_to(&mut out);
         }
-        let _ = pct::encode(
+        let _ = percent::encode(
             b"a b",
-            &pct::EncodeSet::ATTR_CHAR_COMPLEMENT,
-            pct::HexCase::Upper,
+            &percent::EncodeSet::ATTR_CHAR_COMPLEMENT,
+            percent::HexCase::Upper,
             &mut out,
         );
     });
@@ -193,7 +193,7 @@ fn test_web_layer_parsing_never_allocates() {
     let mut ranges = [ByteRange { start: 0, end: 0 }; 8];
     let mut slots = [(
         "",
-        sfv::Member::Item(sfv::Item::new(sfv::BareItem::Boolean(false))),
+        structured::Member::Item(structured::Item::new(structured::BareItem::Boolean(false))),
     ); 16];
     let peer = IpAddr::from([10, 0, 0, 1]);
     let trust = |_: IpAddr| true;
@@ -210,13 +210,13 @@ fn test_web_layer_parsing_never_allocates() {
             if let Ok(a) = negotiate::parse_accept(v, &l) {
                 let _ = a.iter().count();
             }
-            if let Ok(etag::Condition::Tags(t)) = etag::parse_condition(v, &l) {
+            if let Ok(etag::Condition::Tags(t)) = etag::parse(v, &l) {
                 let _ = t.iter().count();
             }
-            let _ = etag::if_none_match(v, &tag);
+            let _ = etag::if_none_match(v, pn::Representation::Tagged(tag));
             let _ = range::byte_ranges(v, 10_000, &mut ranges);
             let _ = range::parse_content_range(v);
-            if let Ok(e) = pn::ExtValue::parse(v) {
+            if let Ok(e) = pn::ExtendedValue::parse(v) {
                 let _ = e.decode_into(&mut out);
             }
             if let Ok(d) = pn::parse_content_disposition(v) {
@@ -224,8 +224,8 @@ fn test_web_layer_parsing_never_allocates() {
                     let _ = f.decode_into(&mut out);
                 }
             }
-            let _ = pn::response_cache_control(v);
-            let _ = pn::request_cache_control(v);
+            let _ = pn::parse_response_cache_control(v);
+            let _ = pn::parse_request_cache_control(v);
             let _ = pn::parse_origin(v);
             let lines = [v];
             if let Ok(f) = forwarded::parse(&lines, &l) {
@@ -234,8 +234,8 @@ fn test_web_layer_parsing_never_allocates() {
             if let Ok(x) = forwarded::parse_x_forwarded_for(&lines, &l) {
                 let _ = x.iter().count();
             }
-            let _ = pn::client_address(peer, ForwardedSource::Forwarded(&lines), &trust, 8);
-            let _ = pn::client_address(peer, ForwardedSource::XForwardedFor(&lines), &trust, 8);
+            let _ = pn::client_address(peer, ForwardedSource::Forwarded(&lines), &trust);
+            let _ = pn::client_address(peer, ForwardedSource::XForwardedFor(&lines), &trust);
             let _ = auth::parse_credentials(v, &l);
             let _ = pn::basic(v);
             if let Ok(c) = auth::parse_challenges(v, &l) {
@@ -243,21 +243,21 @@ fn test_web_layer_parsing_never_allocates() {
                     let _ = ch.param("realm");
                 }
             }
-            if let Ok(i) = sfv::parse_item(v) {
+            if let Ok(i) = structured::parse_item(v) {
                 let _ = i.params.get("a");
             }
-            if let Ok(s) = sfv::parse_list(v) {
+            if let Ok(s) = structured::parse_list(v) {
                 for m in s.iter() {
-                    if let sfv::Member::InnerList(il) = m {
+                    if let structured::Member::InnerList(il) = m {
                         let _ = il.iter().count();
                     }
                 }
             }
-            if let Ok(d) = sfv::parse_dictionary(v) {
+            if let Ok(d) = structured::parse_dictionary(v) {
                 let _ = d.get("a");
                 let _ = d.index_into(&mut slots);
             }
-            let _ = sfv::parse_list_lines(&lines);
+            let _ = structured::parse_list_lines(&lines);
         }
     });
     assert_eq!(n, 0, "a web-layer parse allocated");
@@ -272,7 +272,7 @@ fn test_web_layer_writing_never_allocates() {
         let _ = EntityTag::weak(b"v1").map(|t| t.write_to(&mut out));
         let _ = range::write_content_range(ByteRange { start: 0, end: 9 }, Some(10), &mut out);
         let _ = range::write_unsatisfied(10, &mut out);
-        let _ = pn::write_ext_value("\u{20ac} rates", &mut out);
+        let _ = pn::write_extended_value("\u{20ac} rates", &mut out);
         let _ = pn::write_attachment("\u{20ac} rates.txt", &mut out);
         let _ = auth::write_challenge("Basic", &[("realm", "a \"b\"")], &mut out);
         let _ = auth::write_challenge_token68("Negotiate", b"abc==", &mut out);
@@ -306,7 +306,7 @@ fn test_mail_and_link_parsing_never_allocates() {
     let mut out = [0u8; 512];
     let n = allocations(|| {
         for &v in MAIL_INPUTS {
-            if let Ok(links) = pn::parse_link(v, &l) {
+            if let Ok(links) = pn::link::parse(v, &l) {
                 for x in links.iter() {
                     let _ = x.has_rel("next");
                     if let Some(t) = x.title() {
@@ -314,22 +314,22 @@ fn test_mail_and_link_parsing_never_allocates() {
                     }
                 }
             }
-            let _ = pn::MailDate::parse(v, false).map(pn::MailDate::format);
-            let _ = pn::MailDate::parse(v, true);
+            let _ = pn::MailDate::parse(v).map(pn::MailDate::format);
+            let _ = pn::MailDate::parse_obsolete(v);
             let _ = mail::check_header_value(v);
             if let Ok(u) = mail::unfold(v) {
                 let _ = u.iter().count();
             }
-            let _ = mail::decode_words(v, &l, &mut out);
+            let _ = mail::decode_words_with_limits(v, &l, &mut out);
             if let Ok((p, _)) = mail::parse_mime_params(v, &l) {
                 let _ = p.decode_into("filename", &mut out);
                 let _ = p.get("charset");
             }
             let _ = mail::parse_addr_spec(v).map(|a| a.is_ascii());
-            let _ = mail::parse_mailbox(v, &l);
-            let _ = mail::decode_phrase(v, &l, &mut out);
+            let _ = mail::parse_mailbox_with_limits(v, &l);
+            let _ = mail::decode_phrase_with_limits(v, &l, &mut out);
             let _ = mail::parse_msg_id(v);
-            if let Ok(list) = sfv::parse_list(v) {
+            if let Ok(list) = structured::parse_list(v) {
                 let _ = list.iter().count();
             }
         }
@@ -350,18 +350,20 @@ fn test_mail_and_link_writing_never_allocates() {
             &mut out,
         );
         let _ = mail::encode_words("Caf\u{e9} au lait", 20, &mut out);
-        let _ = mail::encode_words_b("Caf\u{e9} au lait", 20, &mut out);
+        let _ = mail::encode_words_base64("Caf\u{e9} au lait", 20, &mut out);
         let _ = mail::write_mime_param("filename", "caf\u{e9}.txt", &mut out);
         let _ = mail::write_mime_param_at("filename", "caf\u{e9}.txt", 20, &mut out);
         let _ = mail::write_msg_id("a.b", "example.com", &mut out);
-        let e = forwarded::Element {
-            for_: Some(forwarded::Node::Addr(IpAddr::from([192, 0, 2, 1]), None)),
-            by: None,
-            host: None,
-            proto: Some(forwarded::Proto::Https),
+        let e = {
+            let mut e = forwarded::Element::new();
+            e.for_ = Some(forwarded::Node::Addr(IpAddr::from([192, 0, 2, 1]), None));
+            e.by = None;
+            e.host = None;
+            e.proto = Some(forwarded::Proto::Https);
+            e
         };
         let _ = forwarded::write_element(&e, &mut out);
-        let mut w = sfv::Writer::list(&mut out);
+        let mut w = structured::Writer::list(&mut out);
         let _ = w
             .integer(1)
             .and_then(|w| w.param_key("a"))

@@ -1,6 +1,6 @@
-//! Regressions from the 0.9 security review of the HTTP-facing modules. Each
+//! Security regressions in the HTTP-facing modules. Each
 //! test sends an attack or an edge case that once got through, or pins a
-//! behaviour the review checked and found sound.
+//! behaviour that was checked and found sound.
 
 use core::net::IpAddr;
 
@@ -8,10 +8,10 @@ use parse_net::{
     self as pn, ClientAddress, ErrorKind, ForwardedSource, Host, HostPort, Limits, Origin,
     SliceSink,
     auth::{self, AuthPayload},
-    forwarded::{self, Element, Node},
+    forwarded::{self, Element, Node, client_address_with_limits},
     host::parse_host,
     link,
-    pct::{self, EncodeSet, HexCase},
+    percent::{self, EncodeSet, HexCase},
 };
 
 fn ip(s: &str) -> IpAddr {
@@ -46,11 +46,7 @@ fn w2_host_future_write_to_refuses_nul() {
 fn w3_hostport_write_to_refuses_crlf() {
     let mut buf = [0u8; 64];
     let mut out = SliceSink::new(&mut buf);
-    let hp = HostPort {
-        host: Host::Name(b"a\r\nb"),
-        port: Some(80),
-        empty_port: false,
-    };
+    let hp = HostPort::new(Host::Name(b"a\r\nb"), Some(80));
     let r = hp.write_to(&mut out);
     println!("{r:?} {:?}", String::from_utf8_lossy(out.written()));
     assert!(!has_crlf(out.written()), "writer emitted CR/LF");
@@ -60,11 +56,7 @@ fn w3_hostport_write_to_refuses_crlf() {
 fn w4_origin_write_to_refuses_crlf() {
     let mut buf = [0u8; 64];
     let mut out = SliceSink::new(&mut buf);
-    let o = Origin {
-        scheme: b"http\r\nX-Evil: 1\r\n",
-        host: Host::Name(b"a"),
-        port: None,
-    };
+    let o = Origin::new(b"http\r\nX-Evil: 1\r\n", Host::Name(b"a"), None);
     let r = o.write_to(&mut out);
     println!("{r:?} {:?}", String::from_utf8_lossy(out.written()));
     assert!(!has_crlf(out.written()), "writer emitted CR/LF");
@@ -74,15 +66,13 @@ fn w4_origin_write_to_refuses_crlf() {
 fn w5_write_element_refuses_crlf() {
     let mut buf = [0u8; 96];
     let mut out = SliceSink::new(&mut buf);
-    let e = Element {
-        for_: None,
-        by: None,
-        host: Some(HostPort {
-            host: Host::Name(b"a\r\nX-Evil: 1"),
-            port: None,
-            empty_port: false,
-        }),
-        proto: None,
+    let e = {
+        let mut e = Element::new();
+        e.for_ = None;
+        e.by = None;
+        e.host = Some(HostPort::new(Host::Name(b"a\r\nX-Evil: 1"), None));
+        e.proto = None;
+        e
     };
     let r = forwarded::write_element(&e, &mut out);
     println!("{r:?} {:?}", String::from_utf8_lossy(out.written()));
@@ -96,11 +86,13 @@ fn w6_write_element_host_comma_forges_hop() {
     let client = ip("198.51.100.7");
     let attacker_host: &[u8] = b"a.example,for=203.0.113.66;x=y";
     let hp = pn::parse_host_port(attacker_host).expect("the Host parser accepts it");
-    let e = Element {
-        for_: Some(Node::Addr(client, None)),
-        by: None,
-        host: Some(hp),
-        proto: None,
+    let e = {
+        let mut e = Element::new();
+        e.for_ = Some(Node::Addr(client, None));
+        e.by = None;
+        e.host = Some(hp);
+        e.proto = None;
+        e
     };
     let mut buf = [0u8; 128];
     let mut out = SliceSink::new(&mut buf);
@@ -108,30 +100,29 @@ fn w6_write_element_host_comma_forges_hop() {
     let wire = out.written().to_vec();
     println!("wire: {}", String::from_utf8_lossy(&wire));
     let lines: [&[u8]; 1] = [&wire];
-    let got = pn::client_address(
-        peer,
-        ForwardedSource::Forwarded(&lines),
-        &|a: IpAddr| a == peer,
-        16,
-    );
+    let got = pn::client_address(peer, ForwardedSource::Forwarded(&lines), &|a: IpAddr| {
+        a == peer
+    });
     println!("client_address: {got:?}");
     assert_eq!(
         got,
-        Ok(ClientAddress::Forwarded {
+        ClientAddress::Forwarded {
             addr: client,
             hops: 1
-        })
+        }
     );
 }
 
 #[test]
 fn w7_write_element_host_semicolon_forges_proto() {
     let hp = pn::parse_host_port(b"a.example;proto=https").unwrap();
-    let e = Element {
-        for_: None,
-        by: None,
-        host: Some(hp),
-        proto: None,
+    let e = {
+        let mut e = Element::new();
+        e.for_ = None;
+        e.by = None;
+        e.host = Some(hp);
+        e.proto = None;
+        e
     };
     let mut buf = [0u8; 64];
     let mut out = SliceSink::new(&mut buf);
@@ -152,11 +143,13 @@ fn w7_write_element_host_semicolon_forges_proto() {
 #[test]
 fn w8_write_element_paren_host_parses_back() {
     let hp = pn::parse_host_port(b"a(b").unwrap();
-    let e = Element {
-        for_: None,
-        by: None,
-        host: Some(hp),
-        proto: None,
+    let e = {
+        let mut e = Element::new();
+        e.for_ = None;
+        e.by = None;
+        e.host = Some(hp);
+        e.proto = None;
+        e
     };
     let mut buf = [0u8; 64];
     let mut out = SliceSink::new(&mut buf);
@@ -175,11 +168,13 @@ fn w8_write_element_paren_host_parses_back() {
 #[test]
 fn w9_write_element_empty_host_parses_back() {
     let hp = pn::parse_host_port(b"").unwrap();
-    let e = Element {
-        for_: None,
-        by: None,
-        host: Some(hp),
-        proto: None,
+    let e = {
+        let mut e = Element::new();
+        e.for_ = None;
+        e.by = None;
+        e.host = Some(hp);
+        e.proto = None;
+        e
     };
     let mut buf = [0u8; 64];
     let mut out = SliceSink::new(&mut buf);
@@ -203,18 +198,18 @@ fn w10_write_link_title_star_parses_back() {
     assert!(link::write_link(b"/a", &[("title*", "hello")], &mut out).is_err());
     assert!(out.written().is_empty());
     link::write_link(b"/a", &[("title*", "UTF-8''hello")], &mut out).unwrap();
-    assert!(pn::parse_link(out.written(), &Limits::DEFAULT).is_ok());
+    assert!(pn::parse_link(out.written()).is_ok());
     // An empty value writes the name alone, which parses (found by fuzzing
     // the first version of this check).
     let mut buf = [0u8; 64];
     let mut out = SliceSink::new(&mut buf);
     link::write_link(b"/a", &[("title*", "")], &mut out).unwrap();
-    assert!(pn::parse_link(out.written(), &Limits::DEFAULT).is_ok());
+    assert!(pn::parse_link(out.written()).is_ok());
     // Only the first counts, as in the parser.
     let mut buf = [0u8; 64];
     let mut out = SliceSink::new(&mut buf);
     link::write_link(b"/a", &[("title*", "UTF-8''"), ("title*", "y")], &mut out).unwrap();
-    assert!(pn::parse_link(out.written(), &Limits::DEFAULT).is_ok());
+    assert!(pn::parse_link(out.written()).is_ok());
 }
 
 #[test]
@@ -223,14 +218,14 @@ fn w11_write_link_title_star_control_refused() {
     let mut out = SliceSink::new(&mut buf);
     let r = link::write_link(b"/a", &[("title*", "UTF-8''a%0D%0AX")], &mut out);
     println!("{r:?} {:?}", String::from_utf8_lossy(out.written()));
-    assert!(r.is_err() || pn::parse_link(out.written(), &Limits::DEFAULT).is_ok());
+    assert!(r.is_err() || pn::parse_link(out.written()).is_ok());
 }
 
 #[test]
 fn w12_pct_encode_never_emits_crlf() {
     let mut buf = [0u8; 16];
     let mut out = SliceSink::new(&mut buf);
-    pct::encode(b"a\r\nb", &EncodeSet::empty(), HexCase::Upper, &mut out).unwrap();
+    percent::encode(b"a\r\nb", &EncodeSet::empty(), HexCase::Upper, &mut out).unwrap();
     println!("{:?}", String::from_utf8_lossy(out.written()));
     assert!(!has_crlf(out.written()));
 }
@@ -267,14 +262,11 @@ fn f1_unknown_is_case_insensitive() {
     }
     let peer = ip("10.0.0.1");
     let lines: [&[u8]; 1] = [b"for=Unknown"];
-    let got = pn::client_address(
-        peer,
-        ForwardedSource::Forwarded(&lines),
-        &|a: IpAddr| a == peer,
-        16,
-    );
+    let got = pn::client_address(peer, ForwardedSource::Forwarded(&lines), &|a: IpAddr| {
+        a == peer
+    });
     println!("{got:?}");
-    assert_eq!(got, Ok(ClientAddress::Unknown { hops: 1 }));
+    assert_eq!(got, ClientAddress::Unknown { hops: 1 });
 }
 
 #[test]
@@ -410,12 +402,13 @@ fn a5_debug_redaction() {
     );
 }
 
+#[cfg(feature = "alloc")]
 #[test]
 fn a6_owned_media_debug_redacted() {
     // param.rs: "Debug prints the parameter names only: values can be secrets."
     let m = pn::parse_media_type(b"a/b; token=s3cr3t").unwrap();
     let view = format!("{m:?}");
-    let owned = format!("{:?}", m.to_owned());
+    let owned = format!("{:?}", m.into_owned());
     println!("{view}\n{owned}");
     let needle: Vec<String> = b"s3cr3t".iter().map(|b| b.to_string()).collect();
     assert!(
@@ -431,10 +424,10 @@ fn l1_title_star_quoted_form_accepted() {
     // RFC 8288 section 3: any link-param token or quoted-string; recipients
     // MUST parse both. Appendix B.3 decodes after reading either form.
     let v: &[u8] = b"</a>; title*=\"UTF-8''x\"";
-    let r = pn::parse_link(v, &Limits::DEFAULT);
+    let r = pn::parse_link(v);
     println!("{:?}", r.as_ref().map(|l| l.len()));
     assert!(r.is_ok());
-    let l = pn::parse_link(v, &Limits::DEFAULT).unwrap();
+    let l = pn::parse_link(v).unwrap();
     assert!(matches!(
         l.iter().next().unwrap().title(),
         Some(pn::Filename::Ext(_))
@@ -445,7 +438,7 @@ fn l1_title_star_quoted_form_accepted() {
 fn l2_second_title_star_ignored() {
     // RFC 8288 3.4.1: occurrences after the first are ignored by parsers.
     let v: &[u8] = b"</a>; title*=UTF-8''ok; title*=bad";
-    let r = pn::parse_link(v, &Limits::DEFAULT);
+    let r = pn::parse_link(v);
     println!("{:?}", r.as_ref().map(|l| l.len()));
     assert!(r.is_ok());
 }
@@ -512,66 +505,67 @@ fn ok_filename_star_in_quoted_neighbour_not_seen() {
 fn ok_hops() {
     let peer = ip("10.0.0.1");
     let t = |a: IpAddr| a.is_loopback() || a == ip("10.0.0.1");
+    let max = Limits::DEFAULT.max_hops(255);
     let lines: [&[u8]; 2] = [b"9.9.9.9, 127.0.0.1", b"8.8.8.8:80, 127.0.0.2"];
     assert_eq!(
-        pn::client_address(peer, ForwardedSource::XForwardedFor(&lines), &t, 16),
-        Ok(ClientAddress::Forwarded {
+        pn::client_address(peer, ForwardedSource::XForwardedFor(&lines), &t),
+        ClientAddress::Forwarded {
             addr: ip("8.8.8.8"),
             hops: 2
-        })
+        }
     );
     // 255 hops, none saturated.
     let chain = vec!["127.0.0.1"; 255].join(",");
     let l: [&[u8]; 1] = [chain.as_bytes()];
     assert_eq!(
-        pn::client_address(peer, ForwardedSource::XForwardedFor(&l), &t, 255),
-        Ok(ClientAddress::Forwarded {
+        client_address_with_limits(peer, ForwardedSource::XForwardedFor(&l), &t, &max),
+        ClientAddress::Forwarded {
             addr: ip("127.0.0.1"),
             hops: 255
-        })
+        }
     );
     // Forwarded, 255 trusted elements: the default member limit is above 255.
     let chain = vec!["for=127.0.0.1"; 255].join(",");
     let l: [&[u8]; 1] = [chain.as_bytes()];
     assert_eq!(
-        pn::client_address(peer, ForwardedSource::Forwarded(&l), &t, 255),
-        Ok(ClientAddress::Forwarded {
+        client_address_with_limits(peer, ForwardedSource::Forwarded(&l), &t, &max),
+        ClientAddress::Forwarded {
             addr: ip("127.0.0.1"),
             hops: 255
-        })
+        }
     );
-    // Empty lines fail closed for XFF; Forwarded treats them as no elements.
+    // An empty line holds no entries, for both kinds.
     let e: [&[u8]; 2] = [b"1.1.1.1", b""];
     assert_eq!(
-        pn::client_address(peer, ForwardedSource::XForwardedFor(&e), &t, 16)
-            .unwrap_err()
-            .kind(),
-        ErrorKind::Malformed
+        pn::client_address(peer, ForwardedSource::XForwardedFor(&e), &t),
+        ClientAddress::Forwarded {
+            addr: ip("1.1.1.1"),
+            hops: 1
+        }
     );
     let e: [&[u8]; 2] = [b"for=1.1.1.1", b""];
     assert_eq!(
-        pn::client_address(peer, ForwardedSource::Forwarded(&e), &t, 16),
-        Ok(ClientAddress::Forwarded {
+        pn::client_address(peer, ForwardedSource::Forwarded(&e), &t),
+        ClientAddress::Forwarded {
             addr: ip("1.1.1.1"),
             hops: 1
-        })
+        }
     );
-    // max_hops 0 with a chain, and with no chain.
+    // max_hops 0 with a chain: no hop may be walked.
     let c: [&[u8]; 1] = [b"1.1.1.1"];
+    let zero = Limits::DEFAULT.max_hops(0);
     assert_eq!(
-        pn::client_address(peer, ForwardedSource::XForwardedFor(&c), &t, 0)
-            .unwrap_err()
-            .kind(),
-        ErrorKind::TooManyHops
+        client_address_with_limits(peer, ForwardedSource::XForwardedFor(&c), &t, &zero),
+        ClientAddress::Unknown { hops: 0 }
     );
     // Quoted comma in Forwarded must not split.
     let q: [&[u8]; 1] = [b"for=1.1.1.1;x=\"a,for=2.2.2.2\""];
     assert_eq!(
-        pn::client_address(peer, ForwardedSource::Forwarded(&q), &t, 16),
-        Ok(ClientAddress::Forwarded {
+        pn::client_address(peer, ForwardedSource::Forwarded(&q), &t),
+        ClientAddress::Forwarded {
             addr: ip("1.1.1.1"),
             hops: 1
-        })
+        }
     );
 }
 

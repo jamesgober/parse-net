@@ -6,7 +6,6 @@
 use std::time::UNIX_EPOCH;
 
 use libfuzzer_sys::fuzz_target;
-use parse_net::HttpDate;
 
 fuzz_target!(|data: &[u8]| {
     let Ok(text) = std::str::from_utf8(data) else {
@@ -17,7 +16,7 @@ fuzz_target!(|data: &[u8]| {
     if text.contains('-') {
         return;
     }
-    let ours = HttpDate::parse_at(data, 1_792_540_800).ok();
+    let ours = parse_net::parse_http_date_at(data, 1_792_540_800).ok();
     let theirs = httpdate::parse_http_date(text).ok();
     match (ours, theirs) {
         (Some(a), Some(b)) => {

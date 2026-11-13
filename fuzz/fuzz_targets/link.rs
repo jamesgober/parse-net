@@ -4,7 +4,7 @@
 //! target and parameters.
 
 use libfuzzer_sys::fuzz_target;
-use parse_net::{Limits, SliceSink, link, parse_link};
+use parse_net::{SliceSink, link, parse_link};
 
 #[path = "common.rs"]
 mod common;
@@ -15,7 +15,7 @@ static GLOBAL: common::Counting = common::Counting;
 fuzz_target!(|data: &[u8]| {
     let mut buf = [0u8; 8192];
     let mut title = [0u8; 4096];
-    common::no_alloc(|| match parse_link(data, &Limits::DEFAULT) {
+    common::no_alloc(|| match parse_link(data) {
         Ok(links) => {
             assert_eq!(links.iter().count(), links.len());
             for v in links.iter() {
@@ -45,7 +45,7 @@ fuzz_target!(|data: &[u8]| {
                 if plain {
                     let mut out = SliceSink::new(&mut buf);
                     link::write_link(v.target(), &pairs[..n], &mut out).expect("a parsed link writes");
-                    let back = parse_link(out.written(), &Limits::DEFAULT).expect("written link parses");
+                    let back = parse_link(out.written()).expect("written link parses");
                     let b = back.iter().next().expect("one link");
                     assert_eq!(b.target(), v.target());
                     assert_eq!(b.params().len(), v.params().len());
