@@ -13,7 +13,7 @@
 
 ---
 
-## [0.10.0] - 2026-11-11
+## [0.10.0] - 2026-11-12
 
 A simpler API before 1.0: root parsers are all named `parse_*`, Tier 1
 calls take no `Limits`, abbreviations are spelled out, and there is one way
